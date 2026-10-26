@@ -1,0 +1,15 @@
+:root {
+  color-scheme: dark;
+  font-family: ui-monospace, monospace;
+  line-height: 1.6;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 64rem;
+  margin-inline: auto;
+  padding: 2rem;
+}
