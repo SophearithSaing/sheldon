@@ -1,2 +1,10 @@
 dev_logs/
 refs/
+
+node_modules/
+/web/dist/
+/internal/ui/dist/
+/bin/
+/sheldon
+/sheldon.exe
+*.tsbuildinfo
