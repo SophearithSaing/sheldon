@@ -13,6 +13,7 @@
   "scripts": {
     "dev": "npm run dev --workspace=@sheldon/web",
     "typecheck": "npm run typecheck --workspace=@sheldon/web",
+    "test:web": "npm run test --workspace=@sheldon/web",
     "build:web": "npm run build --workspace=@sheldon/web"
   }
 }

@@ -1,0 +1,8 @@
+/* Official, unchanged JetBrains Mono v2.304; license bundled beside the font. */
+@font-face {
+  font-family: 'Sheldon JetBrains Mono';
+  src: url('../assets/fonts/JetBrainsMono-Variable.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+}
