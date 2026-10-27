@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -27,6 +28,8 @@ type Server struct {
 	authority string
 	apiToken  string
 	stop      context.CancelFunc
+	mu        sync.Mutex
+	openURL   string
 }
 
 // Listen opens a numeric loopback address and prepares the protected API.
@@ -66,6 +69,10 @@ func Listen(address string) (*Server, error) {
 	s.stop = stop
 	s.mux.HandleFunc("GET /api/health", s.health)
 	s.mux.HandleFunc("GET /api/fixture/events", s.fixtureEvents)
+	s.mux.HandleFunc("GET /instance-proof", s.identify)
+	s.mux.HandleFunc("POST /api/open", s.open)
+	s.mux.HandleFunc("GET /api/open", s.openState)
+	s.mux.HandleFunc("GET /{$}", s.landing)
 	s.http = &http.Server{
 		Handler:           http.HandlerFunc(s.handle),
 		BaseContext:       func(net.Listener) context.Context { return lifetime },
