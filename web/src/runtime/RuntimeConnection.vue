@@ -1,9 +1,18 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import UiButton from '../components/ui/UiButton.vue'
-import { fixtureEvents, inspectBackend, inspectEnvironment, takeLaunchToken } from './client'
+import {
+  fixtureEvents,
+  inspectBackend,
+  inspectEnvironment,
+  inspectSettings,
+  inspectModels,
+  takeLaunchToken,
+} from './client'
 import EnvironmentDiagnostics from './EnvironmentDiagnostics.vue'
+import SettingsPanel from '../settings/SettingsPanel.vue'
 import type { EnvironmentReport } from './environment'
+import type { Harness, ModelDiscovery, SettingsState } from '../settings/contracts'
 
 const development = import.meta.env.DEV
 const tokenInput = ref('')
@@ -16,6 +25,13 @@ const environmentReport = ref<EnvironmentReport>()
 const environmentLoading = ref(false)
 const environmentError = ref('')
 let environmentRequest: (() => Promise<EnvironmentReport>) | undefined
+const settingsOpen = ref(false)
+const settingsState = ref<SettingsState>()
+const settingsError = ref('')
+const settingsLoading = ref(false)
+const models = ref<Partial<Record<Harness, ModelDiscovery>>>({})
+let settingsRequest: (() => Promise<SettingsState>) | undefined
+let modelsRequest: ((h: Harness) => Promise<ModelDiscovery>) | undefined
 
 function disconnect() {
   controller?.abort()
@@ -28,6 +44,46 @@ function disconnect() {
   environmentReport.value = undefined
   environmentLoading.value = false
   environmentError.value = ''
+  settingsOpen.value = false
+  settingsState.value = undefined
+  settingsError.value = ''
+  settingsLoading.value = false
+  models.value = {}
+  settingsRequest = undefined
+  modelsRequest = undefined
+}
+
+async function toggleSettings() {
+  settingsOpen.value = !settingsOpen.value
+  if (!settingsOpen.value || settingsState.value || settingsLoading.value || !settingsRequest)
+    return
+  const current = controller
+  settingsLoading.value = true
+  settingsError.value = ''
+  try {
+    const state = await settingsRequest()
+    if (current === controller && !current?.signal.aborted) settingsState.value = state
+  } catch {
+    if (current === controller && !current?.signal.aborted)
+      settingsError.value =
+        'Settings metadata could not be loaded. Reconnect and try again; nothing was changed.'
+  } finally {
+    if (current === controller) settingsLoading.value = false
+  }
+}
+
+async function loadModels(h: Harness) {
+  if (!modelsRequest || models.value[h]) return
+  const current = controller
+  settingsError.value = ''
+  try {
+    const metadata = await modelsRequest(h)
+    if (current === controller && !current?.signal.aborted) models.value[h] = metadata
+  } catch {
+    if (current === controller && !current?.signal.aborted)
+      settingsError.value =
+        'Native model metadata is unavailable. No model or provider was substituted.'
+  }
 }
 
 async function refreshEnvironment() {
@@ -63,6 +119,8 @@ async function connect(token = tokenInput.value) {
     if (current.signal.aborted) return
     connected.value = true
     environmentRequest = () => inspectEnvironment(token, current.signal)
+    settingsRequest = () => inspectSettings(token, current.signal)
+    modelsRequest = (h) => inspectModels(token, current.signal, h)
     state.value = 'Backend connected · waiting for fixture stream'
     for await (const event of fixtureEvents(token, current.signal)) {
       if (current.signal.aborted) return
@@ -78,7 +136,11 @@ async function connect(token = tokenInput.value) {
     connected.value = false
     state.value = 'Connection failed or closed. Check the backend and API token, then reconnect.'
   } finally {
-    if (current === controller) environmentRequest = undefined
+    if (current === controller) {
+      environmentRequest = undefined
+      settingsRequest = undefined
+      modelsRequest = undefined
+    }
     token = ''
   }
 }
@@ -128,6 +190,19 @@ onUnmounted(disconnect)
     <p v-if="pendingURL" class="muted small">
       Pending open request: {{ pendingURL }} — not loaded.
     </p>
+    <UiButton v-if="connected" :aria-expanded="settingsOpen" @click="toggleSettings">{{
+      settingsOpen ? 'Close settings — return later' : 'Settings & Environment'
+    }}</UiButton>
+    <p v-if="settingsOpen && settingsLoading" role="status">Loading settings contracts…</p>
+    <p v-if="settingsOpen && settingsError && !settingsState" role="alert">{{ settingsError }}</p>
+    <SettingsPanel
+      v-if="connected && settingsOpen && settingsState"
+      :state="settingsState"
+      :models="models"
+      :environment="environmentReport"
+      :error="settingsError"
+      @models="loadModels"
+    />
     <EnvironmentDiagnostics
       v-if="connected"
       :report="environmentReport"

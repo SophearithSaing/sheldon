@@ -152,3 +152,27 @@ test('release reload requires explicit reconnecting and wrong proof never receiv
   await expect(page.getByLabel('API token', { exact: true })).toHaveValue('')
   expect(await page.content()).not.toContain(token)
 })
+
+test('release settings stay unavailable and query parameters cannot enable settings fixtures', async ({ page, request }) => {
+  const { url, token } = await state()
+  const writes: string[] = []
+  page.on('request', item => { if (item.method() === 'PUT' || item.method() === 'POST') writes.push(item.url()) })
+  await page.goto(`${url}/?fixture=settings&scenario=saved#token=${token}`)
+  await expect(page.getByRole('main', { name: 'Settings UI fixture' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Settings & Environment', exact: true }).click()
+  const panel = page.getByRole('region', { name: 'Settings & Environment', exact: true })
+  await expect(panel.getByRole('heading', { name: 'First-launch setup (scaffold)' })).toBeVisible()
+  await expect(panel.getByLabel('Default harness for new conversations')).toHaveValue('')
+  await panel.getByLabel('Default harness for new conversations').selectOption('claude')
+  await expect(panel.getByLabel('Configured/default model')).toHaveText('Unknown — not resolved')
+  await expect(panel.getByRole('button', { name: 'Save settings — unavailable' })).toBeDisabled()
+  await expect(panel.getByRole('button', { name: 'Test answer — unavailable' })).toBeDisabled()
+  expect(writes).toEqual([])
+  const response = await request.post(url + '/api/environment/test-runs', {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { clientRequestID: 'release-fixture-request', harness: 'claude', selection: { mode: 'default' }, confirmQuota: true },
+  })
+  expect(response.status()).toBe(501)
+  expect((await response.json()).error).toContain('no run was admitted')
+  expect(await page.content()).not.toContain(token)
+})

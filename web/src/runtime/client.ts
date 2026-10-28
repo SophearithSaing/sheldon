@@ -1,4 +1,5 @@
 import type { EnvironmentReport } from './environment'
+import type { Harness, ModelDiscovery, SettingsState } from '../settings/contracts'
 
 let launchToken = ''
 
@@ -90,6 +91,28 @@ export async function inspectEnvironment(
   await verifyBackend(token, signal)
   const response = await fetch('/api/environment', authenticatedRequest(token, signal))
   if (!response.ok) throw new Error('Environment checks unavailable.')
+  return response.json()
+}
+
+// Settings metadata is static scaffold data; neither operation starts native discovery.
+export async function inspectSettings(token: string, signal: AbortSignal): Promise<SettingsState> {
+  await verifyBackend(token, signal)
+  const response = await fetch('/api/settings', authenticatedRequest(token, signal))
+  if (!response.ok) throw new Error('Settings unavailable.')
+  return response.json()
+}
+
+export async function inspectModels(
+  token: string,
+  signal: AbortSignal,
+  harness: Harness,
+): Promise<ModelDiscovery> {
+  await verifyBackend(token, signal)
+  const response = await fetch(
+    `/api/environment/harnesses/${encodeURIComponent(harness)}/models`,
+    authenticatedRequest(token, signal),
+  )
+  if (!response.ok) throw new Error('Model metadata unavailable.')
   return response.json()
 }
 

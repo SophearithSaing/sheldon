@@ -6,10 +6,16 @@ const RuntimeConnection =
   import.meta.env.MODE !== 'fixture'
     ? defineAsyncComponent(() => import('./runtime/RuntimeConnection.vue'))
     : undefined
+const SettingsFixture =
+  import.meta.env.MODE === 'fixture' &&
+  new URLSearchParams(location.search).get('fixture') === 'settings'
+    ? defineAsyncComponent(() => import('./fixtures/SettingsFixture.vue'))
+    : undefined
 </script>
 
 <template>
-  <div class="application" :class="{ 'application--runtime': RuntimeConnection }">
+  <SettingsFixture v-if="SettingsFixture" />
+  <div v-else class="application" :class="{ 'application--runtime': RuntimeConnection }">
     <RuntimeConnection v-if="RuntimeConnection" />
     <GraphiteFixture />
   </div>

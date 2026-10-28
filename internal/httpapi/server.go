@@ -85,6 +85,10 @@ func Listen(address, devOrigin string) (*Server, error) {
 	s.stop = stop
 	s.mux.HandleFunc("GET /api/health", s.health)
 	s.mux.HandleFunc("GET /api/environment", s.environment)
+	s.mux.HandleFunc("GET /api/settings", s.settingsState)
+	s.mux.HandleFunc("PUT /api/settings", s.confirmSettings)
+	s.mux.HandleFunc("GET /api/environment/harnesses/{id}/models", s.modelDiscovery)
+	s.mux.HandleFunc("POST /api/environment/test-runs", s.testAnswer)
 	s.mux.HandleFunc("GET /api/fixture/events", s.fixtureEvents)
 	s.mux.HandleFunc("GET /instance-proof", s.identify)
 	s.mux.HandleFunc("POST /api/open", s.open)
