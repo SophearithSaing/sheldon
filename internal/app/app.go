@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -23,6 +24,12 @@ func Run(ctx context.Context, prURL string, stdout, stderr io.Writer) (result er
 	paths, err := platform.Resolve()
 	if err != nil {
 		return err
+	}
+	devOrigin := os.Getenv("SHELDON_DEV_ORIGIN")
+	if devOrigin != "" {
+		if err := httpapi.ValidateOrigin(devOrigin); err != nil {
+			return err
+		}
 	}
 	i, err := openInstance(paths.Data)
 	if err != nil {
@@ -50,7 +57,7 @@ func Run(ctx context.Context, prURL string, stdout, stderr io.Writer) (result er
 		}
 		if owned {
 			cancel()
-			return serve(ctx, paths, i, prURL, stdout, stderr)
+			return serve(ctx, paths, i, prURL, devOrigin, stdout, stderr)
 		}
 		record, err := i.read()
 		if err != nil {
@@ -63,6 +70,9 @@ func Run(ctx context.Context, prURL string, stdout, stderr io.Writer) (result er
 		if err := client.Verify(startup); err != nil {
 			continue
 		}
+		if devOrigin != "" && record.DevOrigin != devOrigin {
+			return errors.New("the running instance uses a different UI origin; stop it before starting development mode")
+		}
 
 		if prURL != "" {
 			// Never retry an open with unknown delivery after a network error.
@@ -70,13 +80,20 @@ func Run(ctx context.Context, prURL string, stdout, stderr io.Writer) (result er
 				return err
 			}
 		}
-		return launch(ctx, paths, client, record.URL, stdout, stderr)
+		return launch(ctx, paths, client, record.URL, record.DevOrigin, stdout, stderr)
 	}
 }
 
 // serve publishes discovery only after binding, then drains HTTP before releasing ownership.
-func serve(ctx context.Context, paths platform.Paths, i *instance, prURL string, stdout, stderr io.Writer) (result error) {
-	s, err := httpapi.Listen("")
+func serve(ctx context.Context, paths platform.Paths, i *instance, prURL, devOrigin string, stdout, stderr io.Writer) (result error) {
+	address := ""
+	if devOrigin != "" {
+		address = os.Getenv("SHELDON_DEV_LISTEN")
+		if address == "" {
+			address = "127.0.0.1:7331"
+		}
+	}
+	s, err := httpapi.Listen(address, devOrigin)
 	if err != nil {
 		return err
 	}
@@ -97,7 +114,7 @@ func serve(ctx context.Context, paths platform.Paths, i *instance, prURL string,
 			return err
 		}
 	}
-	if err := i.publish(record{URL: s.URL(), Token: s.APIToken()}); err != nil {
+	if err := i.publish(record{URL: s.URL(), Token: s.APIToken(), DevOrigin: devOrigin}); err != nil {
 		return err
 	}
 	client, err := httpapi.NewClient(s.URL(), s.APIToken())
@@ -110,7 +127,7 @@ func serve(ctx context.Context, paths platform.Paths, i *instance, prURL string,
 	if err != nil {
 		return err
 	}
-	if err := launch(ctx, paths, client, s.URL(), stdout, stderr); err != nil {
+	if err := launch(ctx, paths, client, s.URL(), devOrigin, stdout, stderr); err != nil {
 		return err
 	}
 	select {
@@ -125,15 +142,24 @@ func serve(ctx context.Context, paths platform.Paths, i *instance, prURL string,
 }
 
 // launch opens the browser without logging credentials and leaves failures actionable.
-func launch(ctx context.Context, paths platform.Paths, client *httpapi.Client, origin string, stdout, stderr io.Writer) error {
+func launch(ctx context.Context, paths platform.Paths, client *httpapi.Client, origin, devOrigin string, stdout, stderr io.Writer) error {
 	target, err := client.BrowserURL()
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "Sheldon: %s\n", origin)
 	browserCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if devOrigin != "" {
+		target, err = client.DevelopmentURL(browserCtx, devOrigin)
+		if err != nil {
+			fmt.Fprintln(stderr, "Development UI is unavailable or unverified. Start Vite at the configured development origin, then run sheldon again. The backend remains running.")
+			return nil
+		}
+		origin = devOrigin
+		fmt.Fprintf(stdout, "Development UI: %s\n", origin)
+	}
 	err = openBrowser(browserCtx, target)
-	cancel()
 	if err != nil {
 		// Browser/OS errors may include the launch URL, so do not print them.
 		fmt.Fprintf(stderr, "Browser launch failed. Open %s and enter the token field from %s, or run sheldon again to retry.\n", origin, filepath.Join(paths.Data, "instance.lock"))

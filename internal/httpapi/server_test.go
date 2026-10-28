@@ -15,7 +15,7 @@ import (
 
 func newTestServer(t *testing.T, address string) (*Server, *http.Client) {
 	t.Helper()
-	s, err := Listen(address)
+	s, err := Listen(address, "")
 	if err != nil {
 		var network *net.OpError
 		if strings.HasPrefix(address, "[::1]") && errors.As(err, &network) {
@@ -78,7 +78,7 @@ func request(t *testing.T, s *Server, client *http.Client, method, path, body st
 func TestListenOnlyOnNumericLoopback(t *testing.T) {
 	for _, address := range []string{":0", "0.0.0.0:0", "[::]:0", "192.0.2.1:0", "localhost:0", "example.com:80", "127.0.0.1", "127.0.0.1:65536", "127.0.0.1:+1"} {
 		t.Run(address, func(t *testing.T) {
-			s, err := Listen(address)
+			s, err := Listen(address, "")
 			if err == nil {
 				s.Shutdown(context.Background())
 				t.Fatal("accepted unsafe address")
@@ -186,7 +186,7 @@ func TestCredentialsArePerServerAndNotFormatted(t *testing.T) {
 }
 
 func TestShutdownWithoutServe(t *testing.T) {
-	s, err := Listen("")
+	s, err := Listen("", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -38,7 +38,7 @@ func TestCLILaunchForwardAndSignalShutdown(t *testing.T) {
 	// No desktop opener is available in this fixture; never launch a real browser.
 	env := append(os.Environ(), "SHELDON_CLI_PROCESS_HELPER=1", "SHELDON_CLI_OPEN_URL=", "HOME="+root,
 		"XDG_DATA_HOME="+filepath.Join(root, "data"), "XDG_CACHE_HOME="+filepath.Join(root, "cache"),
-		"XDG_RUNTIME_DIR="+filepath.Join(root, "runtime"), "PATH="+root)
+		"XDG_RUNTIME_DIR="+filepath.Join(root, "runtime"), "PATH="+root, "SHELDON_DEV_ORIGIN=", "SHELDON_DEV_LISTEN=")
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 	owner := exec.CommandContext(ctx, executable, "-test.run=^TestCLIProcessHelper$")

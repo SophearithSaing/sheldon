@@ -22,7 +22,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "untrusted request authority")
 		return
 	}
-	if origins := r.Header.Values("Origin"); len(origins) > 1 || (len(origins) == 1 && origins[0] != s.origin) {
+	if origins := r.Header.Values("Origin"); len(origins) > 1 || (len(origins) == 1 && !s.trustedOrigin(origins[0])) {
 		writeError(w, http.StatusForbidden, "untrusted request origin")
 		return
 	}
@@ -37,6 +37,14 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// trustedOrigin accepts the server origin and, only in development, one exact UI origin.
+func (s *Server) trustedOrigin(origin string) bool {
+	if origin == s.origin {
+		return true
+	}
+	return s.devOrigin != "" && origin == s.devOrigin
 }
 
 // authenticate checks the request's explicit API bearer credential.

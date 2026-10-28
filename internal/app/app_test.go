@@ -3,6 +3,7 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -61,6 +63,8 @@ fi
 	t.Setenv("PATH", bin)
 	t.Setenv("SHELDON_TEST_BROWSER_LOG", log)
 	t.Setenv("SHELDON_TEST_BROWSER_FAIL", "")
+	t.Setenv("SHELDON_DEV_ORIGIN", "")
+	t.Setenv("SHELDON_DEV_LISTEN", "")
 	paths, err := platform.Resolve()
 	if err != nil {
 		t.Fatal(err)
@@ -198,6 +202,117 @@ func TestFirstLaunchAndSecondInstanceForwarding(t *testing.T) {
 	}
 	if targets := env.launches(t); len(targets) != 4 || targets[3] != a.target {
 		t.Fatal("data-root locking was bypassed")
+	}
+}
+
+func TestDevelopmentLaunchAndForwardingUseTheOwnersVerifiedUI(t *testing.T) {
+	env := newAppEnvironment(t)
+	reserved, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reserved.Close()
+	target, err := url.Parse("http://" + reserved.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	director := proxy.Director
+	proxy.Director = func(r *http.Request) {
+		origin := "http://" + r.Host
+		director(r)
+		r.Host = target.Host
+		r.Header.Set("Origin", origin)
+	}
+	frontend := httptest.NewServer(proxy)
+	defer frontend.Close()
+	t.Setenv("SHELDON_DEV_ORIGIN", frontend.URL)
+	t.Setenv("SHELDON_DEV_LISTEN", target.Host)
+	reserved.Close()
+	a := startApp(t, env, "https://github.com/owner/repo/pull/1")
+	if !strings.HasPrefix(a.target, frontend.URL+"/#token=") {
+		t.Fatal("development launch did not use the verified proxy")
+	}
+	// A plain later invocation uses the owner's recorded UI, not its own environment.
+	t.Setenv("SHELDON_DEV_ORIGIN", "")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := Run(ctx, "https://github.com/owner/repo/pull/2", io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if launches := env.launches(t); len(launches) != 2 || launches[1] != a.target {
+		t.Fatal("forwarder lost the owner's development UI")
+	}
+	state, _ := readOpenState(t, a.target)
+	if state != "https://github.com/owner/repo/pull/2" {
+		t.Fatal("development open request was not forwarded")
+	}
+	t.Setenv("SHELDON_DEV_ORIGIN", "http://127.0.0.1:5176")
+	if Run(ctx, "https://github.com/owner/repo/pull/3", io.Discard, io.Discard) == nil {
+		t.Fatal("different development configuration silently reused the owner")
+	}
+	state, _ = readOpenState(t, a.target)
+	if state != "https://github.com/owner/repo/pull/2" {
+		t.Fatal("mismatched development launch changed the pending PR")
+	}
+}
+
+func TestUnverifiedDevelopmentUIKeepsBackendRunningWithoutLaunchingBrowser(t *testing.T) {
+	env := newAppEnvironment(t)
+	frontend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Error("unverified UI received a bearer credential")
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer frontend.Close()
+	t.Setenv("SHELDON_DEV_ORIGIN", frontend.URL)
+	t.Setenv("SHELDON_DEV_LISTEN", "127.0.0.1:0")
+	ctx, cancel := context.WithCancel(context.Background())
+	reader, writer := io.Pipe()
+	done := make(chan error, 1)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(4 * time.Second):
+			t.Error("runtime did not stop")
+		}
+		reader.Close()
+		writer.Close()
+	})
+	go func() { done <- Run(ctx, "", io.Discard, writer) }()
+	guidance := make(chan string, 1)
+	go func() { line, _ := bufio.NewReader(reader).ReadString('\n'); guidance <- line }()
+	select {
+	case line := <-guidance:
+		if !strings.Contains(line, "Development UI is unavailable or unverified") {
+			t.Fatal("missing development connection guidance")
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("no guidance for an unverified development UI")
+	}
+	i, err := openInstance(env.paths.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer i.close()
+	state, err := i.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := httpapi.NewClient(state.URL, state.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Verify(ctx); err != nil {
+		t.Fatal("backend stopped when the development UI was unavailable")
+	}
+	if len(env.launches(t)) != 0 {
+		t.Fatal("opened an unverified browser origin")
 	}
 }
 
@@ -375,7 +490,7 @@ func TestContenderWaitsForPublication(t *testing.T) {
 	if owned, err := i.acquire(); err != nil || !owned {
 		t.Fatal("could not own fixture lock")
 	}
-	s, err := httpapi.Listen("")
+	s, err := httpapi.Listen("", "")
 	if err != nil {
 		t.Fatal(err)
 	}

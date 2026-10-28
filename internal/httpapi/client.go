@@ -9,11 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
 	"net/http"
-	"net/netip"
-	"net/url"
-	"strconv"
 	"time"
 )
 
@@ -29,14 +25,8 @@ type Client struct {
 
 // NewClient validates a discovery record without sending any requests.
 func NewClient(origin, token string) (*Client, error) {
-	u, err := url.Parse(origin)
-	if err != nil || u.Scheme != "http" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
-		return nil, errors.New("invalid local instance address")
-	}
-	ip, err := netip.ParseAddr(u.Hostname())
-	port, portErr := strconv.Atoi(u.Port())
-	if err != nil || !ip.IsLoopback() || ip.Is4In6() || ip.Zone() != "" || portErr != nil || port < 1 || port > 65535 || origin != "http://"+net.JoinHostPort(ip.String(), strconv.Itoa(port)) {
-		return nil, errors.New("invalid local instance address")
+	if err := ValidateOrigin(origin); err != nil {
+		return nil, err
 	}
 	secret, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(secret) != 32 || base64.RawURLEncoding.EncodeToString(secret) != token {
@@ -68,7 +58,10 @@ func (s *Server) identify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid challenge")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"proof": instanceProof(s.apiToken, s.origin, values[0])})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"origin": s.origin,
+		"proof":  instanceProof(s.apiToken, s.origin, values[0]),
+	})
 }
 
 // Verify checks a fresh server proof before any bearer credential is transmitted.
@@ -76,11 +69,21 @@ func (s *Server) identify(w http.ResponseWriter, r *http.Request) {
 // during verification; this is not protection against a later port takeover.
 func (c *Client) Verify(ctx context.Context) error {
 	c.verified = false
+	if err := c.verifyAt(ctx, c.origin); err != nil {
+		return err
+	}
+	c.verified = true
+	return nil
+}
+
+// verifyAt checks the expected backend proof, directly or through a validated proxy.
+// The expected proof remains bound to the backend origin, not the proxy address.
+func (c *Client) verifyAt(ctx context.Context, target string) error {
 	challenge, err := newSecret()
 	if err != nil {
 		return err
 	}
-	r, err := http.NewRequestWithContext(ctx, "GET", c.origin+"/instance-proof", nil)
+	r, err := http.NewRequestWithContext(ctx, "GET", target+"/instance-proof", nil)
 	if err != nil {
 		return errors.New("cannot prepare instance verification")
 	}
@@ -97,7 +100,6 @@ func (c *Client) Verify(ctx context.Context) error {
 	if response.StatusCode != http.StatusOK || err != nil || len(data) > 1024 || json.Unmarshal(data, &body) != nil || !equalSecret(body.Proof, instanceProof(c.token, c.origin, challenge)) {
 		return errors.New("local instance verification failed")
 	}
-	c.verified = true
 	return nil
 }
 
@@ -131,6 +133,21 @@ func (c *Client) BrowserURL() (string, error) {
 		return "", errors.New("local instance has not been verified")
 	}
 	return c.origin + "/#token=" + c.token, nil
+}
+
+// DevelopmentURL verifies a loopback Vite proxy before giving it a launch fragment.
+// It reuses the API token; no browser session or additional credential is created.
+func (c *Client) DevelopmentURL(ctx context.Context, origin string) (string, error) {
+	if !c.verified {
+		return "", errors.New("local instance has not been verified")
+	}
+	if err := ValidateOrigin(origin); err != nil {
+		return "", err
+	}
+	if err := c.verifyAt(ctx, origin); err != nil {
+		return "", err
+	}
+	return origin + "/#token=" + c.token, nil
 }
 
 // String returns a credential-safe client description.

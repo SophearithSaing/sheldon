@@ -64,7 +64,7 @@ func TestFixtureSSEAcceptsSameOriginBearer(t *testing.T) {
 }
 
 func TestDisconnectedStreamReleasesHandler(t *testing.T) {
-	s, err := Listen("")
+	s, err := Listen("", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestDisconnectedStreamReleasesHandler(t *testing.T) {
 }
 
 func TestShutdownDeadlineClosesStalledRequest(t *testing.T) {
-	s, err := Listen("")
+	s, err := Listen("", "")
 	if err != nil {
 		t.Fatal(err)
 	}

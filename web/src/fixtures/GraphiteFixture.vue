@@ -270,7 +270,7 @@ function selectFile(id: string, closeFiles: () => void) {
         </div>
       </template>
       <template #footer>
-        <span>Fixture only · no backend requests or agent connection</span>
+        <span>Sample workspace · no PR loading or agent connection</span>
         <a :href="fontLicenseUrl" target="_blank" rel="noopener noreferrer"
           >JetBrains Mono license <span class="sr-only">(opens in a new tab)</span></a
         >

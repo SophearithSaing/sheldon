@@ -17,8 +17,9 @@ type instance struct {
 }
 
 type record struct {
-	URL   string `json:"url"`
-	Token string `json:"token"`
+	URL       string `json:"url"`
+	Token     string `json:"token"`
+	DevOrigin string `json:"devOrigin,omitempty"`
 }
 
 // openInstance opens a private lock/discovery file without claiming ownership.

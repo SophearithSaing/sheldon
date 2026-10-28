@@ -25,6 +25,7 @@ type Server struct {
 	http      *http.Server
 	mux       *http.ServeMux
 	origin    string
+	devOrigin string
 	authority string
 	apiToken  string
 	stop      context.CancelFunc
@@ -34,7 +35,13 @@ type Server struct {
 
 // Listen opens a numeric loopback address and prepares the protected API.
 // An empty address selects 127.0.0.1:0; port zero lets the OS choose a free port.
-func Listen(address string) (*Server, error) {
+// An optional development origin is accepted only when explicitly configured.
+func Listen(address, devOrigin string) (*Server, error) {
+	if devOrigin != "" {
+		if err := ValidateOrigin(devOrigin); err != nil {
+			return nil, err
+		}
+	}
 	if address == "" {
 		address = "127.0.0.1:0"
 	}
@@ -58,7 +65,12 @@ func Listen(address string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{listener: listener, mux: http.NewServeMux(), authority: listener.Addr().String()}
+	s := &Server{
+		listener:  listener,
+		mux:       http.NewServeMux(),
+		authority: listener.Addr().String(),
+		devOrigin: devOrigin,
+	}
 	s.origin = "http://" + s.authority
 	s.apiToken, err = newSecret()
 	if err != nil {
