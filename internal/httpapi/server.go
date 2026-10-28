@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/SophearithSaing/sheldon/internal/ui"
 )
 
 // Server owns a loopback listener and an in-memory API bearer credential.
@@ -84,7 +86,9 @@ func Listen(address, devOrigin string) (*Server, error) {
 	s.mux.HandleFunc("GET /instance-proof", s.identify)
 	s.mux.HandleFunc("POST /api/open", s.open)
 	s.mux.HandleFunc("GET /api/open", s.openState)
-	s.mux.HandleFunc("GET /{$}", s.landing)
+	s.mux.HandleFunc("/api", http.NotFound)
+	s.mux.HandleFunc("/api/", http.NotFound)
+	s.mux.Handle("/", ui.Handler())
 	s.http = &http.Server{
 		Handler:           http.HandlerFunc(s.handle),
 		BaseContext:       func(net.Listener) context.Context { return lifetime },

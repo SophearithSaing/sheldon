@@ -1,6 +1,7 @@
 {
   "name": "sheldon",
   "private": true,
+  "type": "module",
   "version": "0.0.0",
   "packageManager": "npm@11.17.0",
   "engines": {
@@ -11,9 +12,11 @@
     "web"
   ],
   "scripts": {
+    "build": "node scripts/build.js",
     "dev": "npm run dev --workspace=@sheldon/web",
     "typecheck": "npm run typecheck --workspace=@sheldon/web",
     "test:web": "npm run test --workspace=@sheldon/web",
+    "test:release": "npm run test --workspace=@sheldon/web -- --config playwright.release.config.ts",
     "build:web": "npm run build --workspace=@sheldon/web"
   }
 }

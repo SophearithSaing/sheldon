@@ -1,9 +1,9 @@
 import { createApp } from 'vue'
 import App from './App.vue'
-import { captureLaunchToken } from './development/client'
+import { captureLaunchToken } from './runtime/client'
 import './styles/tokens.css'
 import './styles/fonts.css'
 import './styles/base.css'
 
-if (import.meta.env.DEV) captureLaunchToken()
+captureLaunchToken()
 createApp(App).mount('#app')

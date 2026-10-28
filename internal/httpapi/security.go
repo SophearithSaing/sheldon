@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"path"
 	"strings"
 )
 
@@ -35,6 +36,11 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
+	}
+	// Reject ambiguous paths instead of letting ServeMux redirect them into the shell.
+	if path.Clean(r.URL.Path) != r.URL.Path || strings.Contains(r.URL.Path, "\\") {
+		http.NotFound(w, r)
+		return
 	}
 	s.mux.ServeHTTP(w, r)
 }

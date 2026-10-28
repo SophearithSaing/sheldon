@@ -2,26 +2,26 @@
 import { defineAsyncComponent } from 'vue'
 import GraphiteFixture from './fixtures/GraphiteFixture.vue'
 
-const DevelopmentConnection =
-  import.meta.env.DEV && import.meta.env.MODE === 'development'
-    ? defineAsyncComponent(() => import('./development/DevelopmentConnection.vue'))
+const RuntimeConnection =
+  import.meta.env.MODE !== 'fixture'
+    ? defineAsyncComponent(() => import('./runtime/RuntimeConnection.vue'))
     : undefined
 </script>
 
 <template>
-  <div class="application" :class="{ 'application--development': DevelopmentConnection }">
-    <DevelopmentConnection v-if="DevelopmentConnection" />
+  <div class="application" :class="{ 'application--runtime': RuntimeConnection }">
+    <RuntimeConnection v-if="RuntimeConnection" />
     <GraphiteFixture />
   </div>
 </template>
 
 <style scoped>
-.application--development {
+.application--runtime {
   display: flex;
   flex-direction: column;
   height: 100dvh;
 }
-.application--development > .fixture-page {
+.application--runtime > .fixture-page {
   flex: 1;
   height: auto;
 }

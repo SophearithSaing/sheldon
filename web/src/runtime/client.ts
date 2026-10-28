@@ -24,7 +24,7 @@ function authenticatedRequest(token: string, signal: AbortSignal): RequestInit {
   }
 }
 
-// Manual token entry also verifies the upstream before transmitting a bearer.
+// Verify the runtime before transmitting a bearer, including after manual token entry.
 // The origin is public proof metadata, never a destination for browser requests.
 async function verifyBackend(token: string, signal: AbortSignal): Promise<void> {
   const challengeBytes = crypto.getRandomValues(new Uint8Array(32))

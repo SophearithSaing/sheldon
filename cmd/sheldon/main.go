@@ -23,7 +23,7 @@ Usage:
   sheldon --help
   sheldon --version
 
-Starts the local runtime; Ctrl+C stops it. PR loading and the application UI are not implemented yet.
+Starts the local runtime; Ctrl+C stops it. PR loading and agent integration are not implemented yet.
 `
 
 // main exits with the CLI status after releasing signal handlers and runtime resources.

@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import UiButton from '../components/ui/UiButton.vue'
 import { fixtureEvents, inspectBackend, takeLaunchToken } from './client'
 
+const development = import.meta.env.DEV
 const tokenInput = ref('')
 const state = ref('Disconnected')
 const pendingURL = ref('')
@@ -57,31 +58,35 @@ onUnmounted(disconnect)
 </script>
 
 <template>
-  <section class="development-connection" aria-label="Development backend connection">
-    <div class="development-heading">
-      <h2>Development backend</h2>
+  <section
+    class="runtime-connection"
+    :aria-label="development ? 'Development backend connection' : 'Runtime connection'"
+  >
+    <div class="runtime-heading">
+      <h2>{{ development ? 'Development backend' : 'Local runtime' }}</h2>
       <p class="muted small">REST/SSE connectivity only — not an agent connection.</p>
     </div>
-    <form v-if="!connected" class="development-form" @submit.prevent="connect()">
-      <label for="development-api-token">API token</label>
+    <form v-if="!connected" class="runtime-form" @submit.prevent="connect()">
+      <label for="runtime-api-token">API token</label>
       <input
-        id="development-api-token"
+        id="runtime-api-token"
         v-model="tokenInput"
         type="password"
         autocomplete="off"
         spellcheck="false"
-        aria-describedby="development-token-hint"
+        aria-describedby="runtime-token-hint"
       />
       <UiButton type="submit">Connect backend</UiButton>
     </form>
-    <p v-if="!connected" id="development-token-hint" class="muted small">
-      Run the CLI in development mode to connect automatically, or enter the token from its private
-      instance.lock. Tokens stay in page memory; reloading requires reconnecting.
+    <p v-if="!connected" id="runtime-token-hint" class="muted small">
+      Run sheldon again to connect automatically, or enter the token from its private instance.lock.
+      Tokens stay in page memory; reloading requires reconnecting.
     </p>
-    <div class="development-status">
+    <div class="runtime-status">
       <p role="status">{{ state }}</p>
       <span v-if="connected" class="small">
-        Fixture heartbeats: <output aria-label="Fixture heartbeats" aria-live="off">{{ heartbeats }}</output>
+        Fixture heartbeats:
+        <output aria-label="Fixture heartbeats" aria-live="off">{{ heartbeats }}</output>
       </span>
       <UiButton v-if="connected || state === 'Connecting'" variant="quiet" @click="disconnect">
         Disconnect backend
@@ -94,7 +99,7 @@ onUnmounted(disconnect)
 </template>
 
 <style scoped>
-.development-connection {
+.runtime-connection {
   display: grid;
   flex-shrink: 0;
   gap: var(--space-2);
@@ -102,19 +107,19 @@ onUnmounted(disconnect)
   border-bottom: 1px solid var(--color-border-strong);
   background: var(--color-panel);
 }
-.development-heading,
-.development-form,
-.development-status {
+.runtime-heading,
+.runtime-form,
+.runtime-status {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
 }
-.development-heading h2 {
+.runtime-heading h2 {
   font-size: var(--text-body);
   font-weight: 600;
 }
-.development-form input {
+.runtime-form input {
   min-width: 0;
   min-height: var(--target-control);
   width: 25rem;

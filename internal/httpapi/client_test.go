@@ -128,7 +128,7 @@ func TestVerificationProofCannotBeReplayed(t *testing.T) {
 	}
 }
 
-func TestLandingClearsFragmentAndWithholdsToken(t *testing.T) {
+func TestShellWithholdsToken(t *testing.T) {
 	s, c := newTestServer(t, "")
 	r := request(t, s, c, "GET", "/", "", nil)
 	body, err := io.ReadAll(r.Body)
@@ -138,10 +138,7 @@ func TestLandingClearsFragmentAndWithholdsToken(t *testing.T) {
 	if r.StatusCode != http.StatusOK || !strings.HasPrefix(r.Header.Get("Content-Type"), "text/html") || strings.Contains(string(body), s.APIToken()) {
 		t.Fatal("unsafe runtime page")
 	}
-	if strings.Index(landingScript, "history.replaceState") > strings.Index(landingScript, "fetch(") {
-		t.Fatal("fragment not cleared before requests")
-	}
-	if !strings.Contains(r.Header.Get("Content-Security-Policy"), "script-src 'sha256-") || !strings.Contains(string(body), "not implemented yet") {
-		t.Fatal("runtime page lacks CSP or honest scope label")
+	if !strings.Contains(r.Header.Get("Content-Security-Policy"), "script-src 'self'") {
+		t.Fatal("runtime page lacks CSP")
 	}
 }

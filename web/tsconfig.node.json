@@ -15,5 +15,5 @@
     "noUnusedParameters": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["vite.config.ts", "playwright.config.ts", "development/**/*.ts", "tests/**/*.ts"]
+  "include": ["vite.config.ts", "playwright*.config.ts", "development/**/*.ts", "tests/**/*.ts"]
 }

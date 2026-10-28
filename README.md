@@ -2,7 +2,7 @@
 
 **Don't just merge it. Understand it.**
 
-A local pull-request explainer. **Scaffold only**—server, PR loading and agent integration are not implemented yet.
+A local pull-request explainer. **Runtime + frontend fixtures only**—PR loading and agent integration are not implemented yet.
 
 ## Toolchains
 
@@ -12,17 +12,27 @@ Go **1.26.5** · Node **26.5.0** · npm **11.17.0**
 
 ```sh
 npm ci --ignore-scripts
-npm run dev
+npm run dev # terminal 1: Vite
 ```
-
-Frontend: <http://127.0.0.1:5173>
-
-CLI (help/version only):
 
 ```sh
-go run ./cmd/sheldon --help
-go run ./cmd/sheldon --version
+SHELDON_DEV_ORIGIN=http://127.0.0.1:5173 go run ./cmd/sheldon # terminal 2: Go
 ```
+
+UI: <http://127.0.0.1:5173> · backend: `127.0.0.1:7331`. Stop any existing standalone instance first. The CLI opens the authenticated UI; after reloading, rerun the CLI in another terminal to reconnect.
+
+## Release
+
+Build once, then run one binary (no Node needed at runtime; Ctrl+C stops it):
+
+```sh
+npm run build
+./bin/sheldon
+./bin/sheldon open https://github.com/owner/repo/pull/1
+./bin/sheldon --help
+```
+
+Windows output: `bin/sheldon.exe`. Plain `go run`/`go build` omit the embedded UI; use Vite for development.
 
 ## Check & build
 
@@ -34,13 +44,30 @@ npm run typecheck
 npm run build:web
 ```
 
-Frontend output: `web/dist/` (not yet embedded in Go).
+`npm run build` builds `web/dist/`, copies it to `internal/ui/dist/`, then compiles with `-tags=release`. Generated assets and binaries stay uncommitted.
+
+Browser tests:
+
+```sh
+npm exec --workspace=@sheldon/web -- playwright install chromium # first run
+npm run test:web
+npm run test:release # isolated binary + browser lifecycle checks (Linux/macOS)
+```
 
 ## Layout
 
 ```text
-cmd/sheldon/    Go CLI + tests
-web/           Vue 3 + TypeScript + Vite
+cmd/sheldon/          Go CLI + tests
+internal/platform/   OS storage paths
+internal/process/    Owned command execution + cancellation
+internal/httpapi/    Protected loopback REST/SSE foundation
+internal/app/        Launch, browser handoff + single-writer lifecycle
+internal/githubpr/   GitHub PR URL validation (no fetching)
+internal/ui/         Embedded release shell / asset-free development fallback
+scripts/build.js     Frontend → embed copy → Go build
+web/                 Vue + Graphite fixtures + browser tests
 ```
+
+Further launches reuse the running instance. A private `instance.lock` lives in the OS data directory; do not delete it while Sheldon is running.
 
 Validated on Linux/amd64 only.

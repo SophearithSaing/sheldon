@@ -133,7 +133,7 @@ test('fixture parser handles fragmented CRLF frames and cancels when its consume
 }) => {
   await page.goto('/')
   const result = await page.evaluate(async () => {
-    const modulePath = '/src/development/client.ts'
+    const modulePath = '/src/runtime/client.ts'
     const { fixtureEvents } = await import(modulePath)
     const originalFetch = window.fetch
     let canceled = false
@@ -176,7 +176,7 @@ test('fixture parser bounds incomplete frames and the UI handles connection erro
 }) => {
   await page.goto('/')
   const bounded = await page.evaluate(async () => {
-    const modulePath = '/src/development/client.ts'
+    const modulePath = '/src/runtime/client.ts'
     const { fixtureEvents } = await import(modulePath)
     const originalFetch = window.fetch
     window.fetch = async () =>
