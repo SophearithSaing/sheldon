@@ -1,3 +1,5 @@
+import type { EnvironmentReport } from './environment'
+
 let launchToken = ''
 
 // Keep the credential out of component props (and Vue's diagnostic prop traces).
@@ -78,6 +80,17 @@ export async function inspectBackend(token: string, signal: AbortSignal): Promis
   const state: { url?: unknown } = await open.json()
   if (typeof state.url !== 'string') throw new Error('Unexpected backend response.')
   return state.url
+}
+
+// Called only when diagnostics are opened/refreshed, never during startup or streaming.
+export async function inspectEnvironment(
+  token: string,
+  signal: AbortSignal,
+): Promise<EnvironmentReport> {
+  await verifyBackend(token, signal)
+  const response = await fetch('/api/environment', authenticatedRequest(token, signal))
+  if (!response.ok) throw new Error('Environment checks unavailable.')
+  return response.json()
 }
 
 // Live-only fixture SSE. No EventSource, query credentials, replay or agent dispatch.

@@ -23,16 +23,17 @@ import (
 // Server owns a loopback listener and an in-memory API bearer credential.
 // Construct it with Listen, call Serve, and release it with Shutdown.
 type Server struct {
-	listener  net.Listener
-	http      *http.Server
-	mux       *http.ServeMux
-	origin    string
-	devOrigin string
-	authority string
-	apiToken  string
-	stop      context.CancelFunc
-	mu        sync.Mutex
-	openURL   string
+	listener        net.Listener
+	http            *http.Server
+	mux             *http.ServeMux
+	origin          string
+	devOrigin       string
+	authority       string
+	apiToken        string
+	stop            context.CancelFunc
+	mu              sync.Mutex
+	openURL         string
+	environmentBusy chan struct{}
 }
 
 // Listen opens a numeric loopback address and prepares the protected API.
@@ -68,10 +69,11 @@ func Listen(address, devOrigin string) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		listener:  listener,
-		mux:       http.NewServeMux(),
-		authority: listener.Addr().String(),
-		devOrigin: devOrigin,
+		listener:        listener,
+		mux:             http.NewServeMux(),
+		authority:       listener.Addr().String(),
+		devOrigin:       devOrigin,
+		environmentBusy: make(chan struct{}, 1),
 	}
 	s.origin = "http://" + s.authority
 	s.apiToken, err = newSecret()
@@ -82,6 +84,7 @@ func Listen(address, devOrigin string) (*Server, error) {
 	lifetime, stop := context.WithCancel(context.Background())
 	s.stop = stop
 	s.mux.HandleFunc("GET /api/health", s.health)
+	s.mux.HandleFunc("GET /api/environment", s.environment)
 	s.mux.HandleFunc("GET /api/fixture/events", s.fixtureEvents)
 	s.mux.HandleFunc("GET /instance-proof", s.identify)
 	s.mux.HandleFunc("POST /api/open", s.open)

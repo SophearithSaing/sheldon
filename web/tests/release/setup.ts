@@ -22,6 +22,7 @@ export default async function setup() {
   const env = {
     HOME: home,
     PATH: directory,
+    TMPDIR: directory,
     XDG_DATA_HOME: join(directory, 'data'),
     XDG_CACHE_HOME: join(directory, 'cache'),
     XDG_RUNTIME_DIR: join(directory, 'runtime'),

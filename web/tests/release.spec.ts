@@ -49,6 +49,16 @@ test('isolated release binary serves the authenticated shell, font and complete 
   expect(urls.every((value) => value.startsWith(url + '/'))).toBe(true)
   expect(urls.some((value) => value.includes(token))).toBe(false)
   expect(await page.content()).not.toContain(token)
+  // The isolated binary's PATH contains no external tools; this must be honest, not a fixture success.
+  await page.getByText('Environment & diagnostics', { exact: true }).click()
+  const diagnostics = page.getByRole('region', { name: 'Environment diagnostics' })
+  await expect(diagnostics.getByRole('article', { name: 'Git diagnostics' })).toContainText(
+    'missing',
+  )
+  await expect(diagnostics.getByRole('article', { name: 'OpenCode diagnostics' })).toContainText(
+    'missing',
+  )
+  await page.getByText('Environment & diagnostics', { exact: true }).click()
   expect(errors).toEqual([])
   await page.screenshot({ path: testInfo.outputPath('release-shell.png'), fullPage: true })
   const binary = process.env.SHELDON_RELEASE_BINARY!

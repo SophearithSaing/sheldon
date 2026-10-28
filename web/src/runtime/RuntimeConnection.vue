@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import UiButton from '../components/ui/UiButton.vue'
-import { fixtureEvents, inspectBackend, takeLaunchToken } from './client'
+import { fixtureEvents, inspectBackend, inspectEnvironment, takeLaunchToken } from './client'
+import EnvironmentDiagnostics from './EnvironmentDiagnostics.vue'
+import type { EnvironmentReport } from './environment'
 
 const development = import.meta.env.DEV
 const tokenInput = ref('')
@@ -10,6 +12,10 @@ const pendingURL = ref('')
 const heartbeats = ref(0)
 const connected = ref(false)
 let controller: AbortController | undefined
+const environmentReport = ref<EnvironmentReport>()
+const environmentLoading = ref(false)
+const environmentError = ref('')
+let environmentRequest: (() => Promise<EnvironmentReport>) | undefined
 
 function disconnect() {
   controller?.abort()
@@ -18,6 +24,28 @@ function disconnect() {
   pendingURL.value = ''
   heartbeats.value = 0
   state.value = 'Disconnected'
+  environmentRequest = undefined
+  environmentReport.value = undefined
+  environmentLoading.value = false
+  environmentError.value = ''
+}
+
+async function refreshEnvironment() {
+  if (!environmentRequest || environmentLoading.value) return
+  const current = controller
+  environmentLoading.value = true
+  environmentError.value = ''
+  try {
+    const report = await environmentRequest()
+    if (current === controller && !current?.signal.aborted) environmentReport.value = report
+  } catch {
+    if (current === controller && !current?.signal.aborted) {
+      environmentError.value =
+        'Environment checks could not finish. Retry after any active check finishes, and check the backend or external CLI installation.'
+    }
+  } finally {
+    if (current === controller) environmentLoading.value = false
+  }
 }
 
 async function connect(token = tokenInput.value) {
@@ -34,6 +62,7 @@ async function connect(token = tokenInput.value) {
     pendingURL.value = await inspectBackend(token, current.signal)
     if (current.signal.aborted) return
     connected.value = true
+    environmentRequest = () => inspectEnvironment(token, current.signal)
     state.value = 'Backend connected · waiting for fixture stream'
     for await (const event of fixtureEvents(token, current.signal)) {
       if (current.signal.aborted) return
@@ -45,8 +74,12 @@ async function connect(token = tokenInput.value) {
     }
   } catch {
     if (current.signal.aborted) return
+    current.abort()
     connected.value = false
     state.value = 'Connection failed or closed. Check the backend and API token, then reconnect.'
+  } finally {
+    if (current === controller) environmentRequest = undefined
+    token = ''
   }
 }
 
@@ -95,6 +128,13 @@ onUnmounted(disconnect)
     <p v-if="pendingURL" class="muted small">
       Pending open request: {{ pendingURL }} — not loaded.
     </p>
+    <EnvironmentDiagnostics
+      v-if="connected"
+      :report="environmentReport"
+      :loading="environmentLoading"
+      :error="environmentError"
+      @refresh="refreshEnvironment"
+    />
   </section>
 </template>
 
