@@ -8,8 +8,7 @@ import (
 	"strconv"
 )
 
-// ValidateOrigin accepts a canonical numeric-loopback HTTP origin with an explicit port.
-// Paths, credentials, query strings, fragments, DNS names and wildcard binds are rejected.
+// ValidateOrigin validates a canonical numeric-loopback HTTP origin.
 func ValidateOrigin(origin string) error {
 	u, err := url.Parse(origin)
 	if err != nil || u.Scheme != "http" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {

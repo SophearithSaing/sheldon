@@ -8,9 +8,7 @@ import (
 	"path/filepath"
 )
 
-// instance holds one stable OS-locked file per data root. Never unlink it: a
-// replacement inode could let two processes both believe they own the lock.
-// Byte zero is reserved for Windows' mandatory byte-range lock; JSON starts at 1.
+// instance holds one stable OS-locked discovery file per data root.
 type instance struct {
 	file  *os.File
 	owned bool
@@ -75,7 +73,7 @@ func (i *instance) read() (record, error) {
 	return r, nil
 }
 
-// close clears an owned record and releases the OS lock, leaving its inode intact.
+// close releases the OS lock and clears an owned record.
 func (i *instance) close() error {
 	var err error
 	if i.owned {

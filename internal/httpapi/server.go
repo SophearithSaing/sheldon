@@ -20,8 +20,7 @@ import (
 	"github.com/SophearithSaing/sheldon/internal/ui"
 )
 
-// Server owns a loopback listener and an in-memory API bearer credential.
-// Construct it with Listen, call Serve, and release it with Shutdown.
+// Server is a loopback HTTP server with a per-start bearer token.
 type Server struct {
 	listener  net.Listener
 	http      *http.Server
@@ -35,9 +34,7 @@ type Server struct {
 	openURL   string
 }
 
-// Listen opens a numeric loopback address and prepares the protected API.
-// An empty address selects 127.0.0.1:0; port zero lets the OS choose a free port.
-// An optional development origin is accepted only when explicitly configured.
+// Listen opens a loopback listener and prepares the protected API.
 func Listen(address, devOrigin string) (*Server, error) {
 	if devOrigin != "" {
 		if err := ValidateOrigin(devOrigin); err != nil {
@@ -123,8 +120,7 @@ func (s *Server) Serve() error {
 	return err
 }
 
-// Shutdown cancels active streams, drains requests and closes the listener.
-// If the deadline expires, remaining connections are forcibly closed.
+// Shutdown drains requests and closes the listener.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.stop()
 	err := s.http.Shutdown(ctx)

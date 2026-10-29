@@ -14,9 +14,7 @@ import (
 	"github.com/SophearithSaing/sheldon/internal/platform"
 )
 
-// Run starts the local runtime or forwards to its verified current owner.
-// An empty PR URL opens the runtime page without changing the pending PR intent.
-// Nonempty PR URLs must already be normalized and validated by the caller.
+// Run starts or forwards to the local runtime.
 func Run(ctx context.Context, prURL string, stdout, stderr io.Writer) (result error) {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -84,7 +82,7 @@ func Run(ctx context.Context, prURL string, stdout, stderr io.Writer) (result er
 	}
 }
 
-// serve publishes discovery only after binding, then drains HTTP before releasing ownership.
+// serve starts the HTTP server and publishes instance discovery.
 func serve(ctx context.Context, paths platform.Paths, i *instance, prURL, devOrigin string, stdout, stderr io.Writer) (result error) {
 	address := ""
 	if devOrigin != "" {
@@ -141,7 +139,7 @@ func serve(ctx context.Context, paths platform.Paths, i *instance, prURL, devOri
 	}
 }
 
-// launch opens the browser without logging credentials and leaves failures actionable.
+// launch opens the browser with a token-bearing launch URL.
 func launch(ctx context.Context, paths platform.Paths, client *httpapi.Client, origin, devOrigin string, stdout, stderr io.Writer) error {
 	target, err := client.BrowserURL()
 	if err != nil {

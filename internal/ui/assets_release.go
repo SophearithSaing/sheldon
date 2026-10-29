@@ -12,7 +12,7 @@ import (
 //go:embed dist
 var assets embed.FS
 
-// Handler serves only the embedded shell and its bundled assets, never source files.
+// Handler serves the embedded shell and bundled assets.
 func Handler() http.Handler {
 	root, err := fs.Sub(assets, "dist")
 	if err != nil {

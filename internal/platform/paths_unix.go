@@ -18,7 +18,7 @@ func Resolve() (Paths, error) {
 	return resolveUnix(runtime.GOOS, home)
 }
 
-// resolveUnix returns Sheldon storage paths for the given operating system and home directory.
+// resolveUnix returns Sheldon storage paths for the given Unix OS and home directory.
 func resolveUnix(goos, home string) (Paths, error) {
 	if !filepath.IsAbs(home) {
 		return Paths{}, errors.New("an absolute user home directory is required")

@@ -26,7 +26,7 @@ Usage:
 Starts the local runtime; Ctrl+C stops it. PR loading and agent integration are not implemented yet.
 `
 
-// main exits with the CLI status after releasing signal handlers and runtime resources.
+// main is the CLI entry point.
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr, app.Run)
@@ -34,7 +34,7 @@ func main() {
 	os.Exit(code)
 }
 
-// run validates CLI arguments before starting or contacting the local runtime.
+// run parses arguments and starts or contacts the local runtime.
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, start func(context.Context, string, io.Writer, io.Writer) error) int {
 	if len(args) == 1 {
 		switch args[0] {
