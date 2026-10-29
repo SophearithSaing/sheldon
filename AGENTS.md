@@ -1,13 +1,15 @@
 # Agent guide
 
 ## Coding conventions
+
 - Keep MVP code focused, idiomatic and consistent with nearby code. Avoid speculative abstractions, unused future types and production hooks added only for tests.
-- Format Go with `gofmt`; document non-test functions/methods with GoDoc. Use direct `os.Getenv` and `t.Setenv`, not injected environment getters.
+- Format Go with `gofmt`; document non-test functions/methods with a short and concise GoDoc. Use direct `os.Getenv` and `t.Setenv`, not injected environment getters.
 - Use Vue/TypeScript and ES-module `.js` scripts. Keep dependencies/toolchains pinned and use the npm lockfile.
 - Use OS storage directories, not project-local `.sheldon/`. Keep experiments in `refs/experiments/` and generated assets/binaries uncommitted.
 - Keep README command-focused. Number dev logs by milestone, not checkpoint.
 
 ### TypeScript documentation
+
 - Every function must have an explicit return type and a TSDoc header.
 - Include `@param` for every parameter. Include `@returns` only when returning a value; omit it for `void` functions (never write `@returns Nothing.`).
 - Body comments are forbidden except for complex algorithmic logic in long functions or non-obvious workarounds for third-party bugs.
@@ -33,6 +35,7 @@ public clearState(): void {
 ```
 
 ## Verification
+
 - Use the pinned toolchains; install dependencies with `npm ci --ignore-scripts`.
 - Go changes: run relevant tests, then `go test -race ./...` and `go vet ./...`.
 - Frontend changes: run `npm run typecheck`, `npm run test:web` and inspect relevant screenshots/UI states.
