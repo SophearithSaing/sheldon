@@ -8,6 +8,8 @@ A local pull-request explainer. **Runtime + frontend fixtures only**—PR loadin
 
 Go **1.26.5** · Node **26.5.0** · npm **11.17.0**
 
+Browser checks also need Playwright Chromium and its system libraries. Agent/GitHub checks use offline fixtures, not provider logins or paid requests. The planned review flow needs Git and a compatible externally installed/authenticated harness; `gh` is optional.
+
 ## Develop
 
 ```sh
@@ -54,7 +56,9 @@ go test -race ./...
 go vet ./...
 go build ./...
 npm run typecheck
-npm run build:web
+npm run build
+go test -race -tags=release ./...
+go vet -tags=release ./...
 ```
 
 `npm run build` builds `web/dist/`, copies it to `internal/ui/dist/`, then compiles with `-tags=release`. Generated assets and binaries stay uncommitted.
@@ -66,6 +70,8 @@ npm exec --workspace=@sheldon/web -- playwright install chromium # first run
 npm run test:web
 npm run test:release # isolated binary + browser lifecycle checks (Linux/macOS)
 ```
+
+[Foundation CI](.github/workflows/ci.yml) runs these checks on Ubuntu 24.04, starting without generated assets. It also compiles Windows/amd64 and macOS/arm64 tests; that is **not native platform validation**. CI never runs live agent experiments and does not upload private test artifacts.
 
 ## Layout
 
