@@ -98,7 +98,7 @@ func TestListenOnlyOnNumericLoopback(t *testing.T) {
 
 func TestProtectedAPIRequiresBearer(t *testing.T) {
 	s, client := newTestServer(t, "")
-	for _, path := range []string{"/api", "/api/health", "/api/fixture/events", "/api/not-found"} {
+	for _, path := range []string{"/api", "/api/health", "/api/open", "/api/not-found"} {
 		r := request(t, s, client, "GET", path, "", nil)
 		if r.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("unprotected %s: %d", path, r.StatusCode)
@@ -201,5 +201,52 @@ func TestShutdownWithoutServe(t *testing.T) {
 	if err == nil {
 		conn.Close()
 		t.Fatal("shutdown left an unused listener open")
+	}
+}
+
+func TestShutdownDeadlineClosesStalledRequest(t *testing.T) {
+	s, err := Listen("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A test-only body reader keeps a request active without a product mutation.
+	s.mux.HandleFunc("POST /api/test/stalled", func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+	})
+	active := make(chan struct{}, 1)
+	s.http.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateActive {
+			select {
+			case active <- struct{}{}:
+			default:
+			}
+		}
+	}
+	startTestServer(t, s)
+	conn, err := net.Dial("tcp", s.authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Declare a body but never send it. Shutdown must not wait for ReadTimeout.
+	_, err = io.WriteString(conn, "POST /api/test/stalled HTTP/1.1\r\nHost: "+s.authority+"\r\nAuthorization: Bearer "+s.APIToken()+"\r\nContent-Length: 100\r\n\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-active:
+	case <-time.After(time.Second):
+		t.Fatal("stalled request never became active")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err = s.Shutdown(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stalled request did not exercise forced shutdown: %v", err)
+	}
+	conn.SetReadDeadline(time.Now().Add(time.Second))
+	var b [1]byte
+	if _, err := conn.Read(b[:]); err == nil {
+		t.Fatal("stalled request survived shutdown")
 	}
 }

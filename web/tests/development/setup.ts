@@ -91,19 +91,6 @@ export default async function setup() {
       ['build', '-o', binary, './internal/httpapi/testdata/devserver'],
       { cwd: root, timeout: 60000 },
     )
-    const toolBinary = join(directory, process.platform === 'win32' ? 'tool.exe' : 'tool')
-    const toolBin = join(directory, 'tools')
-    const toolLog = join(directory, 'tool-calls')
-    await mkdir(toolBin)
-    await mkdir(toolLog)
-    await promisify(execFile)(
-      'go',
-      ['build', '-o', toolBinary, './internal/environment/testdata/tool'],
-      { cwd: root, timeout: 60000 },
-    )
-    for (const name of ['git', 'gh', 'opencode', 'codex', 'claude']) {
-      await cp(toolBinary, join(toolBin, name + (process.platform === 'win32' ? '.exe' : '')))
-    }
     const env = {
       ...process.env,
       HOME: join(directory, 'home'),
@@ -114,15 +101,7 @@ export default async function setup() {
       SHELDON_TEST_WEB_ROOT: webRoot,
       SHELDON_TEST_VITE_CACHE: join(directory, 'vite-cache'),
     }
-    children.push(
-      await start(
-        binary,
-        [],
-        { ...env, PATH: toolBin, SHELDON_ENV_TEST_LOG: toolLog },
-        'backend-ready',
-        logFile,
-      ),
-    )
+    children.push(await start(binary, [], env, 'backend-ready', logFile))
     children.push(
       await start(
         process.execPath,
@@ -146,7 +125,6 @@ export default async function setup() {
     process.env.SHELDON_TEST_STATE = stateFile
     process.env.SHELDON_TEST_WEB_ROOT = webRoot
     process.env.SHELDON_TEST_SERVER_LOG = logFile
-    process.env.SHELDON_TEST_TOOL_LOG = toolLog
     return cleanup
   } catch (error) {
     await cleanup()

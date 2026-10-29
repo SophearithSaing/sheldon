@@ -56,9 +56,7 @@ async function request(
   })
 }
 
-test('launch fragments clear before authenticated REST and live fixture SSE', async ({
-  page,
-}, testInfo) => {
+test('launch fragments clear before authenticated REST', async ({ page }, testInfo) => {
   const { token } = await credentials()
   const urls: string[] = []
   const messages: string[] = []
@@ -66,18 +64,7 @@ test('launch fragments clear before authenticated REST and live fixture SSE', as
   page.on('console', (message) => messages.push(message.text()))
   await page.goto(`/#token=${token}`)
   await expect(page).toHaveURL(frontend + '/')
-  await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toContainText(
-    /fixture stream connected|fixture heartbeat received/,
-  )
-  const heartbeats = page.getByRole('status', { name: 'Fixture heartbeats' })
-  await expect
-    .poll(async () => Number(await heartbeats.textContent()), { timeout: 4000 })
-    .toBeGreaterThanOrEqual(1)
-  const first = Number(await heartbeats.textContent())
-  await expect
-    .poll(async () => Number(await heartbeats.textContent()), { timeout: 4000 })
-    .toBeGreaterThan(first)
-  expect(urls.some((url) => url.includes('/api/fixture/events'))).toBe(true)
+  await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
   expect(urls.some((url) => url.includes(token))).toBe(false)
   expect(messages.some((message) => message.includes(token))).toBe(false)
   expect(await page.content()).not.toContain(token)
@@ -128,71 +115,8 @@ test('fixture-only development mode also clears launch fragments without connect
   expect(await page.content()).not.toContain(token)
 })
 
-test('fixture parser handles fragmented CRLF frames and cancels when its consumer stops', async ({
-  page,
-}) => {
+test('connection errors are shown without exposing the token', async ({ page }) => {
   await page.goto('/')
-  const result = await page.evaluate(async () => {
-    const modulePath = '/src/runtime/client.ts'
-    const { fixtureEvents } = await import(modulePath)
-    const originalFetch = window.fetch
-    let canceled = false
-    const chunks = [
-      'event: fix',
-      'ture\r',
-      '\ndata: {"fix',
-      'ture":"connected"}\r\n\r',
-      '\nevent: fixture\ndata: {"fixture":"heartbeat"}\n\n',
-    ]
-    window.fetch = async () =>
-      new Response(
-        new ReadableStream({
-          pull(controller) {
-            const chunk = chunks.shift()
-            if (chunk !== undefined) controller.enqueue(new TextEncoder().encode(chunk))
-          },
-          cancel() {
-            canceled = true
-          },
-        }),
-        { headers: { 'Content-Type': 'text/event-stream' } },
-      )
-    const events: string[] = []
-    try {
-      for await (const event of fixtureEvents('fixture', new AbortController().signal)) {
-        events.push(event)
-        if (events.length === 2) break
-      }
-    } finally {
-      window.fetch = originalFetch
-    }
-    return { events, canceled }
-  })
-  expect(result).toEqual({ events: ['connected', 'heartbeat'], canceled: true })
-})
-
-test('fixture parser bounds incomplete frames and the UI handles connection errors', async ({
-  page,
-}) => {
-  await page.goto('/')
-  const bounded = await page.evaluate(async () => {
-    const modulePath = '/src/runtime/client.ts'
-    const { fixtureEvents } = await import(modulePath)
-    const originalFetch = window.fetch
-    window.fetch = async () =>
-      new Response('x'.repeat(8193), { headers: { 'Content-Type': 'text/event-stream' } })
-    try {
-      for await (const _event of fixtureEvents('fixture', new AbortController().signal)) {
-        /* no complete frames */
-      }
-      return false
-    } catch {
-      return true
-    } finally {
-      window.fetch = originalFetch
-    }
-  })
-  expect(bounded).toBe(true)
   await page.route('**/api/health', (route) => route.abort())
   const { token } = await credentials()
   await page.getByLabel('API token', { exact: true }).fill(token)

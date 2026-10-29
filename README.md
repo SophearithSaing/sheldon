@@ -36,19 +36,6 @@ npm run build
 
 Windows output: `bin/sheldon.exe`. Plain `go run`/`go build` omit the embedded UI; use Vite for development.
 
-After connecting, open **Environment & diagnostics** to check Git, optional `gh`, OpenCode, Codex and Claude Code. Only bounded version/help commands run—no inference, login, installation or credential inspection. Advertised features do not prove compatibility, service health, login or quota; unverified checks stay **unknown**. Use trusted executables on PATH; these checks are not a sandbox.
-
-Existing harness installations may have their own runtime prerequisites.
-
-**Settings & Environment** opens the setup scaffold after connecting. Saving, native model discovery and real Test answers remain unavailable. Preferences are intended for **new conversations only**; existing native session/model bindings must not change.
-
-Settings UI fixtures (no backend, login or inference):
-
-```sh
-npm run dev --workspace=@sheldon/web -- --mode fixture
-# http://127.0.0.1:5173/?fixture=settings
-```
-
 ## Check & build
 
 ```sh
@@ -81,8 +68,6 @@ internal/platform/   OS storage paths
 internal/process/    Owned command execution + cancellation
 internal/httpapi/    Protected loopback REST/SSE foundation
 internal/app/        Launch, browser handoff + single-writer lifecycle
-internal/environment/ Safe local CLI metadata + setup diagnostics
-internal/settings/   Preference/model/session-binding contracts (no persistence yet)
 internal/githubpr/   GitHub PR URL validation (no fetching)
 internal/ui/         Embedded release shell / asset-free development fallback
 scripts/build.js     Frontend → embed copy → Go build

@@ -47,12 +47,6 @@ export default async function setup() {
       const discovery = origin
         ? JSON.parse((await readFile(stateFile)).subarray(1).toString())
         : undefined
-      const stream = discovery
-        ? await fetch(origin + '/api/fixture/events', {
-            headers: { Authorization: `Bearer ${discovery.token}` },
-            signal: AbortSignal.timeout(5000),
-          }).catch(() => undefined)
-        : undefined
       if (child.pid && child.exitCode === null && child.signalCode === null) {
         const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
         const timer = setTimeout(() => child.kill('SIGKILL'), 4000)
@@ -63,9 +57,6 @@ export default async function setup() {
       if (!origin) return
       if (child.exitCode !== 0) throw new Error('Release CLI did not shut down gracefully.')
       if (output.includes(discovery.token)) throw new Error('Release output exposed its credential.')
-      if (discovery && (!stream?.ok || !(await stream.text()).includes('connected'))) {
-        throw new Error('Release shutdown did not drain its active fixture stream.')
-      }
       if ((await readFile(stateFile)).subarray(1).toString().trim()) {
         throw new Error('Release shutdown left discovery credentials behind.')
       }
