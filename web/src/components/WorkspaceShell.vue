@@ -12,7 +12,11 @@ const conversationHeading = ref<HTMLElement>()
 let fileTrigger: HTMLElement | null = null
 let conversationTrigger: HTMLElement | null = null
 
-async function toggleFiles(event: MouseEvent) {
+/**
+ * Opens the file rail, or closes it if it is already open.
+ * @param event Click event from the file trigger button.
+ */
+async function toggleFiles(event: MouseEvent): Promise<void> {
   if (filesOpen.value) {
     closeFiles()
     return
@@ -23,20 +27,30 @@ async function toggleFiles(event: MouseEvent) {
   fileRail.value?.focus()
 }
 
-function closeFiles() {
+/**
+ * Closes the file rail and returns focus to the trigger.
+ */
+function closeFiles(): void {
   if (!filesOpen.value) return
   filesOpen.value = false
   fileTrigger?.focus()
 }
 
-async function openConversation(event: MouseEvent) {
+/**
+ * Opens the conversation panel and focuses its heading.
+ * @param event Click event from the control that opened the conversation.
+ */
+async function openConversation(event: MouseEvent): Promise<void> {
   conversationTrigger = event.currentTarget as HTMLElement
   conversationOpen.value = true
   await nextTick()
   conversationHeading.value?.focus()
 }
 
-async function closeConversation() {
+/**
+ * Closes the conversation panel and restores focus to its trigger.
+ */
+async function closeConversation(): Promise<void> {
   conversationOpen.value = false
   await nextTick()
   if (conversationTrigger?.getClientRects().length) {

@@ -31,10 +31,21 @@ test('development targets reject non-loopback and noncanonical configuration', (
   expect(loopbackOrigin('http://[::1]:5173').origin).toBe('http://[::1]:5173')
 })
 
+/**
+ * Reads the backend token written by the development test setup.
+ * @returns Backend credentials.
+ */
 async function credentials(): Promise<{ token: string }> {
   return JSON.parse(await readFile(process.env.SHELDON_TEST_STATE!, 'utf8'))
 }
 
+/**
+ * Makes a raw HTTP request to the development frontend.
+ * @param path Request path.
+ * @param headers Request headers.
+ * @param method HTTP method.
+ * @returns Response status, headers and body.
+ */
 async function request(
   path: string,
   headers: http.OutgoingHttpHeaders = {},

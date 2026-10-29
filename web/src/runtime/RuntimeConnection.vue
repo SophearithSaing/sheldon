@@ -10,6 +10,9 @@ const pendingURL = ref('')
 const connected = ref(false)
 let controller: AbortController | undefined
 
+/**
+ * Aborts any in-flight connection and resets the UI to a disconnected state.
+ */
 function disconnect(): void {
   controller?.abort()
   controller = undefined
@@ -18,6 +21,10 @@ function disconnect(): void {
   state.value = 'Disconnected'
 }
 
+/**
+ * Verifies the backend with the given token and loads the pending open URL.
+ * @param token Bearer token for the local runtime. Defaults to the current input value.
+ */
 async function connect(token = tokenInput.value): Promise<void> {
   disconnect()
   tokenInput.value = ''

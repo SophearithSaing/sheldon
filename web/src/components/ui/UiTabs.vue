@@ -6,7 +6,12 @@ const props = defineProps<{
 }>()
 const selected = defineModel<string>({ required: true })
 
-function navigate(event: KeyboardEvent, index: number) {
+/**
+ * Handles roving keyboard focus between tabs.
+ * @param event Keyboard event from the focused tab.
+ * @param index Index of the currently focused tab.
+ */
+function navigate(event: KeyboardEvent, index: number): void {
   let next = index
   switch (event.key) {
     case 'ArrowRight':

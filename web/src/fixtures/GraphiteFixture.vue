@@ -37,7 +37,12 @@ const draftIndex = computed(() =>
 const beforeDraft = computed(() => diff.value.slice(0, draftIndex.value))
 const afterDraft = computed(() => diff.value.slice(draftIndex.value))
 
-function selectFile(id: string, closeFiles: () => void) {
+/**
+ * Selects a sample file and closes the file rail.
+ * @param id Sample file identifier.
+ * @param closeFiles Callback that closes the file rail drawer.
+ */
+function selectFile(id: string, closeFiles: () => void): void {
   activeFile.value = id
   closeFiles()
 }

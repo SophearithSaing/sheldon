@@ -2,6 +2,7 @@ let launchToken = ''
 
 /**
  * Captures the launch token from the URL fragment and immediately clears it.
+ * Keeps the credential out of component props and Vue diagnostic traces.
  */
 export function captureLaunchToken(): void {
   const fragment = new URLSearchParams(location.hash.slice(1))
@@ -11,7 +12,6 @@ export function captureLaunchToken(): void {
 
 /**
  * Returns and consumes the captured launch token.
- *
  * @returns Launch token, or an empty string if none was captured.
  */
 export function takeLaunchToken(): string {
@@ -22,7 +22,6 @@ export function takeLaunchToken(): string {
 
 /**
  * Builds an authenticated fetch request initializer.
- *
  * @param token Bearer token for the local runtime.
  * @param signal Abort signal for cancellation.
  * @returns Request options with the bearer header.
@@ -40,7 +39,6 @@ function authenticatedRequest(token: string, signal: AbortSignal): RequestInit {
 
 /**
  * Verifies the backend identity before transmitting the bearer token.
- *
  * @param token Bearer token for the local runtime.
  * @param signal Abort signal for cancellation.
  */
@@ -87,7 +85,6 @@ async function verifyBackend(token: string, signal: AbortSignal): Promise<void> 
 
 /**
  * Verifies the backend and reads the pending open URL.
- *
  * @param token Bearer token for the local runtime.
  * @param signal Abort signal for cancellation.
  * @returns Pending PR URL, or an empty string if none is queued.

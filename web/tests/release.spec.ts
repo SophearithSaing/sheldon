@@ -5,6 +5,10 @@ import { promisify } from 'node:util'
 import http from 'node:http'
 import { dirname } from 'node:path'
 
+/**
+ * Reads the release binary state written by the release test setup.
+ * @returns Backend origin and token.
+ */
 async function state(): Promise<{ url: string; token: string }> {
   return JSON.parse((await readFile(process.env.SHELDON_RELEASE_STATE!)).subarray(1).toString())
 }
