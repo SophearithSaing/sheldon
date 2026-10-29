@@ -1,0 +1,74 @@
+name: Foundation CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+
+      - name: Test asset-free Go development
+        run: |
+          test ! -d web/dist
+          test ! -d internal/ui/dist
+          go mod download
+          go mod verify
+          go test -race -count=1 -timeout=3m ./...
+          go vet ./...
+          go build ./...
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Pin npm and install locked frontend dependencies
+        run: |
+          npm install --global npm@11.17.0 --ignore-scripts
+          npm ci --ignore-scripts
+
+      - name: Type-check frontend and test harnesses
+        run: npm run typecheck
+
+      - name: Install pinned Chromium and its Linux libraries
+        run: npm exec --workspace=@sheldon/web -- playwright install --with-deps chromium
+
+      - name: Verify authenticated development, HMR and UI fixtures
+        run: npm run test:web
+
+      # This rebuilds Vue, copies assets, compiles the release, then runs only its
+      # binary outside the source tree with no Node or desktop opener on PATH.
+      - name: Verify embedded release and CLI lifecycle
+        run: npm run test:release
+
+      - name: Test and vet the release-tag build
+        run: |
+          go test -race -tags=release -count=1 -timeout=3m ./...
+          go vet -tags=release ./...
+
+      # These commands compile tests; they do not validate native OS behavior.
+      - name: Compile Windows and macOS release tests
+        run: |
+          GOOS=windows GOARCH=amd64 go test -tags=release -exec=true ./...
+          GOOS=darwin GOARCH=arm64 go test -tags=release -exec=true ./...
+
+      # No traces, private fixture state or binaries are uploaded. Tests use
+      # owned synthetic credentials and never run paid/live agent experiments.

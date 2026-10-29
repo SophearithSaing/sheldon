@@ -1,0 +1,12 @@
+dev_logs/
+refs/
+
+node_modules/
+/web/dist/
+/web/test-results/
+/web/playwright-report/
+/internal/ui/dist/
+/bin/
+/sheldon
+/sheldon.exe
+*.tsbuildinfo
