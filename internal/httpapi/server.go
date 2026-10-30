@@ -20,25 +20,21 @@ import (
 	"github.com/SophearithSaing/sheldon/internal/ui"
 )
 
-// Server owns a loopback listener and an in-memory API bearer credential.
-// Construct it with Listen, call Serve, and release it with Shutdown.
+// Server is a loopback HTTP server with a per-start bearer token.
 type Server struct {
-	listener        net.Listener
-	http            *http.Server
-	mux             *http.ServeMux
-	origin          string
-	devOrigin       string
-	authority       string
-	apiToken        string
-	stop            context.CancelFunc
-	mu              sync.Mutex
-	openURL         string
-	environmentBusy chan struct{}
+	listener  net.Listener
+	http      *http.Server
+	mux       *http.ServeMux
+	origin    string
+	devOrigin string
+	authority string
+	apiToken  string
+	stop      context.CancelFunc
+	mu        sync.Mutex
+	openURL   string
 }
 
-// Listen opens a numeric loopback address and prepares the protected API.
-// An empty address selects 127.0.0.1:0; port zero lets the OS choose a free port.
-// An optional development origin is accepted only when explicitly configured.
+// Listen opens a loopback listener and prepares the protected API.
 func Listen(address, devOrigin string) (*Server, error) {
 	if devOrigin != "" {
 		if err := ValidateOrigin(devOrigin); err != nil {
@@ -69,11 +65,10 @@ func Listen(address, devOrigin string) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		listener:        listener,
-		mux:             http.NewServeMux(),
-		authority:       listener.Addr().String(),
-		devOrigin:       devOrigin,
-		environmentBusy: make(chan struct{}, 1),
+		listener:  listener,
+		mux:       http.NewServeMux(),
+		authority: listener.Addr().String(),
+		devOrigin: devOrigin,
 	}
 	s.origin = "http://" + s.authority
 	s.apiToken, err = newSecret()
@@ -84,12 +79,6 @@ func Listen(address, devOrigin string) (*Server, error) {
 	lifetime, stop := context.WithCancel(context.Background())
 	s.stop = stop
 	s.mux.HandleFunc("GET /api/health", s.health)
-	s.mux.HandleFunc("GET /api/environment", s.environment)
-	s.mux.HandleFunc("GET /api/settings", s.settingsState)
-	s.mux.HandleFunc("PUT /api/settings", s.confirmSettings)
-	s.mux.HandleFunc("GET /api/environment/harnesses/{id}/models", s.modelDiscovery)
-	s.mux.HandleFunc("POST /api/environment/test-runs", s.testAnswer)
-	s.mux.HandleFunc("GET /api/fixture/events", s.fixtureEvents)
 	s.mux.HandleFunc("GET /instance-proof", s.identify)
 	s.mux.HandleFunc("POST /api/open", s.open)
 	s.mux.HandleFunc("GET /api/open", s.openState)
@@ -131,8 +120,7 @@ func (s *Server) Serve() error {
 	return err
 }
 
-// Shutdown cancels active streams, drains requests and closes the listener.
-// If the deadline expires, remaining connections are forcibly closed.
+// Shutdown drains requests and closes the listener.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.stop()
 	err := s.http.Shutdown(ctx)

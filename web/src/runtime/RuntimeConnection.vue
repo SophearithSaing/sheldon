@@ -1,110 +1,31 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import UiButton from '../components/ui/UiButton.vue'
-import {
-  fixtureEvents,
-  inspectBackend,
-  inspectEnvironment,
-  inspectSettings,
-  inspectModels,
-  takeLaunchToken,
-} from './client'
-import EnvironmentDiagnostics from './EnvironmentDiagnostics.vue'
-import SettingsPanel from '../settings/SettingsPanel.vue'
-import type { EnvironmentReport } from './environment'
-import type { Harness, ModelDiscovery, SettingsState } from '../settings/contracts'
+import { inspectBackend, takeLaunchToken } from './client'
 
 const development = import.meta.env.DEV
 const tokenInput = ref('')
 const state = ref('Disconnected')
 const pendingURL = ref('')
-const heartbeats = ref(0)
 const connected = ref(false)
 let controller: AbortController | undefined
-const environmentReport = ref<EnvironmentReport>()
-const environmentLoading = ref(false)
-const environmentError = ref('')
-let environmentRequest: (() => Promise<EnvironmentReport>) | undefined
-const settingsOpen = ref(false)
-const settingsState = ref<SettingsState>()
-const settingsError = ref('')
-const settingsLoading = ref(false)
-const models = ref<Partial<Record<Harness, ModelDiscovery>>>({})
-let settingsRequest: (() => Promise<SettingsState>) | undefined
-let modelsRequest: ((h: Harness) => Promise<ModelDiscovery>) | undefined
 
-function disconnect() {
+/**
+ * Aborts any in-flight connection and resets the UI to a disconnected state.
+ */
+function disconnect(): void {
   controller?.abort()
   controller = undefined
   connected.value = false
   pendingURL.value = ''
-  heartbeats.value = 0
   state.value = 'Disconnected'
-  environmentRequest = undefined
-  environmentReport.value = undefined
-  environmentLoading.value = false
-  environmentError.value = ''
-  settingsOpen.value = false
-  settingsState.value = undefined
-  settingsError.value = ''
-  settingsLoading.value = false
-  models.value = {}
-  settingsRequest = undefined
-  modelsRequest = undefined
 }
 
-async function toggleSettings() {
-  settingsOpen.value = !settingsOpen.value
-  if (!settingsOpen.value || settingsState.value || settingsLoading.value || !settingsRequest)
-    return
-  const current = controller
-  settingsLoading.value = true
-  settingsError.value = ''
-  try {
-    const state = await settingsRequest()
-    if (current === controller && !current?.signal.aborted) settingsState.value = state
-  } catch {
-    if (current === controller && !current?.signal.aborted)
-      settingsError.value =
-        'Settings metadata could not be loaded. Reconnect and try again; nothing was changed.'
-  } finally {
-    if (current === controller) settingsLoading.value = false
-  }
-}
-
-async function loadModels(h: Harness) {
-  if (!modelsRequest || models.value[h]) return
-  const current = controller
-  settingsError.value = ''
-  try {
-    const metadata = await modelsRequest(h)
-    if (current === controller && !current?.signal.aborted) models.value[h] = metadata
-  } catch {
-    if (current === controller && !current?.signal.aborted)
-      settingsError.value =
-        'Native model metadata is unavailable. No model or provider was substituted.'
-  }
-}
-
-async function refreshEnvironment() {
-  if (!environmentRequest || environmentLoading.value) return
-  const current = controller
-  environmentLoading.value = true
-  environmentError.value = ''
-  try {
-    const report = await environmentRequest()
-    if (current === controller && !current?.signal.aborted) environmentReport.value = report
-  } catch {
-    if (current === controller && !current?.signal.aborted) {
-      environmentError.value =
-        'Environment checks could not finish. Retry after any active check finishes, and check the backend or external CLI installation.'
-    }
-  } finally {
-    if (current === controller) environmentLoading.value = false
-  }
-}
-
-async function connect(token = tokenInput.value) {
+/**
+ * Verifies the backend with the given token and loads the pending open URL.
+ * @param token Bearer token for the local runtime. Defaults to the current input value.
+ */
+async function connect(token = tokenInput.value): Promise<void> {
   disconnect()
   tokenInput.value = ''
   if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
@@ -118,18 +39,7 @@ async function connect(token = tokenInput.value) {
     pendingURL.value = await inspectBackend(token, current.signal)
     if (current.signal.aborted) return
     connected.value = true
-    environmentRequest = () => inspectEnvironment(token, current.signal)
-    settingsRequest = () => inspectSettings(token, current.signal)
-    modelsRequest = (h) => inspectModels(token, current.signal, h)
-    state.value = 'Backend connected · waiting for fixture stream'
-    for await (const event of fixtureEvents(token, current.signal)) {
-      if (current.signal.aborted) return
-      if (event === 'heartbeat') heartbeats.value += 1
-      state.value =
-        event === 'connected'
-          ? 'Backend connected · fixture stream connected'
-          : 'Backend connected · fixture heartbeat received'
-    }
+    state.value = 'Backend connected'
   } catch {
     if (current.signal.aborted) return
     current.abort()
@@ -137,9 +47,7 @@ async function connect(token = tokenInput.value) {
     state.value = 'Connection failed or closed. Check the backend and API token, then reconnect.'
   } finally {
     if (current === controller) {
-      environmentRequest = undefined
-      settingsRequest = undefined
-      modelsRequest = undefined
+      controller = current.signal.aborted ? undefined : current
     }
     token = ''
   }
@@ -159,7 +67,7 @@ onUnmounted(disconnect)
   >
     <div class="runtime-heading">
       <h2>{{ development ? 'Development backend' : 'Local runtime' }}</h2>
-      <p class="muted small">REST/SSE connectivity only — not an agent connection.</p>
+      <p class="muted small">REST connectivity only — not an agent connection.</p>
     </div>
     <form v-if="!connected" class="runtime-form" @submit.prevent="connect()">
       <label for="runtime-api-token">API token</label>
@@ -174,15 +82,11 @@ onUnmounted(disconnect)
       <UiButton type="submit">Connect backend</UiButton>
     </form>
     <p v-if="!connected" id="runtime-token-hint" class="muted small">
-      Run sheldon again to connect automatically, or enter the token from its private instance.lock.
-      Tokens stay in page memory; reloading requires reconnecting.
+      Run sheldon again to connect automatically, or enter the token from its private
+      instance.lock. Tokens stay in page memory; reloading requires reconnecting.
     </p>
     <div class="runtime-status">
       <p role="status">{{ state }}</p>
-      <span v-if="connected" class="small">
-        Fixture heartbeats:
-        <output aria-label="Fixture heartbeats" aria-live="off">{{ heartbeats }}</output>
-      </span>
       <UiButton v-if="connected || state === 'Connecting'" variant="quiet" @click="disconnect">
         Disconnect backend
       </UiButton>
@@ -190,26 +94,6 @@ onUnmounted(disconnect)
     <p v-if="pendingURL" class="muted small">
       Pending open request: {{ pendingURL }} — not loaded.
     </p>
-    <UiButton v-if="connected" :aria-expanded="settingsOpen" @click="toggleSettings">{{
-      settingsOpen ? 'Close settings — return later' : 'Settings & Environment'
-    }}</UiButton>
-    <p v-if="settingsOpen && settingsLoading" role="status">Loading settings contracts…</p>
-    <p v-if="settingsOpen && settingsError && !settingsState" role="alert">{{ settingsError }}</p>
-    <SettingsPanel
-      v-if="connected && settingsOpen && settingsState"
-      :state="settingsState"
-      :models="models"
-      :environment="environmentReport"
-      :error="settingsError"
-      @models="loadModels"
-    />
-    <EnvironmentDiagnostics
-      v-if="connected"
-      :report="environmentReport"
-      :loading="environmentLoading"
-      :error="environmentError"
-      @refresh="refreshEnvironment"
-    />
   </section>
 </template>
 

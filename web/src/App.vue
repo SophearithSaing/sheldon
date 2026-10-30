@@ -2,20 +2,16 @@
 import { defineAsyncComponent } from 'vue'
 import GraphiteFixture from './fixtures/GraphiteFixture.vue'
 
+// Fixture mode runs the Graphite workspace shell without the runtime connection bar.
+// This lets foundation/UI tests target the shell with a deterministic static page.
 const RuntimeConnection =
   import.meta.env.MODE !== 'fixture'
     ? defineAsyncComponent(() => import('./runtime/RuntimeConnection.vue'))
     : undefined
-const SettingsFixture =
-  import.meta.env.MODE === 'fixture' &&
-  new URLSearchParams(location.search).get('fixture') === 'settings'
-    ? defineAsyncComponent(() => import('./fixtures/SettingsFixture.vue'))
-    : undefined
 </script>
 
 <template>
-  <SettingsFixture v-if="SettingsFixture" />
-  <div v-else class="application" :class="{ 'application--runtime': RuntimeConnection }">
+  <div class="application" :class="{ 'application--runtime': RuntimeConnection }">
     <RuntimeConnection v-if="RuntimeConnection" />
     <GraphiteFixture />
   </div>

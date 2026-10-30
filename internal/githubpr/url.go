@@ -12,8 +12,7 @@ import (
 var ownerPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}$`)
 
-// NormalizeURL accepts an HTTPS github.com PR URL and drops query/fragment data.
-// It does not fetch, resolve or check access to the pull request.
+// NormalizeURL normalizes a GitHub PR URL, dropping query and fragment data.
 func NormalizeURL(raw string) (string, error) {
 	invalid := errors.New("expected https://github.com/<owner>/<repo>/pull/<positive-number>")
 	if len(raw) > 2048 || strings.ContainsAny(raw, "\\\r\n\t ") {

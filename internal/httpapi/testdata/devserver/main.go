@@ -13,7 +13,7 @@ import (
 	"github.com/SophearithSaing/sheldon/internal/httpapi"
 )
 
-// main publishes fixture-only credentials to private test storage and serves until signaled.
+// main starts the browser-test backend and writes its credentials to private storage.
 func main() {
 	s, err := httpapi.Listen(os.Getenv("SHELDON_DEV_LISTEN"), os.Getenv("SHELDON_DEV_ORIGIN"))
 	if err != nil {

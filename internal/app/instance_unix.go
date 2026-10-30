@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// privateDirectory creates an owner-only data directory or rejects unsafe storage.
+// privateDirectory creates an owner-only data directory.
 func privateDirectory(path string) error {
 	if err := os.MkdirAll(path, 0700); err != nil {
 		return err
@@ -25,13 +25,13 @@ func privateDirectory(path string) error {
 	return nil
 }
 
-// privateOwner checks ownership using descriptor metadata rather than path names.
+// privateOwner reports whether info is owned by the current user.
 func privateOwner(info os.FileInfo) bool {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	return ok && stat.Uid == uint32(os.Geteuid())
 }
 
-// privateFile opens a private regular file, refusing symlinks, hard links and FIFOs.
+// privateFile opens a private regular file, refusing links and FIFOs.
 func privateFile(path string) (*os.File, error) {
 	fd, err := unix.Open(path, unix.O_RDWR|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0600)
 	if err != nil {
@@ -51,7 +51,7 @@ func privateFile(path string) (*os.File, error) {
 	return f, nil
 }
 
-// lockFile acquires a nonblocking advisory lock released automatically on exit.
+// lockFile acquires a nonblocking advisory lock.
 func lockFile(f *os.File) (bool, error) {
 	err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 	if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {

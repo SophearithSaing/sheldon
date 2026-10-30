@@ -28,6 +28,7 @@ func (p Paths) Validate() error {
 	return nil
 }
 
+// within reports whether path is inside parent.
 func within(path, parent string) bool {
 	rel, err := filepath.Rel(parent, path)
 	return err == nil && rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator))

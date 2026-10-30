@@ -17,10 +17,7 @@ import (
 // ErrOutputLimit indicates that stdout or stderr exceeded its configured bound.
 var ErrOutputLimit = errors.New("process output limit exceeded")
 
-// Command describes one executable invocation. Env overrides inherited values;
-// it is never logged. OutputLimit bounds each output stream in bytes (default
-// 4 MiB). GracePeriod bounds graceful shutdown before forced cleanup (default
-// two seconds). Dir must be absolute. Arguments are passed literally.
+// Command describes one executable invocation with literal arguments.
 type Command struct {
 	Name        string
 	Args        []string
@@ -30,17 +27,14 @@ type Command struct {
 	GracePeriod time.Duration
 }
 
-// Result contains the process exit code and captured output. Stdout is populated
-// by Run; Start exposes its output through Process.Stdout instead.
+// Result contains the process exit code and captured output.
 type Result struct {
 	Stdout   []byte `json:"-"`
 	ExitCode int    `json:"exitCode"`
 	stderr   []byte
 }
 
-// Stderr returns bounded, untrusted diagnostic bytes for backend inspection.
-// Callers must redact before displaying them; errors and normal formatting
-// deliberately withhold both output streams rather than guessing at secrets.
+// Stderr returns captured stderr bytes for backend inspection.
 func (r Result) Stderr() []byte {
 	return bytes.Clone(r.stderr)
 }
@@ -55,8 +49,7 @@ func (r Result) GoString() string {
 	return r.String()
 }
 
-// Process owns one child and its pipes. Consume Stdout with a single reader;
-// call Close when finished, including after Wait, to release the reader.
+// Process owns one child process and its pipes.
 type Process struct {
 	Stdin     io.WriteCloser
 	Stdout    io.ReadCloser
@@ -67,8 +60,7 @@ type Process struct {
 	closeOnce sync.Once
 }
 
-// Start spawns a command with streaming stdout, writable stdin, and separately
-// bounded stderr. The context controls the entire process lifetime.
+// Start starts a command with streaming stdout and bounded stderr.
 func Start(ctx context.Context, spec Command) (*Process, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -184,8 +176,7 @@ func Run(ctx context.Context, spec Command) (Result, error) {
 	return result, errors.Join(err, readErr)
 }
 
-// Wait waits for process termination and owned-tree cleanup. It does not consume
-// stdout; use Run for capture, or consume the stream before/concurrently with Wait.
+// Wait waits for process termination and cleanup.
 func (p *Process) Wait() (Result, error) {
 	<-p.done
 	return p.result, p.err
@@ -208,8 +199,7 @@ type capture struct {
 	cancel context.CancelCauseFunc
 }
 
-// Write captures data up to the byte limit and cancels the process on overflow.
-// Excess data is discarded while the stream is drained.
+// Write captures data up to the byte limit.
 func (b *capture) Write(data []byte) (int, error) {
 	remaining := b.limit - b.buffer.Len()
 	b.buffer.Write(data[:min(len(data), remaining)])
@@ -228,8 +218,7 @@ type outputReader struct {
 	cancel    context.CancelCauseFunc
 }
 
-// Read reads within the remaining byte limit, canceling the process and returning
-// ErrOutputLimit when it detects excess output.
+// Read reads within the remaining byte limit.
 func (r *outputReader) Read(data []byte) (int, error) {
 	if len(data) == 0 {
 		return 0, nil

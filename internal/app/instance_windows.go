@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// privateSecurity restricts new storage to the current user and LocalSystem.
+// privateSecurity builds a security descriptor for the current user and System.
 func privateSecurity() (*windows.SecurityAttributes, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
@@ -22,7 +22,7 @@ func privateSecurity() (*windows.SecurityAttributes, error) {
 	return &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}, nil
 }
 
-// checkPrivateSecurity rejects ownership or access grants outside the user/System.
+// checkPrivateSecurity validates that only the current user and System have access.
 func checkPrivateSecurity(sd *windows.SECURITY_DESCRIPTOR) error {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
@@ -52,7 +52,7 @@ func checkPrivateSecurity(sd *windows.SECURITY_DESCRIPTOR) error {
 	return nil
 }
 
-// privateDirectory creates protected storage and refuses reparse-point directories.
+// privateDirectory creates protected storage and rejects reparse-point directories.
 func privateDirectory(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
@@ -82,7 +82,7 @@ func privateDirectory(path string) error {
 	return checkPrivateSecurity(sd)
 }
 
-// privateFile opens a shared, non-inherited handle with a private ACL.
+// privateFile opens a regular file with a private ACL.
 func privateFile(path string) (*os.File, error) {
 	sa, err := privateSecurity()
 	if err != nil {
@@ -114,7 +114,7 @@ func privateFile(path string) (*os.File, error) {
 	return f, nil
 }
 
-// lockFile locks byte zero without blocking discovery reads starting at byte one.
+// lockFile locks byte zero without blocking.
 func lockFile(f *os.File) (bool, error) {
 	err := windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &windows.Overlapped{})
 	if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {

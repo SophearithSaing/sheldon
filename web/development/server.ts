@@ -2,6 +2,11 @@ import { isIP } from 'node:net'
 import type { IncomingMessage } from 'node:http'
 import type { Plugin, ProxyOptions, ViteDevServer } from 'vite'
 
+/**
+ * Parses and validates a canonical numeric-loopback HTTP origin.
+ * @param value Origin string to validate.
+ * @returns Parsed URL.
+ */
 export function loopbackOrigin(value: string): URL {
   let url: URL
   try {
@@ -23,6 +28,11 @@ export function loopbackOrigin(value: string): URL {
   return url
 }
 
+/**
+ * Returns the runtime origin of the Vite dev server.
+ * @param server Vite dev server instance.
+ * @returns Server origin, or an empty string if unavailable.
+ */
 function serverOrigin(server: ViteDevServer): string {
   const address = server.httpServer?.address()
   if (!address || typeof address === 'string') return ''
@@ -30,6 +40,12 @@ function serverOrigin(server: ViteDevServer): string {
   return `http://${host}:${address.port}`
 }
 
+/**
+ * Validates an incoming development request before it reaches Vite or the backend proxy.
+ * @param request Incoming HTTP request.
+ * @param origin Expected server origin.
+ * @returns HTTP status to reject with, or undefined when the request is trusted.
+ */
 function requestStatus(request: IncomingMessage, origin: string): number | undefined {
   const sensitive = new Set([
     'host',
@@ -75,8 +91,11 @@ function requestStatus(request: IncomingMessage, origin: string): number | undef
   }
 }
 
-// Validate the browser-facing authority before changeOrigin rewrites Host for Go.
-// Forwarded headers never establish trust. The same rules protect HMR upgrades.
+/**
+ * Vite plugin that validates the browser-facing authority before changeOrigin rewrites Host for Go.
+ * Forwarded headers never establish trust. The same rules protect HMR upgrades.
+ * @returns Vite plugin.
+ */
 export function protectedDevelopmentServer(): Plugin {
   return {
     name: 'sheldon-protected-development-server',
@@ -116,6 +135,11 @@ export function protectedDevelopmentServer(): Plugin {
   }
 }
 
+/**
+ * Builds a Vite proxy configuration for the protected backend.
+ * @param target Backend origin to proxy to.
+ * @returns Vite proxy options.
+ */
 export function backendProxy(target: string): ProxyOptions {
   loopbackOrigin(target)
   return {
@@ -124,8 +148,6 @@ export function backendProxy(target: string): ProxyOptions {
     ws: false,
     configure(proxy) {
       proxy.on('proxyReq', (request, incoming) => {
-        // Same-origin browser GETs may omit Origin. The incoming authority was
-        // checked by our middleware; never replace a supplied browser Origin.
         if (incoming.headers.origin === undefined) {
           request.setHeader('Origin', `http://${incoming.headers.host}`)
         }
@@ -133,12 +155,10 @@ export function backendProxy(target: string): ProxyOptions {
           if (name === 'forwarded' || name.startsWith('x-forwarded-')) request.removeHeader(name)
         }
       })
-      // Pipe responses as they arrive, and release the upstream stream on disconnect.
       proxy.on('proxyRes', (upstream, _request, downstream) => {
         downstream.on('close', () => upstream.destroy())
       })
       proxy.on('error', (_error, request, response) => {
-        // Vite's subsequent default error listener logs request.url. Never log query data.
         request.url = '/[redacted proxy request]'
         if ('writeHead' in response) {
           if (response.headersSent) {

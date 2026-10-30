@@ -5,6 +5,10 @@ import { promisify } from 'node:util'
 import http from 'node:http'
 import { dirname } from 'node:path'
 
+/**
+ * Reads the release binary state written by the release test setup.
+ * @returns Backend origin and token.
+ */
 async function state(): Promise<{ url: string; token: string }> {
   return JSON.parse((await readFile(process.env.SHELDON_RELEASE_STATE!)).subarray(1).toString())
 }
@@ -25,11 +29,6 @@ test('isolated release binary serves the authenticated shell, font and complete 
   await expect(page).toHaveURL(url + '/')
   const runtime = page.getByRole('region', { name: 'Runtime connection' })
   await expect(runtime.getByRole('status').first()).toContainText('Backend connected')
-  await expect
-    .poll(async () => Number(await page.getByLabel('Fixture heartbeats').textContent()), {
-      timeout: 5000,
-    })
-    .toBeGreaterThan(0)
   await expect(page.getByText('No PR loaded. No agent connected.', { exact: false })).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
   expect(await page.evaluate(() => document.fonts.check('400 13px "Sheldon JetBrains Mono"'))).toBe(
@@ -49,16 +48,6 @@ test('isolated release binary serves the authenticated shell, font and complete 
   expect(urls.every((value) => value.startsWith(url + '/'))).toBe(true)
   expect(urls.some((value) => value.includes(token))).toBe(false)
   expect(await page.content()).not.toContain(token)
-  // The isolated binary's PATH contains no external tools; this must be honest, not a fixture success.
-  await page.getByText('Environment & diagnostics', { exact: true }).click()
-  const diagnostics = page.getByRole('region', { name: 'Environment diagnostics' })
-  await expect(diagnostics.getByRole('article', { name: 'Git diagnostics' })).toContainText(
-    'missing',
-  )
-  await expect(diagnostics.getByRole('article', { name: 'OpenCode diagnostics' })).toContainText(
-    'missing',
-  )
-  await page.getByText('Environment & diagnostics', { exact: true }).click()
   expect(errors).toEqual([])
   await page.screenshot({ path: testInfo.outputPath('release-shell.png'), fullPage: true })
   const binary = process.env.SHELDON_RELEASE_BINARY!
@@ -93,7 +82,7 @@ test('release paths retain Host/Origin protection, bearer auth and no source or 
       expect((await request.get(url + path, { headers })).status()).toBe(403)
     }
   }
-  for (const path of ['/api/health', '/api/fixture/events', '/api/health?token=' + token]) {
+  for (const path of ['/api/health', '/api/open', '/api/health?token=' + token]) {
     expect((await request.get(url + path)).status()).toBe(401)
   }
   expect(
@@ -150,29 +139,5 @@ test('release reload requires explicit reconnecting and wrong proof never receiv
   await expect(page.getByRole('status').filter({ hasText: 'Connection failed' })).toBeVisible()
   expect(bearerSent).toBe(false)
   await expect(page.getByLabel('API token', { exact: true })).toHaveValue('')
-  expect(await page.content()).not.toContain(token)
-})
-
-test('release settings stay unavailable and query parameters cannot enable settings fixtures', async ({ page, request }) => {
-  const { url, token } = await state()
-  const writes: string[] = []
-  page.on('request', item => { if (item.method() === 'PUT' || item.method() === 'POST') writes.push(item.url()) })
-  await page.goto(`${url}/?fixture=settings&scenario=saved#token=${token}`)
-  await expect(page.getByRole('main', { name: 'Settings UI fixture' })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Settings & Environment', exact: true }).click()
-  const panel = page.getByRole('region', { name: 'Settings & Environment', exact: true })
-  await expect(panel.getByRole('heading', { name: 'First-launch setup (scaffold)' })).toBeVisible()
-  await expect(panel.getByLabel('Default harness for new conversations')).toHaveValue('')
-  await panel.getByLabel('Default harness for new conversations').selectOption('claude')
-  await expect(panel.getByLabel('Configured/default model')).toHaveText('Unknown — not resolved')
-  await expect(panel.getByRole('button', { name: 'Save settings — unavailable' })).toBeDisabled()
-  await expect(panel.getByRole('button', { name: 'Test answer — unavailable' })).toBeDisabled()
-  expect(writes).toEqual([])
-  const response = await request.post(url + '/api/environment/test-runs', {
-    headers: { Authorization: `Bearer ${token}` },
-    data: { clientRequestID: 'release-fixture-request', harness: 'claude', selection: { mode: 'default' }, confirmQuota: true },
-  })
-  expect(response.status()).toBe(501)
-  expect((await response.json()).error).toContain('no run was admitted')
   expect(await page.content()).not.toContain(token)
 })

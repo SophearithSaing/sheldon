@@ -8,8 +8,7 @@ import (
 	"runtime"
 )
 
-// openBrowser hands a local URL to the desktop without a shell or captured output.
-// The external browser is user-owned, not an owned background service to kill.
+// openBrowser opens target in the default desktop browser.
 func openBrowser(ctx context.Context, target string) error {
 	name := "xdg-open"
 	if runtime.GOOS == "darwin" {

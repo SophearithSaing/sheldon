@@ -14,8 +14,7 @@ type processTree struct {
 	job windows.Handle
 }
 
-// prepareTree creates a kill-on-close job and configures cmd to start suspended
-// in its own process group.
+// prepareTree creates a kill-on-close job for the child.
 func prepareTree(cmd *exec.Cmd) (*processTree, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
@@ -65,10 +64,8 @@ func (t *processTree) started() error {
 	return errors.New("owned process primary thread unavailable")
 }
 
-// terminate sends Ctrl-Break to the owned process group.
+// terminate requests shutdown of the owned process group.
 func (t *processTree) terminate() error {
-	// Console signaling is best effort; a GUI/no-console parent may not support
-	// it. The supervisor still force-terminates the owned job after its deadline.
 	return windows.GenerateConsoleCtrlEvent(windows.CTRL_BREAK_EVENT, uint32(t.cmd.Process.Pid))
 }
 

@@ -13,9 +13,7 @@ import (
 	"time"
 )
 
-// Client contacts a numeric loopback instance without proxies or redirects.
-// Verify must succeed before Open or BrowserURL can expose its credential.
-// A Client is used sequentially, not concurrently.
+// Client contacts a verified loopback Sheldon instance.
 type Client struct {
 	origin   string
 	token    string
@@ -39,14 +37,14 @@ func NewClient(origin, token string) (*Client, error) {
 	}}, nil
 }
 
-// instanceProof binds a fresh challenge and origin to the API token without disclosing it.
+// instanceProof returns an HMAC proof binding the challenge and origin to the token.
 func instanceProof(token, origin, challenge string) string {
 	mac := hmac.New(sha256.New, []byte(token))
 	io.WriteString(mac, "sheldon-instance-v1\n"+origin+"\n"+challenge)
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-// identify proves possession of this instance's API token without returning it.
+// identify proves possession of the API token without returning it.
 func (s *Server) identify(w http.ResponseWriter, r *http.Request) {
 	values := r.Header.Values("X-Sheldon-Challenge")
 	if len(values) != 1 {
@@ -64,9 +62,7 @@ func (s *Server) identify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Verify checks a fresh server proof before any bearer credential is transmitted.
-// An unrelated listener reached through a stale record receives no bearer token
-// during verification; this is not protection against a later port takeover.
+// Verify checks a fresh server proof before transmitting the bearer token.
 func (c *Client) Verify(ctx context.Context) error {
 	c.verified = false
 	if err := c.verifyAt(ctx, c.origin); err != nil {
@@ -76,8 +72,7 @@ func (c *Client) Verify(ctx context.Context) error {
 	return nil
 }
 
-// verifyAt checks the expected backend proof, directly or through a validated proxy.
-// The expected proof remains bound to the backend origin, not the proxy address.
+// verifyAt verifies the backend proof at the given target.
 func (c *Client) verifyAt(ctx context.Context, target string) error {
 	challenge, err := newSecret()
 	if err != nil {
@@ -103,7 +98,7 @@ func (c *Client) verifyAt(ctx context.Context, target string) error {
 	return nil
 }
 
-// Open forwards a PR-open intent to a verified instance without starting agent work.
+// Open forwards a PR-open intent to a verified instance.
 func (c *Client) Open(ctx context.Context, prURL string) error {
 	if !c.verified {
 		return errors.New("local instance has not been verified")
@@ -126,8 +121,7 @@ func (c *Client) Open(ctx context.Context, prURL string) error {
 	return nil
 }
 
-// BrowserURL returns a verified launch URL with a transient, client-cleared fragment.
-// Never print or log this URL. The fragment is not sent in HTTP requests.
+// BrowserURL returns a launch URL with a transient token fragment.
 func (c *Client) BrowserURL() (string, error) {
 	if !c.verified {
 		return "", errors.New("local instance has not been verified")
@@ -135,8 +129,7 @@ func (c *Client) BrowserURL() (string, error) {
 	return c.origin + "/#token=" + c.token, nil
 }
 
-// DevelopmentURL verifies a loopback Vite proxy before giving it a launch fragment.
-// It reuses the API token; no browser session or additional credential is created.
+// DevelopmentURL returns a verified development-mode launch URL.
 func (c *Client) DevelopmentURL(ctx context.Context, origin string) (string, error) {
 	if !c.verified {
 		return "", errors.New("local instance has not been verified")

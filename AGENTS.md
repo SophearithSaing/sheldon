@@ -18,7 +18,6 @@
 ```ts
 /**
  * Finds an item by id.
- *
  * @param itemId Item id to find.
  * @returns Matching item, or null when no item exists.
  */

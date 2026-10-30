@@ -11,7 +11,7 @@ import (
 
 const shellPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
-// assetHandler serves exact files with explicit MIME types, without directory or SPA fallback.
+// assetHandler serves embedded files with explicit MIME types.
 func assetHandler(assets fs.FS) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

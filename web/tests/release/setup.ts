@@ -4,8 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// Exercise the actual CLI with only a binary, private storage and no desktop opener or Node on PATH.
-export default async function setup() {
+/**
+ * Builds the release binary, starts it in an isolated environment and returns a cleanup function.
+ * Exercises the actual CLI with only a binary, private storage and no desktop opener or Node on PATH.
+ * @returns Cleanup function that stops the binary and removes the temporary directory.
+ */
+export default async function setup(): Promise<() => Promise<void>> {
   if (!['linux', 'darwin'].includes(process.platform)) {
     throw new Error('Release browser lifecycle tests currently require Linux or macOS.')
   }
@@ -42,16 +46,13 @@ export default async function setup() {
   child.stderr.on('data', (data) => {
     output += data.toString()
   })
-  async function cleanup() {
+/**
+ * Stops the release binary and removes its temporary directory.
+ */
+  async function cleanup(): Promise<void> {
     try {
       const discovery = origin
         ? JSON.parse((await readFile(stateFile)).subarray(1).toString())
-        : undefined
-      const stream = discovery
-        ? await fetch(origin + '/api/fixture/events', {
-            headers: { Authorization: `Bearer ${discovery.token}` },
-            signal: AbortSignal.timeout(5000),
-          }).catch(() => undefined)
         : undefined
       if (child.pid && child.exitCode === null && child.signalCode === null) {
         const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
@@ -63,9 +64,6 @@ export default async function setup() {
       if (!origin) return
       if (child.exitCode !== 0) throw new Error('Release CLI did not shut down gracefully.')
       if (output.includes(discovery.token)) throw new Error('Release output exposed its credential.')
-      if (discovery && (!stream?.ok || !(await stream.text()).includes('connected'))) {
-        throw new Error('Release shutdown did not drain its active fixture stream.')
-      }
       if ((await readFile(stateFile)).subarray(1).toString().trim()) {
         throw new Error('Release shutdown left discovery credentials behind.')
       }

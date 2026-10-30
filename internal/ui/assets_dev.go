@@ -8,7 +8,7 @@ import (
 	"net/http"
 )
 
-// Handler serves development guidance without depending on a generated bundle.
+// Handler serves development guidance without generated assets.
 func Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

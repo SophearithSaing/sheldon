@@ -1,10 +1,16 @@
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
+import type { UserConfig } from 'vite'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { backendProxy, loopbackOrigin, protectedDevelopmentServer } from './development/server.ts'
 
-export default defineConfig(({ command }) => {
+/**
+ * Vite configuration for the Sheldon frontend.
+ * @param options Vite command context.
+ * @returns Vite configuration.
+ */
+export default defineConfig(({ command }): UserConfig => {
   if (command !== 'serve') return { plugins: [vue()] }
   const frontend = loopbackOrigin(process.env.SHELDON_DEV_ORIGIN ?? 'http://127.0.0.1:5173')
   const backend = process.env.SHELDON_BACKEND_URL ?? 'http://127.0.0.1:7331'

@@ -10,7 +10,7 @@ import (
 	"github.com/SophearithSaing/sheldon/internal/githubpr"
 )
 
-// SetOpenURL records the latest validated PR request without loading it.
+// SetOpenURL records the latest validated PR request.
 func (s *Server) SetOpenURL(raw string) error {
 	u, err := githubpr.NormalizeURL(raw)
 	if err != nil {
@@ -22,7 +22,7 @@ func (s *Server) SetOpenURL(raw string) error {
 	return nil
 }
 
-// open accepts one bounded PR-open intent; newer intents replace older ones.
+// open accepts a bounded PR-open intent.
 func (s *Server) open(w http.ResponseWriter, r *http.Request) {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" {
@@ -60,7 +60,7 @@ func (s *Server) open(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// openState reports the latest request without claiming the PR has been loaded.
+// openState reports the latest recorded open request.
 func (s *Server) openState(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	u := s.openURL

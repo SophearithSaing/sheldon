@@ -11,7 +11,11 @@ const root = fileURLToPath(new URL('../../../', import.meta.url))
 const frontend = 'http://127.0.0.1:5175'
 const backend = 'http://127.0.0.1:7332'
 
-async function stop(child: ChildProcess) {
+/**
+ * Stops a child process gracefully, escalating to SIGKILL if needed.
+ * @param child Child process to stop.
+ */
+async function stop(child: ChildProcess): Promise<void> {
   if (!child.pid || child.exitCode !== null || child.signalCode !== null) return
   child.kill('SIGTERM')
   const timer = setTimeout(() => child.kill('SIGKILL'), 4000)
@@ -19,6 +23,15 @@ async function stop(child: ChildProcess) {
   clearTimeout(timer)
 }
 
+/**
+ * Starts a child process and waits for it to signal readiness.
+ * @param command Executable to run.
+ * @param args Command arguments.
+ * @param env Environment variables for the child.
+ * @param ready String to look for in stdout that indicates readiness.
+ * @param log Path to append stdout/stderr to.
+ * @returns Ready child process.
+ */
 async function start(
   command: string,
   args: string[],
@@ -61,14 +74,21 @@ async function start(
   }
 }
 
-// Copy the frontend before editing it for the HMR check. Never modify the user's sources.
-export default async function setup() {
+/**
+ * Copies the frontend, starts the backend and Vite servers, verifies the proxy, and returns cleanup.
+ * Copies the frontend before editing it for the HMR check and never modifies the user's sources.
+ * @returns Cleanup function that stops the servers and removes the temporary directory.
+ */
+export default async function setup(): Promise<() => Promise<void>> {
   const directory = await mkdtemp(join(tmpdir(), 'sheldon-development-'))
   const webRoot = join(directory, 'web')
   const stateFile = join(directory, 'backend.json')
   const logFile = join(directory, 'servers.log')
   const children: ChildProcess[] = []
-  async function cleanup() {
+  /**
+   * Stops the started servers and removes the temporary directory.
+   */
+  async function cleanup(): Promise<void> {
     await Promise.all(children.map(stop))
     await rm(directory, { recursive: true, force: true })
   }
@@ -91,19 +111,6 @@ export default async function setup() {
       ['build', '-o', binary, './internal/httpapi/testdata/devserver'],
       { cwd: root, timeout: 60000 },
     )
-    const toolBinary = join(directory, process.platform === 'win32' ? 'tool.exe' : 'tool')
-    const toolBin = join(directory, 'tools')
-    const toolLog = join(directory, 'tool-calls')
-    await mkdir(toolBin)
-    await mkdir(toolLog)
-    await promisify(execFile)(
-      'go',
-      ['build', '-o', toolBinary, './internal/environment/testdata/tool'],
-      { cwd: root, timeout: 60000 },
-    )
-    for (const name of ['git', 'gh', 'opencode', 'codex', 'claude']) {
-      await cp(toolBinary, join(toolBin, name + (process.platform === 'win32' ? '.exe' : '')))
-    }
     const env = {
       ...process.env,
       HOME: join(directory, 'home'),
@@ -114,15 +121,7 @@ export default async function setup() {
       SHELDON_TEST_WEB_ROOT: webRoot,
       SHELDON_TEST_VITE_CACHE: join(directory, 'vite-cache'),
     }
-    children.push(
-      await start(
-        binary,
-        [],
-        { ...env, PATH: toolBin, SHELDON_ENV_TEST_LOG: toolLog },
-        'backend-ready',
-        logFile,
-      ),
-    )
+    children.push(await start(binary, [], env, 'backend-ready', logFile))
     children.push(
       await start(
         process.execPath,
@@ -146,7 +145,6 @@ export default async function setup() {
     process.env.SHELDON_TEST_STATE = stateFile
     process.env.SHELDON_TEST_WEB_ROOT = webRoot
     process.env.SHELDON_TEST_SERVER_LOG = logFile
-    process.env.SHELDON_TEST_TOOL_LOG = toolLog
     return cleanup
   } catch (error) {
     await cleanup()
