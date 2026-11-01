@@ -1,20 +1,31 @@
-// Deterministic design samples only. None of these records came from a repository or agent.
+import type { DiffLine, LineRange } from '../components/diff'
+
 export const workspaceTabs = [
   { id: 'files', label: 'Files changed' },
   { id: 'questions', label: 'Questions' },
   { id: 'quiz', label: 'Quiz' },
 ] as const
 
-export interface DiffLine {
-  base: number | null
-  head: number | null
-  kind: 'context' | 'added' | 'removed'
-  text: string
+export interface SampleAnchor {
+  fileId: string
+  revision: string
+  range: LineRange | null
+}
+
+export interface SampleThread {
+  id: number
+  anchor: SampleAnchor
+  question: string
+  status: 'answered' | 'investigating' | 'understood' | 'failed'
+  followup: string
 }
 
 export const sampleFiles = [
-  { id: 'refresh', path: 'src/auth/refresh-session.ts' },
-  { id: 'store', path: 'src/auth/session-store.ts' },
+  { id: 'refresh', path: 'src/auth/refresh-session.ts', added: 24, removed: 8, hunk: '@@ −22,12 +22,24 @@ refreshSession' },
+  { id: 'store', path: 'src/auth/session-store.ts', added: 8, removed: 2, hunk: '@@ −41,3 +41,4 @@ logout' },
+  { id: 'client', path: 'src/http/client.ts', added: 16, removed: 5, hunk: '@@ −12,3 +12,4 @@ authenticatedRequest' },
+  { id: 'test', path: 'tests/auth/refresh-session.test.ts', added: 12, removed: 0, hunk: '@@ −12,0 +12,7 @@' },
+  { id: 'docs', path: 'docs/sessions.md', added: 4, removed: 1, hunk: '@@ −1,2 +1,4 @@' },
 ] as const
 
 export const sampleDiffs: Record<string, DiffLine[]> = {
@@ -61,20 +72,48 @@ export const sampleDiffs: Record<string, DiffLine[]> = {
     { base: 33, head: 45, kind: 'context', text: '}' },
   ],
   store: [
-    {
-      base: 1,
-      head: 1,
-      kind: 'context',
-      text: '// Sample session store, not a loaded application file.',
-    },
-    { base: 2, head: 2, kind: 'context', text: 'let session: Session | null = null;' },
-    { base: null, head: 3, kind: 'added', text: 'let generation = 0;' },
-    { base: 3, head: 4, kind: 'context', text: '' },
-    { base: 4, head: 5, kind: 'context', text: 'export function clearSession() {' },
-    { base: null, head: 6, kind: 'added', text: '  generation += 1;' },
-    { base: 5, head: 7, kind: 'context', text: '  session = null;' },
-    { base: 6, head: 8, kind: 'context', text: '}' },
+    { base: 41, head: 41, kind: 'context', text: 'export function logout() {' },
+    { base: 42, head: 42, kind: 'context', text: '  store.set(null);' },
+    { base: null, head: 43, kind: 'added', text: '  store.generation += 1;' },
+    { base: 43, head: 44, kind: 'context', text: '}' },
   ],
+  client: [
+    { base: 12, head: 12, kind: 'context', text: 'export async function authenticatedRequest() {' },
+    { base: 13, head: null, kind: 'removed', text: '  return send(store.get());' },
+    { base: null, head: 13, kind: 'added', text: '  const session = await getSessionForRequest(request, options);' },
+    { base: null, head: 14, kind: 'added', text: '  return send(session);' },
+    { base: 14, head: 15, kind: 'context', text: '}' },
+  ],
+  test: [
+    { base: null, head: 12, kind: 'added', text: 'it("ignores refresh after logout", async () => {' },
+    { base: null, head: 13, kind: 'added', text: '  const pending = refreshSession();' },
+    { base: null, head: 14, kind: 'added', text: '  logout();' },
+    { base: null, head: 15, kind: 'added', text: '  resolveSession(oldSession);' },
+    { base: null, head: 16, kind: 'added', text: '  await pending;' },
+    { base: null, head: 17, kind: 'added', text: '  expect(store.get()).toBe(null);' },
+    { base: null, head: 18, kind: 'added', text: '});' },
+  ],
+  docs: [
+    { base: 1, head: 1, kind: 'context', text: '# Session refresh' },
+    { base: 2, head: null, kind: 'removed', text: 'Each caller starts a refresh request.' },
+    { base: null, head: 2, kind: 'added', text: 'Concurrent callers share the in-flight request.' },
+    { base: null, head: 3, kind: 'added', text: 'Logout invalidates the generation before older results can update the store.' },
+    { base: null, head: 4, kind: 'added', text: 'Example markup stays literal: <img src=x onerror=alert(1)>.' },
+  ],
+}
+
+/**
+ * Creates an independent set of threads for the populated UI preview.
+ * @returns Four fictional threads, or none for the first-use preview.
+ */
+export function initialSampleThreads(): SampleThread[] {
+  if (new URLSearchParams(location.search).get('sample') !== 'review') return []
+  return [
+    { id: 1, anchor: { fileId: 'refresh', revision: 'a81c2f4', range: { side: 'head', start: 27, end: 30 } }, question: 'Can an old refresh restore a session?', status: 'answered', followup: '' },
+    { id: 2, anchor: { fileId: 'refresh', revision: 'a81c2f4', range: { side: 'head', start: 23, end: 35 } }, question: 'Is this a cache, or only an in-flight promise?', status: 'answered', followup: '' },
+    { id: 3, anchor: { fileId: 'test', revision: 'a81c2f4', range: { side: 'head', start: 12, end: 18 } }, question: 'What happens when the refresh request fails?', status: 'investigating', followup: '' },
+    { id: 4, anchor: { fileId: 'store', revision: 'a81c2f4', range: { side: 'head', start: 41, end: 44 } }, question: 'Why increment the session generation on logout?', status: 'understood', followup: '' },
+  ]
 }
 
 export const sampleExplanation = [

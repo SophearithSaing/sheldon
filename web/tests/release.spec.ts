@@ -28,7 +28,7 @@ test('isolated release binary serves the authenticated shell, fonts and complete
   expect(response?.headers()['content-security-policy']).not.toContain('unsafe-inline')
   await expect(page).toHaveURL(url + '/')
   await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
-  await page.getByRole('button', { name: 'UI fixture', exact: true }).click()
+  await page.getByRole('button', { name: 'UI preview', exact: true }).click()
   await expect(page.getByText('No PR loaded. No agent connected.', { exact: false })).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
   expect(await page.evaluate(() => document.fonts.check('400 13px "Sheldon JetBrains Mono"'))).toBe(
@@ -59,7 +59,7 @@ test('isolated release binary serves the authenticated shell, fonts and complete
   expect(urls.some((value) => value.includes(token))).toBe(false)
   expect(await page.content()).not.toContain(token)
   expect(errors).toEqual([])
-  await page.getByRole('button', { name: 'UI fixture', exact: true }).click()
+  await page.getByRole('button', { name: 'UI preview', exact: true }).click()
   await page.screenshot({ path: testInfo.outputPath('release-shell.png'), fullPage: true })
   const binary = process.env.SHELDON_RELEASE_BINARY!
   const result = await promisify(execFile)(

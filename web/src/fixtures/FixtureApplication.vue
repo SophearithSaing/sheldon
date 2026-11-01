@@ -2,7 +2,7 @@
 import { computed, nextTick, ref } from 'vue'
 import ApplicationHeader from '../components/ApplicationHeader.vue'
 import UiButton from '../components/ui/UiButton.vue'
-import GraphiteFixture from './GraphiteFixture.vue'
+import SampleWorkspace from './SampleWorkspace.vue'
 import monoLicense from '../assets/fonts/OFL.txt?url'
 import sansLicense from '../assets/fonts/DM-Sans-LICENSE.txt?url'
 
@@ -101,7 +101,7 @@ function focusContent(event: MouseEvent): void {
           :aria-expanded="previewOpen"
           aria-controls="preview-details"
           @click="previewOpen = !previewOpen"
-        >UI fixture</UiButton>
+        >UI preview</UiButton>
         <slot name="runtime-trigger" />
       </template>
     </ApplicationHeader>
@@ -116,7 +116,7 @@ function focusContent(event: MouseEvent): void {
     <slot name="runtime-panel" />
     <p class="sr-only" role="status">{{ announcement }}</p>
     <div class="fixture-destinations">
-      <GraphiteFixture
+      <SampleWorkspace
         v-for="workspace in workspaces"
         v-show="current === workspace.id"
         :key="workspace.id"

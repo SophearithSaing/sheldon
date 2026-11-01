@@ -23,12 +23,13 @@ function collapseFiles(): void {
  * Opens the conversation without hiding or collapsing source navigation.
  * @param event Activation of the initiating conversation control.
  */
-async function openConversation(event: MouseEvent): Promise<void> {
-  conversationTrigger = event.currentTarget as HTMLElement
+async function openConversation(event: MouseEvent | HTMLElement): Promise<void> {
+  conversationTrigger = event instanceof HTMLElement ? event : event.currentTarget as HTMLElement
   conversationOpen.value = true
   await nextTick()
   conversationHeading.value?.focus()
 }
+defineExpose({ openConversation })
 
 /**
  * Closes the panel and restores the initiating source control when available.

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { openSampleThread } from './preview'
 
 /**
  * Opens the local workspace shell without a backend connection.
@@ -23,17 +24,18 @@ test('desktop chrome is 160px and native tree collapse returns 192px to source',
   expect(navigation!.height).toBeCloseTo(45, 0)
   expect(navigation!.y + navigation!.height).toBeCloseTo(160, 0)
   await expect(page.locator('.workspace-footer')).toHaveCount(0)
-  await page.getByRole('button', { name: 'Preview sample conversation' }).click()
+  await openSampleThread(page)
   const files = page.getByRole('complementary', { name: 'Changed files' })
   const source = page.getByRole('main')
-  const conversation = page.getByRole('complementary', { name: 'Sample conversation' })
+  const conversation = page.getByRole('complementary', { name: 'Question 01', exact: true })
   expect((await files.boundingBox())!.width).toBeCloseTo(240, 0)
   expect((await conversation.boundingBox())!.width).toBeCloseTo(440, 0)
   expect((await files.boundingBox())!.y).toBeCloseTo(172, 0)
   const expanded = await source.boundingBox()
   const pane = await conversation.boundingBox()
   expect(pane!.x - expanded!.x - expanded!.width).toBeCloseTo(16, 0)
-  await page.getByRole('textbox', { name: 'Sample line question', exact: true }).fill('Keep the selected source draft')
+  await page.getByRole('button', { name: 'Ask about selected lines', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('Keep the selected source draft')
   const scroll = page.getByRole('region', { name: 'Sample code diff', exact: true })
   const position = await scroll.evaluate((element): number => {
     element.scrollTop = 100
@@ -45,7 +47,7 @@ test('desktop chrome is 160px and native tree collapse returns 192px to source',
   await expect(files.locator('summary')).toBeFocused()
   await page.screenshot({ path: testInfo.outputPath('shell-collapsed-1440.png'), fullPage: true })
   await files.locator('summary').press('Enter')
-  await expect(page.getByRole('textbox', { name: 'Sample line question', exact: true })).toHaveValue('Keep the selected source draft')
+  await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('Keep the selected source draft')
   expect(await scroll.evaluate((element): number => element.scrollTop)).toBeCloseTo(position, 0)
   await page.screenshot({ path: testInfo.outputPath('shell-expanded-1440.png'), fullPage: true })
 })
@@ -80,8 +82,9 @@ test('global destinations are links and library/configuration omit PR chrome', a
  * @param fixtures Playwright page fixture.
  */
 test('workspace switches and close/reopen preserve page-memory drafts without sharing them', async ({ page }): Promise<void> => {
-  await page.getByRole('textbox', { name: 'Sample line question', exact: true }).fill('PR 248 draft')
-  await page.getByRole('button', { name: 'Preview sample conversation' }).click()
+  await openSampleThread(page)
+  await page.getByRole('button', { name: 'Ask about selected lines', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('PR 248 draft')
   await page.getByRole('textbox', { name: 'Sample follow-up', exact: true }).fill('PR 248 follow-up')
   const source = page.getByRole('region', { name: 'Sample code diff', exact: true })
   const position = await source.evaluate((element): number => {
@@ -91,19 +94,19 @@ test('workspace switches and close/reopen preserve page-memory drafts without sh
   await page.getByRole('complementary', { name: 'Changed files' }).locator('summary').click()
   await page.getByRole('link', { name: 'platform #251 — Retry handling', exact: true }).click()
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Handle retries')
-  await expect(page.getByRole('textbox', { name: 'Sample line question', exact: true })).toHaveValue('')
-  await page.getByRole('textbox', { name: 'Sample line question', exact: true }).fill('PR 251 draft')
+  await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('')
+  await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('PR 251 draft')
   await page.getByRole('link', { name: 'platform #248 — Session refresh', exact: true }).click()
-  await expect(page.getByRole('textbox', { name: 'Sample line question', exact: true })).toHaveValue('PR 248 draft')
+  await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('PR 248 draft')
   await expect(page.getByRole('textbox', { name: 'Sample follow-up', exact: true })).toHaveValue('PR 248 follow-up')
   await expect(page.getByRole('complementary', { name: 'Changed files' }).locator('details')).not.toHaveAttribute('open')
   expect(await source.evaluate((element): number => element.scrollTop)).toBeCloseTo(position, 0)
   await page.getByRole('button', { name: 'Close sample workspace platform #248' }).click()
   await expect(page.getByRole('link', { name: 'platform #251 — Retry handling', exact: true })).toBeFocused()
-  await expect(page.getByRole('textbox', { name: 'Sample line question', exact: true })).toHaveValue('PR 251 draft')
+  await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('PR 251 draft')
   await page.getByRole('link', { name: 'All PRs', exact: true }).click()
   await page.getByRole('button', { name: 'Open sample platform #248' }).click()
-  await expect(page.getByRole('textbox', { name: 'Sample line question', exact: true })).toHaveValue('PR 248 draft')
+  await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('PR 248 draft')
   await expect(page.getByRole('textbox', { name: 'Sample follow-up', exact: true })).toHaveValue('PR 248 follow-up')
   await expect(page.getByRole('navigation', { name: 'PR workspaces' }).getByRole('link')).toHaveCount(2)
   expect(await page.evaluate((): number => localStorage.length + sessionStorage.length)).toBe(0)

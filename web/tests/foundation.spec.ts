@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { openSampleThread } from './preview'
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
@@ -15,8 +16,8 @@ test('keyboard users can skip directly to the labeled workspace content', async 
 })
 
 test('uses local Slate typography, foundation geometry and bundled licenses', async ({ page }) => {
-  await expect(page.getByText('UI fixture', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'UI fixture', exact: true }).click()
+  await expect(page.getByText('UI preview', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'UI preview', exact: true }).click()
   await expect(page.getByText('No PR loaded. No agent connected.', { exact: false })).toBeVisible()
   const typography = await page.evaluate(() => {
     const style = getComputedStyle(document.documentElement)
@@ -49,9 +50,9 @@ test('uses local Slate typography, foundation geometry and bundled licenses', as
   await expect(page.locator('.line-number').first()).toHaveCSS('font-size', '11px')
   const rail = await page.getByRole('complementary', { name: 'Changed files' }).boundingBox()
   expect(rail?.width).toBeCloseTo(240, 0)
-  await page.getByRole('button', { name: 'Preview sample conversation' }).click()
+  await openSampleThread(page)
   const conversation = await page
-    .getByRole('complementary', { name: 'Sample conversation' })
+    .getByRole('complementary', { name: 'Question 01', exact: true })
     .boundingBox()
   expect(conversation?.width).toBeCloseTo(440, 0)
   await expect(page.locator('.sample-explanation:visible')).toHaveCSS('font-size', '14px')
@@ -72,7 +73,7 @@ test('uses local Slate typography, foundation geometry and bundled licenses', as
 test('tabs support roving focus and retain editable drafts and scroll position', async ({
   page,
 }) => {
-  const draft = page.getByRole('textbox', { name: 'Sample line question', exact: true })
+  const draft = page.getByRole('textbox', { name: 'Your question', exact: true })
   await draft.fill('A local draft')
   await draft.press('End')
   await draft.press('Enter')
@@ -111,12 +112,12 @@ test('unfinished actions are labeled, focusable and do not initiate requests', a
   page.on('request', (request) => {
     if (['fetch', 'xhr'].includes(request.resourceType())) requests.push(request.url())
   })
-  const ask = page.getByRole('button', { name: 'Ask agent — unavailable' })
+  const ask = page.getByRole('button', { name: 'Split — unavailable' })
   await expect(ask).toBeDisabled()
   await ask.focus()
   await expect(ask).toBeFocused()
   await expect(ask).toHaveCSS('outline-width', '2px')
-  await expect(ask).toHaveAccessibleDescription(/Agent requests are not implemented/)
+  await expect(ask).toHaveAccessibleDescription(/Split display is not implemented/)
   await ask.press('Enter')
   await expect(page.getByRole('complementary', { name: 'Sample conversation' })).not.toBeVisible()
   await page.getByRole('tab', { name: 'Questions', exact: true }).click()
@@ -158,18 +159,19 @@ for (const width of [900, 899]) {
     page,
   }, testInfo) => {
     await page.setViewportSize({ width, height: 1080 })
-    await page.getByRole('textbox', { name: 'Sample line question', exact: true }).fill('Keep the inline draft')
-    const trigger = page.getByRole('button', { name: 'Preview sample conversation' })
-    await trigger.click()
+    await openSampleThread(page)
+    await page.getByRole('button', { name: 'Ask about selected lines', exact: true }).click()
+    await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('Keep the inline draft')
+    const trigger = page.getByRole('button', { name: 'Open sample question 1', exact: true })
     await expect(page.getByRole('main')).toBeVisible()
     await expect(page.getByRole('complementary', { name: 'Changed files' })).toBeVisible()
     await expect(
-      page.getByRole('heading', { name: 'Sample conversation', exact: true }),
-    ).toBeFocused()
+      page.getByRole('heading', { name: 'Question 01', exact: true }),
+    ).toBeVisible()
     await page.getByRole('textbox', { name: 'Sample follow-up', exact: true }).fill('Keep this follow-up too')
     await page.getByRole('button', { name: 'Back to workspace' }).click()
     await expect(trigger).toBeFocused()
-    await expect(page.getByRole('textbox', { name: 'Sample line question', exact: true })).toHaveValue(
+    await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue(
       'Keep the inline draft',
     )
     await trigger.click()
@@ -191,7 +193,7 @@ for (const width of [900, 899]) {
 test('code and conversation keep independent, keyboard-accessible native scrolling', async ({
   page,
 }) => {
-  await page.getByRole('button', { name: 'Preview sample conversation' }).click()
+  await openSampleThread(page)
   const source = page.getByRole('region', { name: 'Sample code diff', exact: true })
   const messages = page.getByRole('region', { name: 'Sample conversation messages' })
   await source.evaluate((element) => {
@@ -232,8 +234,8 @@ test('200% text scaling reflows the shell instead of clipping controls', async (
       () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
     ),
   ).toBe(true)
-  const trigger = page.getByRole('button', { name: 'Preview sample conversation' })
-  await trigger.click()
+  await openSampleThread(page)
+  const trigger = page.getByRole('button', { name: 'Open sample question 1', exact: true })
   await expect(page.getByRole('button', { name: 'Back to workspace' })).toBeVisible()
   await expect(page.getByRole('main')).toBeVisible()
   await expect(page.getByRole('region', { name: 'Sample conversation messages' })).toBeVisible()
@@ -268,7 +270,7 @@ test('captures deterministic foundation previews without external or API traffic
   await page.reload()
   await page.evaluate(() => document.fonts.ready)
   await page.screenshot({ path: testInfo.outputPath('files-1440.png'), fullPage: true })
-  await page.getByRole('button', { name: 'Preview sample conversation' }).click()
+  await openSampleThread(page)
   await page.screenshot({ path: testInfo.outputPath('conversation-1440.png'), fullPage: true })
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click()
   await page.getByRole('tab', { name: 'Questions', exact: true }).click()

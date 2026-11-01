@@ -2,7 +2,7 @@
 const props = defineProps<{
   id: string
   label: string
-  items: readonly { id: string; label: string }[]
+  items: readonly { id: string; label: string; count?: number }[]
 }>()
 const selected = defineModel<string>({ required: true })
 
@@ -46,6 +46,8 @@ function navigate(event: KeyboardEvent, index: number): void {
       :key="item.id"
       type="button"
       role="tab"
+      :aria-label="item.label"
+      :aria-description="item.count === undefined ? undefined : `${item.count} sample items`"
       :aria-selected="selected === item.id"
       :aria-controls="`${id}-panel-${item.id}`"
       :tabindex="selected === item.id ? 0 : -1"
@@ -53,6 +55,7 @@ function navigate(event: KeyboardEvent, index: number): void {
       @keydown="navigate($event, index)"
     >
       {{ item.label }}
+      <span v-if="item.count !== undefined" class="tab-count" aria-hidden="true">{{ item.count }}</span>
     </button>
   </div>
 </template>
@@ -65,6 +68,9 @@ function navigate(event: KeyboardEvent, index: number): void {
   min-width: 0;
 }
 .ui-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   min-height: 2.8125rem;
   min-width: var(--target-control);
   font-size: var(--text-prose);
@@ -74,6 +80,7 @@ function navigate(event: KeyboardEvent, index: number): void {
   border-bottom: 2px solid transparent;
   background: transparent;
 }
+.tab-count { padding: 0.0625rem 0.375rem; border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-muted); font-size: var(--text-code-meta); }
 .ui-tabs button:hover {
   color: var(--color-text);
 }

@@ -213,7 +213,7 @@ test('HMR updates disposable frontend sources without rebuilding Go or losing co
     marker.hidden = true
     document.body.append(marker)
   })
-  const source = join(process.env.SHELDON_TEST_WEB_ROOT!, 'src/fixtures/GraphiteFixture.vue')
+  const source = join(process.env.SHELDON_TEST_WEB_ROOT!, 'src/fixtures/SampleWorkspace.vue')
   const original = await readFile(source, 'utf8')
   try {
     await writeFile(
