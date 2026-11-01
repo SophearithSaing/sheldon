@@ -3,14 +3,19 @@ import { computed, nextTick, ref } from 'vue'
 import ApplicationHeader from '../components/ApplicationHeader.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import SampleWorkspace from './SampleWorkspace.vue'
+import PullRequestLibrary from './PullRequestLibrary.vue'
+import SourceStatusPreview from './SourceStatusPreview.vue'
+import HistoricalWorkspace from './HistoricalWorkspace.vue'
+import { samplePullRequests, sampleWorkspaceEntry, type QuestionSummary, type SourcePreviewState } from './library'
 import monoLicense from '../assets/fonts/OFL.txt?url'
 import sansLicense from '../assets/fonts/DM-Sans-LICENSE.txt?url'
 
-const workspaces = ref([
-  { id: 'github.com/acme/platform/248', repository: 'platform', number: 248, title: 'Session refresh', open: true },
-  { id: 'github.com/acme/platform/251', repository: 'platform', number: 251, title: 'Retry handling', open: true },
-])
 const requested = new URLSearchParams(location.search).get('preview')
+const workspaces = ref([sampleWorkspaceEntry(samplePullRequests[0]!, 8), sampleWorkspaceEntry(samplePullRequests[1]!, 7)])
+const requestedPR = samplePullRequests.find((pr): boolean => pr.id === requested)
+if (requestedPR && !workspaces.value.some((item): boolean => item.id === requestedPR.id)) workspaces.value.push(sampleWorkspaceEntry(requestedPR, 9))
+const summaries = ref<Record<string, QuestionSummary>>({})
+let visit = 10
 const current = ref(
   requested === 'library' || requested === 'config' ||
   workspaces.value.some((workspace): boolean => workspace.id === requested)
@@ -24,6 +29,15 @@ const application = ref<HTMLElement>()
 const openWorkspaces = computed((): typeof workspaces.value =>
   workspaces.value.filter((workspace): boolean => workspace.open),
 )
+const headerWorkspaces = computed(headerEntries)
+
+/**
+ * Keeps compact tab titles while exposing the complete canonical PR identity and title.
+ * @returns Global-header entries for currently open page-memory workspaces.
+ */
+function headerEntries(): { id: string; repository: string; number: number; title: string; fullTitle: string }[] {
+  return openWorkspaces.value.map((workspace): { id: string; repository: string; number: number; title: string; fullTitle: string } => ({ id: workspace.id, repository: workspace.repository, number: workspace.number, title: workspace.tabTitle, fullTitle: workspace.title }))
+}
 
 /**
  * Switches local preview destinations without remounting workspace drafts.
@@ -34,6 +48,8 @@ function navigate(id: string, event: MouseEvent): void {
   if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
   event.preventDefault()
   current.value = id
+  const workspace = workspaces.value.find((item): boolean => item.id === id)
+  if (workspace) workspace.visited = ++visit
 }
 
 /**
@@ -61,12 +77,82 @@ function openSample(id?: string): void {
   if (existing) {
     existing.open = true
     current.value = existing.id
+    existing.visited = ++visit
+    void focusCurrentWorkspace()
+    return
+  }
+  const pr = samplePullRequests.find((item): boolean => item.id === id)
+  if (pr) {
+    const workspace = sampleWorkspaceEntry(pr, ++visit)
+    workspaces.value.push(workspace)
+    current.value = workspace.id
+    void focusCurrentWorkspace()
     return
   }
   const number = 252 + workspaces.value.length - 2
-  const workspace = { id: `github.com/acme/platform/${number}`, repository: 'platform', number, title: 'Extra sample workspace', open: true }
+  const workspace = sampleWorkspaceEntry({ id: `github.com/acme/platform/${number}`, ownerRepository: 'acme/platform', repository: 'platform', number, title: 'Extra sample workspace', tabTitle: 'Extra sample workspace', status: 'Open', author: 'Sample author', updated: 'Not loaded', updateOrder: 0, createdOrder: 0 }, ++visit)
   workspaces.value.push(workspace)
   current.value = workspace.id
+  void focusCurrentWorkspace()
+}
+
+/**
+ * Moves focus to a workspace opened from an action that has just become hidden.
+ */
+async function focusCurrentWorkspace(): Promise<void> {
+  await nextTick()
+  header.value?.focusDestination(current.value)
+}
+
+/**
+ * Opens a canonical library destination while preserving native modified-link behavior.
+ * @param id Canonical sample identity to open or resume.
+ * @param event Link activation event.
+ */
+function openLibraryPR(id: string, event: MouseEvent): void {
+  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+  event.preventDefault()
+  openSample(id)
+}
+
+/**
+ * Selects an explicit source-only simulation without overwriting retained workspaces.
+ * @param id Canonical sample PR identity.
+ * @param state Selected loading/error/cache preview.
+ */
+function previewSource(id: string, state: SourcePreviewState): void {
+  openSample(id)
+  const workspace = workspaces.value.find((item): boolean => item.id === id)
+  if (workspace) workspace.sourceState = state === 'stale' && !hasSnapshot(id) ? 'unavailable' : state
+}
+
+/**
+ * Checks for an application-owned sample snapshot, not a real Git cache.
+ * @param id Canonical sample PR identity.
+ * @returns Whether local preview content is available.
+ */
+function hasSnapshot(id: string): boolean {
+  return id === samplePullRequests[0]!.id || id === samplePullRequests[1]!.id || !!workspaces.value.find((item): boolean => item.id === id)?.snapshot
+}
+
+/**
+ * Restores retained local content and focus without claiming a successful source refresh.
+ * @param id Canonical sample workspace identity.
+ */
+function restoreSnapshot(id: string): void {
+  const workspace = workspaces.value.find((item): boolean => item.id === id)
+  if (!workspace || !hasSnapshot(id)) return
+  workspace.sourceState = 'ready'
+  void focusCurrentWorkspace()
+}
+
+/**
+ * Returns to the library without deleting or saving page-memory state.
+ */
+async function showLibrary(): Promise<void> {
+  current.value = 'library'
+  await nextTick()
+  header.value?.focusDestination('library')
 }
 
 /**
@@ -90,7 +176,7 @@ function focusContent(event: MouseEvent): void {
     <ApplicationHeader
       ref="header"
       :current="current"
-      :workspaces="openWorkspaces"
+      :workspaces="headerWorkspaces"
       @navigate="navigate"
       @close="closeWorkspace"
     >
@@ -116,21 +202,18 @@ function focusContent(event: MouseEvent): void {
     <slot name="runtime-panel" />
     <p class="sr-only" role="status">{{ announcement }}</p>
     <div class="fixture-destinations">
-      <SampleWorkspace
+      <div
         v-for="workspace in workspaces"
         v-show="current === workspace.id"
         :key="workspace.id"
-        :workspace-number="workspace.number"
-      />
-      <main v-show="current === 'library'" id="preview-content" class="destination-placeholder" tabindex="-1">
-        <h1>Pull requests</h1>
-        <p>Local navigation preview only. The saved-PR library and real PR loading are not implemented.</p>
-        <div class="placeholder-actions">
-          <UiButton @click="openSample('github.com/acme/platform/248')">Open sample platform #248</UiButton>
-          <UiButton @click="openSample('github.com/acme/platform/251')">Open sample platform #251</UiButton>
-          <UiButton @click="openSample()">Open another sample workspace</UiButton>
-        </div>
-      </main>
+        class="sample-workspace-host"
+      >
+        <section v-show="workspace.sourceState === 'stale'" class="source-cache-notice" role="status"><strong>Cached-refresh failure · sample preview</strong><p>Retained sample snapshot only. No source refresh ran; source status, revision, history and drafts are unchanged. No agent is running.</p><UiButton disabled>Retry source refresh — unavailable</UiButton><UiButton @click="restoreSnapshot(workspace.id)">Dismiss cache preview notice</UiButton></section>
+        <SampleWorkspace v-if="workspace.id === samplePullRequests[0]!.id || workspace.id === samplePullRequests[1]!.id" v-show="workspace.sourceState === 'ready' || workspace.sourceState === 'stale'" :workspace-number="workspace.number" @summary="(value) => summaries[workspace.id] = value" />
+        <HistoricalWorkspace v-else-if="workspace.snapshot" v-show="workspace.sourceState === 'ready' || workspace.sourceState === 'stale'" :pr="workspace" @summary="(value) => summaries[workspace.id] = value" />
+        <SourceStatusPreview v-show="workspace.sourceState !== 'ready' && workspace.sourceState !== 'stale'" :pr="workspace" :state="workspace.sourceState" :has-cache="hasSnapshot(workspace.id)" @library="showLibrary" @restore="restoreSnapshot(workspace.id)" />
+      </div>
+      <PullRequestLibrary v-show="current === 'library'" :workspaces="workspaces" :summaries="summaries" @open="openLibraryPR" @source="previewSource" @extra="openSample()" />
       <main v-show="current === 'config'" class="destination-placeholder" tabindex="-1">
         <h1>Configuration</h1>
         <p>Personal configuration preview. Model discovery and saved preferences are not implemented.</p>
@@ -149,9 +232,12 @@ function focusContent(event: MouseEvent): void {
   min-width: 0;
 }
 .fixture-destinations { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.sample-workspace-host { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; }
+.source-cache-notice { padding: var(--space-3) var(--space-6); border-bottom: 1px solid var(--color-warning); color: var(--color-muted); font-size: var(--text-small); }
+.source-cache-notice .ui-button { margin-top: var(--space-2); margin-right: var(--space-2); }
 .preview-details { padding: var(--space-4) var(--space-6); border-bottom: 1px solid var(--color-border); background: var(--color-panel); }
 .preview-details p + p { margin-top: var(--space-2); }
-.preview-links, .placeholder-actions { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-3); }
+.preview-links { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-3); }
 .preview-links a { display: inline-flex; align-items: center; min-height: var(--target-control); }
 .destination-placeholder { flex: 1; min-width: 0; overflow: auto; padding: var(--space-6); }
 .destination-placeholder h1 { font-size: 1.5rem; font-weight: 500; }

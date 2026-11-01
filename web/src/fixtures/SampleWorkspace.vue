@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, useId } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import WorkspaceShell from '../components/WorkspaceShell.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiTabs from '../components/ui/UiTabs.vue'
@@ -8,6 +8,7 @@ import ChangedFileTree from '../components/ChangedFileTree.vue'
 import FilesChangedPreview from './FilesChangedPreview.vue'
 import QuestionsPreview from './QuestionsPreview.vue'
 import ThreadConversation from './ThreadConversation.vue'
+import type { QuestionSummary } from './library'
 import {
   sampleChoices,
   sampleFiles,
@@ -34,6 +35,26 @@ const conversationTitle = computed((): string => activeThread.value ? `Question 
 const tabItems = computed(() => workspaceTabs.map((tab) => ({ ...tab, count: tab.id === 'files' ? sampleFiles.length : tab.id === 'questions' ? threads.value.length : undefined })))
 const fileCounts = computed(countQuestions)
 const busyThread = computed(findBusyThread)
+const emit = defineEmits<{ summary: [value: QuestionSummary] }>()
+const summary = computed(questionSummary)
+watch(summary, reportSummary, { immediate: true })
+
+/**
+ * Counts reader-controlled understanding independently from source status.
+ * @returns Local thread totals for the sample library.
+ */
+function questionSummary(): QuestionSummary {
+  const understood = threads.value.filter((thread): boolean => thread.status === 'understood').length
+  return { open: threads.value.length - understood, understood }
+}
+
+/**
+ * Reports page-memory question totals without claiming durable saving.
+ * @param value Current sample counts.
+ */
+function reportSummary(value: QuestionSummary): void {
+  emit('summary', value)
+}
 
 /**
  * Counts submitted sample threads, never unsent drafts.

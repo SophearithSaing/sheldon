@@ -105,7 +105,7 @@ test('workspace switches and close/reopen preserve page-memory drafts without sh
   await expect(page.getByRole('link', { name: 'platform #251 — Retry handling', exact: true })).toBeFocused()
   await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('PR 251 draft')
   await page.getByRole('link', { name: 'All PRs', exact: true }).click()
-  await page.getByRole('button', { name: 'Open sample platform #248' }).click()
+  await page.getByRole('link', { name: 'Open sample platform #248' }).click()
   await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('PR 248 draft')
   await expect(page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })).toHaveValue('PR 248 follow-up')
   await expect(page.getByRole('navigation', { name: 'PR workspaces' }).getByRole('link')).toHaveCount(2)
@@ -128,7 +128,7 @@ test('closing tabs preserves global destinations and returns to All PRs when non
   await page.getByRole('button', { name: 'Close sample workspace platform #251' }).click()
   await expect(page.getByRole('heading', { name: 'Configuration', exact: true })).toBeVisible()
   await page.getByRole('link', { name: 'Sheldon — All PRs', exact: true }).click()
-  await page.getByRole('button', { name: 'Open sample platform #248' }).click()
+  await page.getByRole('link', { name: 'Open sample platform #248' }).click()
   await page.getByRole('button', { name: 'Close sample workspace platform #248' }).click()
   await expect(page.getByRole('heading', { name: 'Pull requests', exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'All PRs', exact: true })).toBeFocused()
@@ -141,6 +141,7 @@ test('closing tabs preserves global destinations and returns to All PRs when non
 test('many sample workspaces overflow horizontally without growing chrome or evicting tabs', async ({ page }): Promise<void> => {
   for (let index = 0; index < 8; index++) {
     await page.getByRole('link', { name: 'All PRs', exact: true }).click()
+    if (index === 0) await page.getByText('Sample library controls', { exact: true }).click()
     await page.getByRole('button', { name: 'Open another sample workspace' }).click()
   }
   const navigation = page.getByRole('navigation', { name: 'PR workspaces' })

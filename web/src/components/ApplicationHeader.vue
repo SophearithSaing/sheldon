@@ -4,7 +4,7 @@ import UiButton from './ui/UiButton.vue'
 
 defineProps<{
   current: string
-  workspaces: readonly { id: string; repository: string; number: number; title: string }[]
+  workspaces: readonly { id: string; repository: string; number: number; title: string; fullTitle?: string }[]
 }>()
 const emit = defineEmits<{ navigate: [id: string, event: MouseEvent]; close: [id: string] }>()
 const header = ref<HTMLElement>()
@@ -54,8 +54,8 @@ defineExpose({ focusDestination })
           :data-destination="workspace.id"
           :aria-current="current === workspace.id ? 'page' : undefined"
           :aria-label="`${workspace.repository} #${workspace.number} — ${workspace.title}`"
-          :aria-description="workspace.id"
-          :title="`${workspace.id} — ${workspace.title}`"
+          :aria-description="`${workspace.id} — ${workspace.fullTitle ?? workspace.title}`"
+          :title="`${workspace.id} — ${workspace.fullTitle ?? workspace.title}`"
           @click="emit('navigate', workspace.id, $event)"
         >
           <strong>{{ workspace.repository }} #{{ workspace.number }}</strong>

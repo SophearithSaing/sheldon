@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import type { DiffLine, LineRange } from './diff'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   lines: readonly DiffLine[]
   label: string
   selection: LineRange | null
   highlight?: boolean
-}>()
+  selectable?: boolean
+}>(), { selectable: true })
 const emit = defineEmits<{ select: [side: 'base' | 'head', line: number, extend: boolean] }>()
 
 /**
@@ -65,10 +66,10 @@ function tokens(text: string): { text: string; tone: string }[] {
           :class="[`diff-line--${line.kind}`, { 'is-selected': selected(line) }]"
         >
           <td class="line-number">
-            <button v-if="line.base !== null" type="button" :data-line="line.base" data-side="base" :aria-label="`Select base line ${line.base}`" :aria-pressed="selected(line) && selection?.side === 'base'" @keydown.shift.enter.prevent="emit('select', 'base', line.base, true)" @click="emit('select', 'base', line.base, $event.shiftKey)">{{ line.base }}</button>
+            <button v-if="line.base !== null && selectable !== false" type="button" :data-line="line.base" data-side="base" :aria-label="`Select base line ${line.base}`" :aria-pressed="selected(line) && selection?.side === 'base'" @keydown.shift.enter.prevent="emit('select', 'base', line.base, true)" @click="emit('select', 'base', line.base, $event.shiftKey)">{{ line.base }}</button><span v-else>{{ line.base }}</span>
           </td>
           <td class="line-number">
-            <button v-if="line.head !== null" type="button" :data-line="line.head" data-side="head" :aria-label="`Select head line ${line.head}`" :aria-pressed="selected(line) && selection?.side === 'head'" @keydown.shift.enter.prevent="emit('select', 'head', line.head, true)" @click="emit('select', 'head', line.head, $event.shiftKey)">{{ line.head }}</button>
+            <button v-if="line.head !== null && selectable !== false" type="button" :data-line="line.head" data-side="head" :aria-label="`Select head line ${line.head}`" :aria-pressed="selected(line) && selection?.side === 'head'" @keydown.shift.enter.prevent="emit('select', 'head', line.head, true)" @click="emit('select', 'head', line.head, $event.shiftKey)">{{ line.head }}</button><span v-else>{{ line.head }}</span>
           </td>
           <td class="line-sign">
             {{ line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : '' }}

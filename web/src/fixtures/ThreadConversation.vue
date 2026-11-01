@@ -6,7 +6,7 @@ import UiField from '../components/ui/UiField.vue'
 import ThreadStatus from './ThreadStatus.vue'
 import { sampleSourceLabel, type SampleAnchor, type SampleThread } from './workspace'
 
-const props = defineProps<{ thread: SampleThread; busyThread: number | null }>()
+const props = withDefaults(defineProps<{ thread: SampleThread; busyThread: number | null; previewControls?: boolean; sourceActionLabel?: string }>(), { previewControls: true, sourceActionLabel: 'View in diff' })
 const followup = defineModel<string>('followup', { required: true })
 const emit = defineEmits<{
   source: [id: number, anchor: SampleAnchor]
@@ -113,7 +113,7 @@ function source(anchor: SampleAnchor): void {
 <template>
   <div ref="root" class="thread-conversation">
     <div class="thread-summary"><ThreadStatus :status="thread.status" /><p>Shared agent context · This PR revision</p></div>
-    <button type="button" class="thread-source" :aria-disabled="thread.outdated || undefined" :aria-describedby="thread.outdated ? `${id}-outdated` : undefined" @click="source(thread.anchor)"><span>Selected sample context</span><strong>{{ sampleSourceLabel(thread.anchor) }}</strong><span aria-hidden="true">View in diff →</span></button>
+    <button type="button" class="thread-source" :aria-disabled="thread.outdated || undefined" :aria-describedby="thread.outdated ? `${id}-outdated` : undefined" @click="source(thread.anchor)"><span>Selected sample context</span><strong>{{ sampleSourceLabel(thread.anchor) }}</strong><span aria-hidden="true">{{ sourceActionLabel }} →</span></button>
     <p v-if="thread.outdated" :id="`${id}-outdated`" class="thread-warning" role="status">Outdated context preview. The transcript remains pinned to {{ thread.anchor.revision }}; source navigation and sending are unavailable. Nothing is silently rebound to a newer revision.</p>
     <ScrollRegion ref="messages" label="Sample conversation messages" class="conversation-messages" @scroll="rememberScroll">
       <p class="transcript-disclosure">Sample transcript · Replies are fixed illustrative text, not generated for your question. No agent is connected.</p>
@@ -130,9 +130,9 @@ function source(anchor: SampleAnchor): void {
       <div class="thread-actions">
         <UiButton v-if="thread.status === 'answered'" data-understanding-action variant="soft" @click="understanding(true)">Mark understood</UiButton>
         <template v-if="thread.status === 'understood'"><p>Marked understood by the sample reader. Not PR approval.</p><UiButton data-understanding-action @click="understanding(false)">Undo understood</UiButton><UiButton @click="understanding(false)">Reopen question</UiButton></template>
-        <UiButton :disabled="thread.outdated" :aria-describedby="thread.outdated ? `${id}-outdated` : undefined" @click="source(thread.anchor)">View in diff</UiButton>
+        <UiButton :disabled="thread.outdated" :aria-describedby="thread.outdated ? `${id}-outdated` : undefined" @click="source(thread.anchor)">{{ sourceActionLabel }}</UiButton>
       </div>
-      <details class="thread-preview-controls">
+      <details v-if="previewControls" class="thread-preview-controls">
         <summary>Thread state previews</summary>
         <p>Changes only this sample's presentation, not its transcript or a real session. Only Mark understood represents reader confirmation.</p>
         <UiField v-model="previewState" label="Sample thread state" type="select" :options="previewOptions" />
