@@ -65,7 +65,9 @@ function navigate(event: KeyboardEvent, index: number): void {
   min-width: 0;
 }
 .ui-tabs button {
-  min-height: 3.25rem;
+  min-height: 2.8125rem;
+  min-width: var(--target-control);
+  font-size: var(--text-prose);
   padding: var(--space-2) var(--space-1);
   color: var(--color-muted);
   border: 0;

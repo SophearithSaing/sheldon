@@ -78,6 +78,18 @@ test('isolated release binary serves the authenticated shell, fonts and complete
   )
 })
 
+/**
+ * Checks release query parameters cannot enable control simulations.
+ * @param fixtures Playwright page fixture.
+ */
+test('release cannot enable the fixture-only control gallery', async ({ page }): Promise<void> => {
+  const { url } = await state()
+  await page.goto(`${url}/?fixture=controls`)
+  await expect(page.getByRole('heading', { name: 'Slate control fixtures' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Deduplicate concurrent session refreshes')
+  await expect(page.getByRole('button', { name: 'Connect backend' })).toBeVisible()
+})
+
 test('release paths retain Host/Origin protection, bearer auth and no source or SPA fallback', async ({
   request,
 }) => {
