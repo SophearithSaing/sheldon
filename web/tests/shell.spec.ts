@@ -85,7 +85,7 @@ test('workspace switches and close/reopen preserve page-memory drafts without sh
   await openSampleThread(page)
   await page.getByRole('button', { name: 'Ask about selected lines', exact: true }).click()
   await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('PR 248 draft')
-  await page.getByRole('textbox', { name: 'Sample follow-up', exact: true }).fill('PR 248 follow-up')
+  await page.getByRole('textbox', { name: 'Follow up in this thread', exact: true }).fill('PR 248 follow-up')
   const source = page.getByRole('region', { name: 'Sample code diff', exact: true })
   const position = await source.evaluate((element): number => {
     element.scrollTop = 80
@@ -98,7 +98,7 @@ test('workspace switches and close/reopen preserve page-memory drafts without sh
   await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('PR 251 draft')
   await page.getByRole('link', { name: 'platform #248 — Session refresh', exact: true }).click()
   await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('PR 248 draft')
-  await expect(page.getByRole('textbox', { name: 'Sample follow-up', exact: true })).toHaveValue('PR 248 follow-up')
+  await expect(page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })).toHaveValue('PR 248 follow-up')
   await expect(page.getByRole('complementary', { name: 'Changed files' }).locator('details')).not.toHaveAttribute('open')
   expect(await source.evaluate((element): number => element.scrollTop)).toBeCloseTo(position, 0)
   await page.getByRole('button', { name: 'Close sample workspace platform #248' }).click()
@@ -107,7 +107,7 @@ test('workspace switches and close/reopen preserve page-memory drafts without sh
   await page.getByRole('link', { name: 'All PRs', exact: true }).click()
   await page.getByRole('button', { name: 'Open sample platform #248' }).click()
   await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('PR 248 draft')
-  await expect(page.getByRole('textbox', { name: 'Sample follow-up', exact: true })).toHaveValue('PR 248 follow-up')
+  await expect(page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })).toHaveValue('PR 248 follow-up')
   await expect(page.getByRole('navigation', { name: 'PR workspaces' }).getByRole('link')).toHaveCount(2)
   expect(await page.evaluate((): number => localStorage.length + sessionStorage.length)).toBe(0)
   const duplicateIds = await page.evaluate((): boolean => {

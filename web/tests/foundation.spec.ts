@@ -90,7 +90,7 @@ test('tabs support roving focus and retain editable drafts and scroll position',
   await files.press('ArrowRight')
   await expect(questions).toBeFocused()
   await expect(questions).toHaveAttribute('aria-selected', 'true')
-  await page.getByRole('searchbox', { name: 'Sample search text' }).fill('Retained search text')
+  await page.getByRole('searchbox', { name: 'Search sample questions, answers, or files' }).fill('Retained search text')
   await questions.focus()
   await questions.press('End')
   await expect(page.getByRole('tab', { name: 'Quiz', exact: true })).toBeFocused()
@@ -101,7 +101,7 @@ test('tabs support roving focus and retain editable drafts and scroll position',
   await expect(draft).toHaveValue('A local draft\na')
   expect(await source.evaluate((element) => element.scrollTop)).toBeCloseTo(scrollTop, 0)
   await questions.click()
-  await expect(page.getByRole('searchbox', { name: 'Sample search text' })).toHaveValue('Retained search text')
+  await expect(page.getByRole('searchbox', { name: 'Search sample questions, answers, or files' })).toHaveValue('Retained search text')
   await page.getByRole('tab', { name: 'Quiz', exact: true }).click()
   await expect(page.getByRole('radio').nth(1)).toBeChecked()
   await expect(page.locator('[role="tab"][tabindex="0"]:visible')).toHaveCount(1)
@@ -121,7 +121,7 @@ test('unfinished actions are labeled, focusable and do not initiate requests', a
   await ask.press('Enter')
   await expect(page.getByRole('complementary', { name: 'Sample conversation' })).not.toBeVisible()
   await page.getByRole('tab', { name: 'Questions', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'New question — unavailable' })).toBeDisabled()
+  await expect(page.getByRole('region', { name: 'Questions in this PR', exact: true }).getByText(/Whole-PR question creation is unavailable/)).toBeVisible()
   await page.getByRole('tab', { name: 'Quiz', exact: true }).click()
   await expect(
     page.getByRole('button', { name: 'Check answer — unavailable' }),
@@ -168,14 +168,14 @@ for (const width of [900, 899]) {
     await expect(
       page.getByRole('heading', { name: 'Question 01', exact: true }),
     ).toBeVisible()
-    await page.getByRole('textbox', { name: 'Sample follow-up', exact: true }).fill('Keep this follow-up too')
+    await page.getByRole('textbox', { name: 'Follow up in this thread', exact: true }).fill('Keep this follow-up too')
     await page.getByRole('button', { name: 'Back to workspace' }).click()
     await expect(trigger).toBeFocused()
     await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue(
       'Keep the inline draft',
     )
     await trigger.click()
-    await expect(page.getByRole('textbox', { name: 'Sample follow-up', exact: true })).toHaveValue(
+    await expect(page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })).toHaveValue(
       'Keep this follow-up too',
     )
     expect(
@@ -239,7 +239,7 @@ test('200% text scaling reflows the shell instead of clipping controls', async (
   await expect(page.getByRole('button', { name: 'Back to workspace' })).toBeVisible()
   await expect(page.getByRole('main')).toBeVisible()
   await expect(page.getByRole('region', { name: 'Sample conversation messages' })).toBeVisible()
-  await page.getByRole('textbox', { name: 'Sample follow-up', exact: true }).fill('Still reachable at 200%')
+  await page.getByRole('textbox', { name: 'Follow up in this thread', exact: true }).fill('Still reachable at 200%')
   const send = page.getByRole('button', { name: 'Send — unavailable' })
   await send.scrollIntoViewIfNeeded()
   const sendBounds = await send.boundingBox()

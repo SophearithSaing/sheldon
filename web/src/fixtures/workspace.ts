@@ -16,8 +16,16 @@ export interface SampleThread {
   id: number
   anchor: SampleAnchor
   question: string
-  status: 'answered' | 'investigating' | 'understood' | 'failed'
+  status: 'answered' | 'investigating' | 'understood' | 'failed' | 'interrupted'
   followup: string
+  messages: SampleMessage[]
+  outdated?: boolean
+}
+
+export interface SampleMessage {
+  author: 'You' | 'Agent'
+  paragraphs: string[]
+  citations?: SampleAnchor[]
 }
 
 export const sampleFiles = [
@@ -109,11 +117,52 @@ export const sampleDiffs: Record<string, DiffLine[]> = {
 export function initialSampleThreads(): SampleThread[] {
   if (new URLSearchParams(location.search).get('sample') !== 'review') return []
   return [
-    { id: 1, anchor: { fileId: 'refresh', revision: 'a81c2f4', range: { side: 'head', start: 27, end: 30 } }, question: 'Can an old refresh restore a session?', status: 'answered', followup: '' },
-    { id: 2, anchor: { fileId: 'refresh', revision: 'a81c2f4', range: { side: 'head', start: 23, end: 35 } }, question: 'Is this a cache, or only an in-flight promise?', status: 'answered', followup: '' },
-    { id: 3, anchor: { fileId: 'test', revision: 'a81c2f4', range: { side: 'head', start: 12, end: 18 } }, question: 'What happens when the refresh request fails?', status: 'investigating', followup: '' },
-    { id: 4, anchor: { fileId: 'store', revision: 'a81c2f4', range: { side: 'head', start: 41, end: 44 } }, question: 'Why increment the session generation on logout?', status: 'understood', followup: '' },
+    makeSampleThread(1, { fileId: 'refresh', revision: 'a81c2f4', range: { side: 'head', start: 27, end: 30 } }, 'Can an old refresh restore a session?', 'answered'),
+    {
+      ...makeSampleThread(2, { fileId: 'refresh', revision: 'a81c2f4', range: { side: 'head', start: 23, end: 35 } }, 'Is this a cache, or only an in-flight promise?', 'answered'),
+      followup: 'Could you walk me through the failure case?',
+      messages: [
+        { author: 'You', paragraphs: ['Is this caching the session, or just sharing an in-flight request?'] },
+        { author: 'Agent', paragraphs: ['It shares work, not the result. While the request is running, every caller receives the same promise.', 'A calls → starts a request. B calls → joins the same promise. Once settled, C starts a new request.', 'That is why cleanup is in finally(): success or failure, the next call can try again.'], citations: [{ fileId: 'refresh', revision: 'a81c2f4', range: { side: 'head', start: 23, end: 35 } }] },
+      ],
+    },
+    makeSampleThread(3, { fileId: 'test', revision: 'a81c2f4', range: { side: 'head', start: 12, end: 18 } }, 'What happens when the refresh request fails?', 'investigating'),
+    {
+      ...makeSampleThread(4, { fileId: 'store', revision: 'a81c2f4', range: { side: 'head', start: 41, end: 44 } }, 'Why increment the session generation on logout?', 'understood'),
+      messages: [
+        { author: 'You', paragraphs: ['Why increment the session generation on logout?'] },
+        { author: 'Agent', paragraphs: ['It invalidates the generation captured by an older refresh, so that result cannot replace the cleared store.'], citations: [{ fileId: 'store', revision: 'a81c2f4', range: { side: 'head', start: 41, end: 44 } }] },
+        { author: 'You', paragraphs: ['So this guards the store write rather than cancelling the request?'] },
+        { author: 'Agent', paragraphs: ['Yes. In this fictional excerpt, the generation check guards the write. Cancellation is a separate concern.'] },
+      ],
+    },
   ]
+}
+
+/**
+ * Creates a local transcript with explicitly illustrative, never generated, content.
+ * @param id Local thread number.
+ * @param anchor Pinned sample source.
+ * @param question Submitted question text.
+ * @param status Initial preview status.
+ * @returns An independent thread and transcript.
+ */
+export function makeSampleThread(id: number, anchor: SampleAnchor, question: string, status: SampleThread['status']): SampleThread {
+  const messages: SampleMessage[] = [{ author: 'You', paragraphs: [question] }]
+  if (status === 'answered' || status === 'understood') {
+    messages.push({ author: 'Agent', paragraphs: [...sampleExplanation], citations: [anchor] })
+  }
+  return { id, anchor, question, status, followup: '', messages }
+}
+
+/**
+ * Describes a pinned sample source location.
+ * @param anchor Source coordinates to describe.
+ * @returns Path, side/range and revision without implying verified evidence.
+ */
+export function sampleSourceLabel(anchor: SampleAnchor): string {
+  const path = sampleFiles.find((file): boolean => file.id === anchor.fileId)?.path ?? anchor.fileId
+  return `${path} · ${anchor.range ? `${anchor.range.side} L${anchor.range.start}–${anchor.range.end}` : 'Whole file'} · ${anchor.revision}`
 }
 
 export const sampleExplanation = [

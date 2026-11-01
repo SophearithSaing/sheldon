@@ -1,20 +1,20 @@
 <script setup lang="ts">
-import { computed, ref, useId } from 'vue'
+import { computed, nextTick, ref, useId } from 'vue'
 import WorkspaceShell from '../components/WorkspaceShell.vue'
-import UiBadge from '../components/ui/UiBadge.vue'
 import UiButton from '../components/ui/UiButton.vue'
-import UiField from '../components/ui/UiField.vue'
 import UiTabs from '../components/ui/UiTabs.vue'
 import ScrollRegion from '../components/ui/ScrollRegion.vue'
 import ChangedFileTree from '../components/ChangedFileTree.vue'
 import FilesChangedPreview from './FilesChangedPreview.vue'
+import QuestionsPreview from './QuestionsPreview.vue'
+import ThreadConversation from './ThreadConversation.vue'
 import {
   sampleChoices,
-  sampleExplanation,
   sampleFiles,
   workspaceTabs,
   initialSampleThreads,
   type SampleThread,
+  type SampleAnchor,
 } from './workspace'
 
 withDefaults(defineProps<{ workspaceNumber?: number }>(), { workspaceNumber: 248 })
@@ -24,18 +24,16 @@ const activeFile = ref('refresh')
 const fileSearch = ref('')
 const threads = ref(initialSampleThreads())
 const activeThreadId = ref<number | null>(threads.value[0]?.id ?? null)
-const genericFollowup = ref('')
 const shell = ref<InstanceType<typeof WorkspaceShell>>()
 const filesPreview = ref<InstanceType<typeof FilesChangedPreview>>()
 const viewed = ref<Record<string, boolean>>({ client: true, docs: true })
-const sampleSearch = ref('')
 const selectedChoice = ref('')
 const conversationOpen = ref(threads.value.length > 0)
 const activeThread = computed(() => threads.value.find((thread): boolean => thread.id === activeThreadId.value))
-const followupDraft = computed({ get: getFollowup, set: setFollowup })
 const conversationTitle = computed((): string => activeThread.value ? `Question ${String(activeThread.value.id).padStart(2, '0')}` : 'Sample conversation')
 const tabItems = computed(() => workspaceTabs.map((tab) => ({ ...tab, count: tab.id === 'files' ? sampleFiles.length : tab.id === 'questions' ? threads.value.length : undefined })))
 const fileCounts = computed(countQuestions)
+const busyThread = computed(findBusyThread)
 
 /**
  * Counts submitted sample threads, never unsent drafts.
@@ -48,20 +46,72 @@ function countQuestions(): Record<string, number> {
 }
 
 /**
- * Reads the selected thread's page-memory follow-up text.
- * @returns Local follow-up draft.
+ * Finds the single investigating question in the shared sample context.
+ * @returns Its id, or null when the shared session is idle.
  */
-function getFollowup(): string {
-  return activeThread.value?.followup ?? genericFollowup.value
+function findBusyThread(): number | null {
+  return threads.value.find((thread): boolean => thread.status === 'investigating')?.id ?? null
 }
 
 /**
- * Updates only the selected sample thread's follow-up.
- * @param value Local text to retain.
+ * Marks only the explicitly selected question understood or reopens it.
+ * @param id Thread selected by the reader.
+ * @param value Whether the reader confirms understanding.
  */
-function setFollowup(value: string): void {
-  if (activeThread.value) activeThread.value.followup = value
-  else genericFollowup.value = value
+function setUnderstood(id: number, value: boolean): void {
+  const thread = threads.value.find((item): boolean => item.id === id)
+  if (!thread || (value && thread.status !== 'answered')) return
+  thread.status = value ? 'understood' : 'answered'
+}
+
+/**
+ * Selects a labeled thread-state preview without creating replies or native activity.
+ * @param id Thread whose presentation changes.
+ * @param state Explicitly selected sample state.
+ */
+function previewState(id: number, state: string): void {
+  const thread = threads.value.find((item): boolean => item.id === id)
+  if (!thread) return
+  if (state === 'outdated') {
+    thread.outdated = true
+    return
+  }
+  if (state === 'investigating' && busyThread.value !== null && busyThread.value !== id) return
+  if (state === 'answered' || state === 'investigating' || state === 'failed' || state === 'interrupted') {
+    thread.status = state
+    thread.outdated = false
+  }
+}
+
+/**
+ * Returns to ordinary source navigation without inventing a whole-PR composer.
+ */
+async function showFiles(): Promise<void> {
+  activeTab.value = 'files'
+  await nextTick()
+  document.getElementById(`${tabsId}-tab-files`)?.focus()
+}
+
+/**
+ * Reveals a citation in its pinned sample diff, retaining inline draft guards.
+ * @param id Thread that owns the citation.
+ * @param anchor Sample source coordinates.
+ */
+async function showSource(id: number, anchor: SampleAnchor): Promise<void> {
+  activeTab.value = 'files'
+  await nextTick()
+  filesPreview.value?.revealSource(id, anchor)
+}
+
+/**
+ * Keeps the owning thread selected while returning focus to its source coordinates.
+ * @param id Thread whose citation was followed.
+ * @param trigger Revealed gutter or whole-file control.
+ */
+async function sourceRevealed(id: number, trigger: HTMLElement): Promise<void> {
+  activeThreadId.value = id
+  await shell.value?.openConversation(trigger, false)
+  trigger.focus({ preventScroll: true })
 }
 
 /**
@@ -69,7 +119,7 @@ function setFollowup(value: string): void {
  * @param thread Validated sample question supplied by the Files view.
  */
 function createThread(thread: SampleThread): void {
-  if (!threads.value.some((item): boolean => item.id === thread.id)) threads.value.push(thread)
+  if (!threads.value.some((item): boolean => item.id === thread.id)) threads.value.unshift(thread)
 }
 
 /**
@@ -134,7 +184,7 @@ function selectFile(id: string): void {
           @select="selectFile"
         />
       </template>
-      <template #default="{ openConversation }">
+      <template #default>
         <div
           v-show="activeTab === 'files'"
           :id="`${tabsId}-panel-files`"
@@ -149,6 +199,7 @@ function selectFile(id: string): void {
             :viewed="viewed"
             @create="createThread"
             @open="openThread"
+            @reveal="sourceRevealed"
             @viewed="(id, value) => viewed[id] = value"
           />
         </div>
@@ -160,44 +211,7 @@ function selectFile(id: string): void {
           :aria-labelledby="`${tabsId}-tab-questions`"
           class="fixture-panel"
         >
-          <ScrollRegion label="Question control samples" class="fixture-body">
-            <div class="fixture-stack">
-              <h2>Question controls</h2>
-              <p class="muted">Component samples, not a saved question library.</p>
-              <UiField
-                v-model="sampleSearch"
-                label="Sample search text"
-                type="search"
-                hint="This field demonstrates input styling. Search is not connected."
-                placeholder="Search questions…"
-              />
-              <section class="sample-card" :aria-labelledby="`${tabsId}-status-samples`">
-                <h3 :id="`${tabsId}-status-samples`">Status samples</h3>
-                <div class="fixture-meta">
-                  <UiBadge tone="warning">Investigating · sample</UiBadge>
-                  <UiBadge tone="info">Answered · sample</UiBadge>
-                  <UiBadge tone="success">Understood · sample</UiBadge>
-                  <UiBadge tone="error">Failed · sample</UiBadge>
-                </div>
-                <p class="muted small">
-                  Answered and reader-confirmed Understood are different states. None of these
-                  samples represents a running service.
-                </p>
-              </section>
-              <section class="sample-card" :aria-labelledby="`${tabsId}-sample-question-title`">
-                <UiBadge>Sample question</UiBadge>
-                <h3 :id="`${tabsId}-sample-question-title`">Can an older refresh restore a session?</h3>
-                <p class="muted">src/auth/refresh-session.ts · L27–30 · sample revision</p>
-                <UiButton @click="openConversation">Preview sample conversation</UiButton>
-              </section>
-              <p :id="`${tabsId}-questions-unavailable`" class="muted small">
-                Creating and saving questions is not implemented.
-              </p>
-              <UiButton variant="primary" disabled :aria-describedby="`${tabsId}-questions-unavailable`"
-                >New question — unavailable</UiButton
-              >
-            </div>
-          </ScrollRegion>
+          <QuestionsPreview :threads="threads" :current="conversationOpen ? activeThreadId : null" @open="openThread" @files="showFiles" />
         </div>
 
         <div
@@ -242,41 +256,7 @@ function selectFile(id: string): void {
         </div>
       </template>
       <template #conversation>
-        <div v-if="activeThread" class="thread-context">
-          <UiBadge :tone="activeThread.status === 'failed' ? 'error' : 'info'">{{ activeThread.status }} · sample</UiBadge>
-          <p>{{ sampleFiles.find((item) => item.id === activeThread!.anchor.fileId)?.path }}</p>
-          <p>{{ activeThread.anchor.range ? `${activeThread.anchor.range.side} L${activeThread.anchor.range.start}–${activeThread.anchor.range.end}` : 'Whole file' }} · {{ activeThread.anchor.revision }}</p>
-          <p>Shared agent context · This PR revision</p>
-        </div>
-        <ScrollRegion label="Sample conversation messages" class="conversation-messages">
-          <div class="sample-message">
-            <h3>You <span class="muted">· sample message</span></h3>
-            <p class="sample-prompt">
-              {{ activeThread?.question ?? 'What prevents an old refresh from restoring a logged-out session?' }}
-            </p>
-          </div>
-          <p v-if="activeThread?.status === 'failed'" role="alert">Sample response failed. No agent request ran. The thread and question are retained.</p>
-          <p v-else-if="activeThread?.status === 'investigating'" role="status">Investigating preview only — no agent is running.</p>
-          <div v-else class="sample-message sample-explanation">
-            <h3>Agent <span class="muted">· sample response, not connected</span></h3>
-            <p>Fixed sample text, not an answer generated for your question.</p>
-            <p v-for="paragraph in sampleExplanation" :key="paragraph">{{ paragraph }}</p>
-          </div>
-        </ScrollRegion>
-        <div class="followup-sample">
-          <UiField
-            v-model="followupDraft"
-            label="Sample follow-up"
-            multiline
-            hint="Local text only. Closing the preview keeps this draft until page reload."
-          />
-          <p :id="`${tabsId}-followup-unavailable`" class="muted small">
-            No harness is connected; sending is unavailable.
-          </p>
-          <UiButton variant="primary" disabled :aria-describedby="`${tabsId}-followup-unavailable`"
-            >Send — unavailable</UiButton
-          >
-        </div>
+        <KeepAlive><ThreadConversation v-if="activeThread" :key="activeThread.id" v-model:followup="activeThread.followup" :thread="activeThread" :busy-thread="busyThread" @source="showSource" @understood="setUnderstood" @preview="previewState" /></KeepAlive>
       </template>
     </WorkspaceShell>
   </div>
@@ -290,7 +270,6 @@ function selectFile(id: string): void {
   min-height: 0;
   min-width: 0;
 }
-.thread-context { display: grid; gap: var(--space-1); padding: var(--space-3) var(--space-6); border-bottom: 1px solid var(--color-border); color: var(--color-muted); font-size: var(--text-code-meta); }
 .fixture-title {
   grid-column: 1;
   grid-row: 1;
@@ -349,16 +328,6 @@ function selectFile(id: string): void {
   font-size: var(--text-prose);
   font-weight: 550;
 }
-.sample-card {
-  display: grid;
-  justify-items: start;
-  gap: var(--space-3);
-  width: 100%;
-  padding: var(--space-5);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-panel);
-}
 .sample-choices {
   display: grid;
   gap: var(--space-3);
@@ -393,46 +362,5 @@ function selectFile(id: string): void {
 .sample-choices input {
   flex-shrink: 0;
   accent-color: var(--color-accent);
-}
-.conversation-messages {
-  flex: 1;
-  min-height: 10rem;
-  padding: var(--space-5) var(--space-6);
-}
-.sample-message {
-  font-family: var(--font-prose);
-  font-size: var(--text-prose);
-  line-height: 1.75;
-  overflow-wrap: anywhere;
-}
-.sample-message h3 {
-  margin-bottom: var(--space-3);
-  font-size: var(--text-small);
-  font-weight: 600;
-}
-.sample-prompt {
-  font-size: var(--text-prompt);
-  line-height: 1.65;
-  padding: var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-canvas);
-}
-.sample-explanation {
-  margin-top: var(--space-6);
-}
-.sample-explanation p + p {
-  margin-top: var(--space-4);
-}
-.followup-sample {
-  flex-shrink: 0;
-  display: grid;
-  justify-items: end;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-6);
-  border-top: 1px solid var(--color-border);
-}
-.followup-sample > .ui-field {
-  width: 100%;
 }
 </style>

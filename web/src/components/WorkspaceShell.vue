@@ -22,12 +22,13 @@ function collapseFiles(): void {
 /**
  * Opens the conversation without hiding or collapsing source navigation.
  * @param event Activation of the initiating conversation control.
+ * @param focusHeading Whether to move focus into the panel instead of retaining source focus.
  */
-async function openConversation(event: MouseEvent | HTMLElement): Promise<void> {
+async function openConversation(event: MouseEvent | HTMLElement, focusHeading = true): Promise<void> {
   conversationTrigger = event instanceof HTMLElement ? event : event.currentTarget as HTMLElement
   conversationOpen.value = true
   await nextTick()
-  conversationHeading.value?.focus()
+  if (focusHeading) conversationHeading.value?.focus()
 }
 defineExpose({ openConversation })
 

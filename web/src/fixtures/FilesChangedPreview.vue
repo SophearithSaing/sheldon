@@ -6,7 +6,7 @@ import ScrollRegion from '../components/ui/ScrollRegion.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiField from '../components/ui/UiField.vue'
 import type { LineRange } from '../components/diff'
-import { sampleDiffs, sampleFiles, type SampleAnchor, type SampleThread } from './workspace'
+import { makeSampleThread, sampleDiffs, sampleFiles, type SampleAnchor, type SampleThread } from './workspace'
 
 interface Draft {
   id: number
@@ -14,13 +14,14 @@ interface Draft {
   text: string
   error: string
 }
-type Change = { fileId: string; range: LineRange | null; draftId?: number; compose?: boolean; origin?: number }
+type Change = { fileId: string; range: LineRange | null; draftId?: number; compose?: boolean; origin?: number; revealId?: number }
 const props = defineProps<{ threads: SampleThread[]; viewed: Record<string, boolean> }>()
 const file = defineModel<string>('file', { required: true })
 const emit = defineEmits<{
   create: [thread: SampleThread]
   open: [id: number, trigger: HTMLElement]
   viewed: [id: string, value: boolean]
+  reveal: [id: number, trigger: HTMLElement]
 }>()
 const root = ref<HTMLElement>()
 const selection = ref<LineRange | null>({ side: 'head', start: 27, end: 30 })
@@ -118,12 +119,29 @@ async function applyChange(change: Change): Promise<void> {
   const recovered = change.draftId === undefined
     ? drafts.value.filter((item): boolean => item.anchor.fileId === change.fileId).at(-1)
     : drafts.value.find((item): boolean => item.id === change.draftId)
-  expanded.value = change.compose || (change.draftId === undefined && change.range) ? null : recovered?.id ?? null
+  expanded.value = change.compose || change.revealId !== undefined || (change.draftId === undefined && change.range) ? null : recovered?.id ?? null
   if (recovered && expanded.value !== null) selection.value = recovered.anchor.range
   pendingChange.value = null
   await nextTick()
   if (change.compose) await ask(change.range === null)
   else if (change.draftId !== undefined) await focusDraft()
+  if (change.revealId !== undefined) {
+    const target = gutter(change.range) ?? root.value?.querySelector<HTMLButtonElement>('[data-file-ask]')
+    if (target) {
+      target.scrollIntoView({ block: 'center' })
+      emit('reveal', change.revealId, target)
+    }
+  }
+}
+
+/**
+ * Reveals pinned sample evidence without silently retargeting an unsent draft.
+ * @param id Thread whose panel remains selected.
+ * @param anchor Pinned source to select.
+ */
+function revealSource(id: number, anchor: SampleAnchor): void {
+  if (anchor.revision !== 'a81c2f4') return
+  requestChange({ fileId: anchor.fileId, range: anchor.range, revealId: id })
 }
 
 /**
@@ -141,9 +159,26 @@ function requestChange(change: Change): void {
   }
   if (draft.value?.text.length) {
     pendingChange.value = change
+    void focusGuard()
     return
   }
   void applyChange(change)
+}
+
+/**
+ * Makes a blocked context change and its recovery choices keyboard-reachable.
+ */
+async function focusGuard(): Promise<void> {
+  await nextTick()
+  root.value?.querySelector<HTMLElement>('.context-guard')?.focus()
+}
+
+/**
+ * Dismisses a context switch and restores the original draft's focus.
+ */
+function keepEditing(): void {
+  pendingChange.value = null
+  void focusDraft()
 }
 
 /**
@@ -186,6 +221,7 @@ async function ask(wholeFile = false): Promise<void> {
   const range = wholeFile ? null : selection.value
   if (draft.value?.text.length && JSON.stringify(draft.value.anchor.range) !== JSON.stringify(range)) {
     pendingChange.value = { fileId: file.value, range, compose: true }
+    await focusGuard()
     return
   }
   let existing = drafts.value.find((item): boolean => item.anchor.fileId === file.value && JSON.stringify(item.anchor.range) === JSON.stringify(range))
@@ -221,13 +257,12 @@ async function complete(): Promise<void> {
   pending.value = false
   const anchorElement = gutter(current.anchor.range)
   const top = anchorElement?.getBoundingClientRect().top
-  const thread: SampleThread = {
-    id: Math.max(0, ...props.threads.map((item): number => item.id)) + 1,
-    anchor: { ...current.anchor, range: current.anchor.range ? { ...current.anchor.range } : null },
-    question: current.text.trim(),
-    status: outcome.value === 'response-error' ? 'failed' : 'answered',
-    followup: '',
-  }
+  const thread = makeSampleThread(
+    Math.max(0, ...props.threads.map((item): number => item.id)) + 1,
+    { ...current.anchor, range: current.anchor.range ? { ...current.anchor.range } : null },
+    current.text.trim(),
+    outcome.value === 'response-error' ? 'failed' : 'answered',
+  )
   emit('create', thread)
   drafts.value = drafts.value.filter((item): boolean => item.id !== current.id)
   expanded.value = null
@@ -274,7 +309,7 @@ function openThread(thread: SampleThread, event: MouseEvent): void {
   expanded.value = null
   emit('open', thread.id, event.currentTarget as HTMLElement)
 }
-defineExpose({ selectFile })
+defineExpose({ selectFile, revealSource })
 </script>
 
 <template>
@@ -295,9 +330,9 @@ defineExpose({ selectFile })
       <UiButton :disabled="!selection || pending" @click="ask()">Ask about selected lines</UiButton>
     </div>
     <p class="sr-only" role="status">{{ message }}</p>
-    <section v-if="pendingChange" class="context-guard" role="alert" aria-label="Keep your draft context">
+    <section v-if="pendingChange" class="context-guard" role="alert" tabindex="-1" aria-label="Keep your draft context">
       <p>Your draft is still anchored to {{ context(draft!.anchor) }} in {{ selectedFile.path }}.</p>
-      <UiButton @click="pendingChange = null">Keep editing</UiButton>
+      <UiButton @click="keepEditing">Keep editing</UiButton>
       <UiButton @click="confirmChange(false)">Keep draft and switch</UiButton>
       <UiButton @click="confirmChange(true)">Discard draft and switch</UiButton>
     </section>
