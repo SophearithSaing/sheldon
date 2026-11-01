@@ -47,7 +47,8 @@ defineProps<{ lines: DiffLine[]; label: string }>()
 .diff-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--text-body);
+  font-family: var(--font-code);
+  font-size: var(--text-code);
   line-height: var(--line-code);
 }
 .diff-table td {
@@ -55,6 +56,7 @@ defineProps<{ lines: DiffLine[]; label: string }>()
   vertical-align: top;
 }
 .line-number {
+  font-size: var(--text-code-meta);
   width: 4ch;
   min-width: 4ch;
   padding-inline: var(--space-1);

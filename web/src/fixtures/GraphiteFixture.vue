@@ -8,6 +8,7 @@ import UiTabs from '../components/ui/UiTabs.vue'
 import ScrollRegion from '../components/ui/ScrollRegion.vue'
 import SampleDiffLines from './SampleDiffLines.vue'
 import fontLicenseUrl from '../assets/fonts/OFL.txt?url'
+import sansLicenseUrl from '../assets/fonts/DM-Sans-LICENSE.txt?url'
 import {
   sampleChoices,
   sampleDiffs,
@@ -279,6 +280,9 @@ function selectFile(id: string, closeFiles: () => void): void {
         <a :href="fontLicenseUrl" target="_blank" rel="noopener noreferrer"
           >JetBrains Mono license <span class="sr-only">(opens in a new tab)</span></a
         >
+        <a :href="sansLicenseUrl" target="_blank" rel="noopener noreferrer">
+              DM Sans license <span class="sr-only">(opens in a new tab)</span>
+        </a>
       </template>
     </WorkspaceShell>
   </div>
@@ -303,8 +307,9 @@ function selectFile(id: string, closeFiles: () => void): void {
 }
 .fixture-title {
   font-size: var(--text-heading);
-  font-weight: 500;
-  line-height: 1.4;
+  font-weight: 550;
+  line-height: 1.3;
+  letter-spacing: -0.5px;
   overflow-wrap: anywhere;
 }
 .fixture-meta,
@@ -317,7 +322,11 @@ function selectFile(id: string, closeFiles: () => void): void {
 .fixture-meta {
   font-size: var(--text-small);
 }
+.fixture-meta code {
+  font-size: var(--text-code-meta);
+}
 .context-chip {
+  font-size: var(--text-code-meta);
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
@@ -391,10 +400,11 @@ function selectFile(id: string, closeFiles: () => void): void {
   border-radius: var(--radius-control);
 }
 .diff-file-title {
+  font-family: var(--font-code);
   padding: var(--space-4);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-panel);
-  font-size: var(--text-body);
+  font-size: var(--text-code-meta);
   font-weight: 500;
   overflow-wrap: anywhere;
 }
@@ -489,7 +499,7 @@ function selectFile(id: string, closeFiles: () => void): void {
 .sample-message {
   font-family: var(--font-prose);
   font-size: var(--text-prose);
-  line-height: 1.7;
+  line-height: 1.75;
   overflow-wrap: anywhere;
 }
 .sample-message h3 {
@@ -498,6 +508,8 @@ function selectFile(id: string, closeFiles: () => void): void {
   font-weight: 600;
 }
 .sample-prompt {
+  font-size: var(--text-prompt);
+  line-height: 1.65;
   padding: var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);

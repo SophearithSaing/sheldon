@@ -13,7 +13,7 @@ async function state(): Promise<{ url: string; token: string }> {
   return JSON.parse((await readFile(process.env.SHELDON_RELEASE_STATE!)).subarray(1).toString())
 }
 
-test('isolated release binary serves the authenticated shell, font and complete license', async ({
+test('isolated release binary serves the authenticated shell, fonts and complete licenses', async ({
   page,
 }, testInfo) => {
   const { url, token } = await state()
@@ -37,6 +37,10 @@ test('isolated release binary serves the authenticated shell, font and complete 
   const font = urls.find((value) => value.endsWith('.ttf'))
   expect(font).toBeTruthy()
   expect((await page.request.get(font!)).headers()['content-type']).toBe('font/ttf')
+  expect(await page.evaluate(() => document.fonts.check('400 13px "Sheldon Slate Sans"'))).toBe(true)
+  const sansFont = urls.find((value) => value.endsWith('.woff2'))
+  expect(sansFont).toBeTruthy()
+  expect((await page.request.get(sansFont!)).headers()['content-type']).toBe('font/woff2')
   const license = await page
     .getByRole('link', { name: 'JetBrains Mono license' })
     .getAttribute('href')
@@ -45,6 +49,12 @@ test('isolated release binary serves the authenticated shell, font and complete 
   const licenseText = await licenseResponse.text()
   expect(licenseText).toContain('SIL OPEN FONT LICENSE Version 1.1')
   expect(licenseText.length).toBeGreaterThan(4000)
+  const sansLicense = await page.getByRole('link', { name: 'DM Sans license' }).getAttribute('href')
+  const sansLicenseResponse = await page.request.get(url + sansLicense!)
+  expect(sansLicenseResponse.headers()['content-type']).toContain('text/plain')
+  const sansLicenseText = await sansLicenseResponse.text()
+  expect(sansLicenseText).toContain('SIL OPEN FONT LICENSE')
+  expect(sansLicenseText.length).toBeGreaterThan(4000)
   expect(urls.every((value) => value.startsWith(url + '/'))).toBe(true)
   expect(urls.some((value) => value.includes(token))).toBe(false)
   expect(await page.content()).not.toContain(token)

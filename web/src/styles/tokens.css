@@ -1,35 +1,38 @@
-/* Adapted from the selected Graphite reference. Screens are still drafts. */
+/* Adapted from the approved Slate direction. Screens are still drafts. */
 :root {
-  --color-canvas: #17191d;
-  --color-panel: #202329;
-  --color-surface: #292d35;
-  --color-text: #e4e7ec;
-  --color-muted: #a0a8b5;
-  --color-faint: #929cac;
-  --color-border: #343941;
+  --color-canvas: #161a22;
+  --color-panel: #1e232e;
+  --color-surface: #272d3b;
+  --color-text: #f0efed;
+  --color-muted: #acb4c5;
+  --color-faint: #acb4c5;
+  --color-border: #343d4e;
   --color-border-strong: #596373;
   --color-accent: #8ab4ff;
-  --color-on-accent: #17191d;
+  --color-on-accent: #161a22;
   --color-accent-soft: #263247;
   --color-accent-border: #637fa9;
-  --color-success: #95c4a4;
-  --color-success-soft: #23352b;
-  --color-error: #e5a0a5;
-  --color-error-soft: #3a292e;
+  --color-success: #a4d4bc;
+  --color-success-soft: #202f2d;
+  --color-error: #e8aeb5;
+  --color-error-soft: #36272f;
   --color-warning: #d8be88;
   --color-warning-soft: #373126;
-  --color-code-keyword: #c3afe2;
+  --color-code-keyword: var(--color-accent);
   --color-code-function: #a6c5ec;
   --color-code-comment: #a0aeaa;
 
-  --font-ui: 'Sheldon JetBrains Mono', monospace;
+  --font-ui: 'Sheldon Slate Sans', sans-serif;
   --font-prose: var(--font-ui);
-  --font-code: var(--font-ui);
+  --font-code: 'Sheldon JetBrains Mono', monospace;
   --text-small: 0.75rem;
   --text-body: 0.8125rem;
   --text-prose: 0.875rem;
-  --text-heading: 1.375rem;
-  --line-code: 1.5rem;
+  --text-heading: 1.3125rem;
+  --text-code: 0.75rem;
+  --text-code-meta: 0.6875rem;
+  --text-prompt: 0.9375rem;
+  --line-code: 1.5625rem;
 
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -38,10 +41,10 @@
   --space-5: 1.25rem;
   --space-6: 1.5rem;
   --space-8: 2rem;
-  --radius-control: 0.375rem;
-  --radius-panel: 0.5rem;
+  --radius-control: 0.5rem;
+  --radius-panel: 0.75rem;
   --radius-pill: 999px;
   --target-control: 2.75rem;
-  --width-file-rail: 15.75rem;
-  --width-conversation: 30rem;
+  --width-file-rail: 15rem;
+  --width-conversation: 27.5rem;
 }

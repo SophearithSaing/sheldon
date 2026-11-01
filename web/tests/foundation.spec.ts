@@ -14,7 +14,7 @@ test('keyboard users can skip directly to the labeled workspace content', async 
   await expect(page.getByRole('main')).toBeFocused()
 })
 
-test('uses local Graphite typography, native geometry and a bundled license', async ({ page }) => {
+test('uses local Slate typography, foundation geometry and bundled licenses', async ({ page }) => {
   await expect(page.getByText('UI fixture', { exact: true })).toBeVisible()
   await expect(page.getByText('No PR loaded. No agent connected.', { exact: false })).toBeVisible()
   const typography = await page.evaluate(() => {
@@ -26,34 +26,46 @@ test('uses local Graphite typography, native geometry and a bundled license', as
       ligatures: style.fontVariantLigatures,
       synthesis: style.fontSynthesis,
       loaded: document.fonts.check('400 13px "Sheldon JetBrains Mono"'),
+      sansLoaded: document.fonts.check('400 13px "Sheldon Slate Sans"'),
     }
   })
   expect(typography).toMatchObject({
     size: '13px',
-    background: 'rgb(23, 25, 29)',
+    background: 'rgb(22, 26, 34)',
     ligatures: 'none',
     synthesis: 'none',
     loaded: true,
+    sansLoaded: true,
   })
-  expect(typography.family).toContain('Sheldon JetBrains Mono')
-  await expect(page.getByRole('heading', { level: 1 })).toHaveCSS('font-size', '22px')
-  await expect(page.locator('.diff-table').first()).toHaveCSS('font-size', '13px')
-  await expect(page.locator('.diff-table').first()).toHaveCSS('line-height', '24px')
+  expect(typography.family).toContain('Sheldon Slate Sans')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveCSS('font-size', '21px')
+  await expect(page.locator('.diff-table').first()).toHaveCSS('font-size', '12px')
+  await expect(page.locator('.diff-table').first()).toHaveCSS('line-height', '25px')
+  await expect(page.locator('.diff-table').first()).toHaveCSS(
+    'font-family',
+    '"Sheldon JetBrains Mono", monospace',
+  )
+  await expect(page.locator('.line-number').first()).toHaveCSS('font-size', '11px')
   const rail = await page.getByRole('complementary', { name: 'Changed files' }).boundingBox()
-  expect(rail?.width).toBeCloseTo(252, 0)
+  expect(rail?.width).toBeCloseTo(240, 0)
   await page.getByRole('button', { name: 'Preview sample conversation' }).click()
   const conversation = await page
     .getByRole('complementary', { name: 'Sample conversation' })
     .boundingBox()
-  expect(conversation?.width).toBeCloseTo(480, 0)
+  expect(conversation?.width).toBeCloseTo(440, 0)
   await expect(page.locator('.sample-explanation')).toHaveCSS('font-size', '14px')
-  await expect(page.locator('.sample-explanation')).toHaveCSS('line-height', '23.8px')
+  await expect(page.locator('.sample-explanation')).toHaveCSS('line-height', '24.5px')
+  await expect(page.locator('.sample-prompt')).toHaveCSS('font-size', '15px')
+  await expect(page.locator('.sample-prompt')).toHaveCSS('line-height', '24.75px')
   const license = await page
     .getByRole('link', { name: 'JetBrains Mono license' })
     .getAttribute('href')
   expect(license).toBeTruthy()
   const response = await page.request.get(license!)
   expect(await response.text()).toContain('SIL OPEN FONT LICENSE Version 1.1')
+  const sansLicense = await page.getByRole('link', { name: 'DM Sans license' }).getAttribute('href')
+  expect(sansLicense).toBeTruthy()
+  expect(await (await page.request.get(sansLicense!)).text()).toContain('SIL OPEN FONT LICENSE')
 })
 
 test('tabs support roving focus and retain editable drafts and scroll position', async ({
