@@ -13,6 +13,7 @@ func TestAssetsAreExactTypedFiles(t *testing.T) {
 		"assets/app.js":     {Data: []byte("export {}")},
 		"assets/app.css":    {Data: []byte("body {}")},
 		"assets/font.ttf":   {Data: []byte("font")},
+		"assets/font.woff2": {Data: []byte("font")},
 		"assets/OFL.txt":    {Data: []byte("license")},
 		"assets/app.js.map": {Data: []byte("private source")},
 		"instance.lock":     {Data: []byte("private credential")},
@@ -24,6 +25,7 @@ func TestAssetsAreExactTypedFiles(t *testing.T) {
 		{"/assets/app.js", "text/javascript; charset=utf-8"},
 		{"/assets/app.css", "text/css; charset=utf-8"},
 		{"/assets/font.ttf", "font/ttf"},
+		{"/assets/font.woff2", "font/woff2"},
 		{"/assets/OFL.txt", "text/plain; charset=utf-8"},
 	} {
 		w := httptest.NewRecorder()
