@@ -14,7 +14,7 @@ interface Draft {
   text: string
   error: string
 }
-type Change = { fileId: string; range: LineRange | null; draftId?: number; compose?: boolean; origin?: number; revealId?: number }
+type Change = { fileId: string; range: LineRange | null; draftId?: number; compose?: boolean; origin?: number; revealId?: number; sourceOnly?: boolean }
 const props = defineProps<{ threads: SampleThread[]; viewed: Record<string, boolean> }>()
 const file = defineModel<string>('file', { required: true })
 const emit = defineEmits<{
@@ -119,17 +119,18 @@ async function applyChange(change: Change): Promise<void> {
   const recovered = change.draftId === undefined
     ? drafts.value.filter((item): boolean => item.anchor.fileId === change.fileId).at(-1)
     : drafts.value.find((item): boolean => item.id === change.draftId)
-  expanded.value = change.compose || change.revealId !== undefined || (change.draftId === undefined && change.range) ? null : recovered?.id ?? null
+  expanded.value = change.compose || change.sourceOnly || change.revealId !== undefined || (change.draftId === undefined && change.range) ? null : recovered?.id ?? null
   if (recovered && expanded.value !== null) selection.value = recovered.anchor.range
   pendingChange.value = null
   await nextTick()
   if (change.compose) await ask(change.range === null)
   else if (change.draftId !== undefined) await focusDraft()
-  if (change.revealId !== undefined) {
+  if (change.revealId !== undefined || change.sourceOnly) {
     const target = gutter(change.range) ?? root.value?.querySelector<HTMLButtonElement>('[data-file-ask]')
     if (target) {
       target.scrollIntoView({ block: 'center' })
-      emit('reveal', change.revealId, target)
+      if (change.revealId !== undefined) emit('reveal', change.revealId, target)
+      else target.focus({ preventScroll: true })
     }
   }
 }
@@ -142,6 +143,15 @@ async function applyChange(change: Change): Promise<void> {
 function revealSource(id: number, anchor: SampleAnchor): void {
   if (anchor.revision !== 'a81c2f4') return
   requestChange({ fileId: anchor.fileId, range: anchor.range, revealId: id })
+}
+
+/**
+ * Reveals pinned quiz context without changing question selection or creating a thread.
+ * @param anchor Illustrative source coordinates.
+ */
+function revealAnchor(anchor: SampleAnchor): void {
+  if (anchor.revision !== 'a81c2f4') return
+  requestChange({ fileId: anchor.fileId, range: anchor.range, sourceOnly: true })
 }
 
 /**
@@ -309,7 +319,7 @@ function openThread(thread: SampleThread, event: MouseEvent): void {
   expanded.value = null
   emit('open', thread.id, event.currentTarget as HTMLElement)
 }
-defineExpose({ selectFile, revealSource })
+defineExpose({ selectFile, revealSource, revealAnchor })
 </script>
 
 <template>

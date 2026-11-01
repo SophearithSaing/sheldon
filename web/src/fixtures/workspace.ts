@@ -175,10 +175,3 @@ export const sampleExplanation = [
   'An answered question is not automatically understood. That is a reader decision, separate from whether a file has been viewed or whether a change should be merged.',
   'Longer conversations must keep native scrolling and keyboard focus available. This final paragraph intentionally makes the sample longer so that behavior can be reviewed without a connected service.',
 ]
-
-export const sampleChoices = [
-  'Every caller immediately receives a new session.',
-  'An older response cannot overwrite the newer store generation.',
-  'The browser cancels all earlier network requests.',
-  'The promise can never resolve after logout.',
-]

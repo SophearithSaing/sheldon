@@ -124,7 +124,7 @@ test('unfinished actions are labeled, focusable and do not initiate requests', a
   await expect(page.getByRole('region', { name: 'Questions in this PR', exact: true }).getByText(/Whole-PR question creation is unavailable/)).toBeVisible()
   await page.getByRole('tab', { name: 'Quiz', exact: true }).click()
   await expect(
-    page.getByRole('button', { name: 'Check answer — unavailable' }),
+    page.getByRole('button', { name: 'New quiz — unavailable' }),
   ).toHaveAccessibleDescription(/not implemented/)
   expect(requests).toEqual([])
 })

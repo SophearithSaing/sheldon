@@ -3,14 +3,13 @@ import { computed, nextTick, ref, useId, watch } from 'vue'
 import WorkspaceShell from '../components/WorkspaceShell.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiTabs from '../components/ui/UiTabs.vue'
-import ScrollRegion from '../components/ui/ScrollRegion.vue'
 import ChangedFileTree from '../components/ChangedFileTree.vue'
 import FilesChangedPreview from './FilesChangedPreview.vue'
 import QuestionsPreview from './QuestionsPreview.vue'
 import ThreadConversation from './ThreadConversation.vue'
+import QuizPreview from './QuizPreview.vue'
 import type { QuestionSummary } from './library'
 import {
-  sampleChoices,
   sampleFiles,
   workspaceTabs,
   initialSampleThreads,
@@ -28,8 +27,8 @@ const activeThreadId = ref<number | null>(threads.value[0]?.id ?? null)
 const shell = ref<InstanceType<typeof WorkspaceShell>>()
 const filesPreview = ref<InstanceType<typeof FilesChangedPreview>>()
 const viewed = ref<Record<string, boolean>>({ client: true, docs: true })
-const selectedChoice = ref('')
 const conversationOpen = ref(threads.value.length > 0)
+const visibleConversation = computed({ get: getConversation, set: setConversation })
 const activeThread = computed(() => threads.value.find((thread): boolean => thread.id === activeThreadId.value))
 const conversationTitle = computed((): string => activeThread.value ? `Question ${String(activeThread.value.id).padStart(2, '0')}` : 'Sample conversation')
 const tabItems = computed(() => workspaceTabs.map((tab) => ({ ...tab, count: tab.id === 'files' ? sampleFiles.length : tab.id === 'questions' ? threads.value.length : undefined })))
@@ -38,6 +37,32 @@ const busyThread = computed(findBusyThread)
 const emit = defineEmits<{ summary: [value: QuestionSummary] }>()
 const summary = computed(questionSummary)
 watch(summary, reportSummary, { immediate: true })
+
+/**
+ * Reserves the quiz's right pane for explanations without losing the selected conversation.
+ * @returns Whether the ordinary thread panel is visible.
+ */
+function getConversation(): boolean {
+  return activeTab.value !== 'quiz' && conversationOpen.value
+}
+
+/**
+ * Retains normal conversation disclosure state outside the quiz.
+ * @param value Requested panel visibility.
+ */
+function setConversation(value: boolean): void {
+  conversationOpen.value = value
+}
+
+/**
+ * Reveals quiz evidence without creating or selecting a conversation thread.
+ * @param anchor Pinned illustrative source location.
+ */
+async function showQuizSource(anchor: SampleAnchor): Promise<void> {
+  activeTab.value = 'files'
+  await nextTick()
+  filesPreview.value?.revealAnchor(anchor)
+}
 
 /**
  * Counts reader-controlled understanding independently from source status.
@@ -163,10 +188,10 @@ function selectFile(id: string): void {
 </script>
 
 <template>
-  <div class="sample-workspace">
+  <div class="sample-workspace" :class="{ 'is-quiz': activeTab === 'quiz' }">
     <WorkspaceShell
       ref="shell"
-      v-model:conversation-open="conversationOpen"
+      v-model:conversation-open="visibleConversation"
       :has-file-rail="activeTab === 'files'"
       :conversation-title="conversationTitle"
     >
@@ -242,38 +267,7 @@ function selectFile(id: string): void {
           :aria-labelledby="`${tabsId}-tab-quiz`"
           class="fixture-panel"
         >
-          <ScrollRegion label="Quiz control samples" class="fixture-body">
-            <div class="fixture-stack">
-              <h2>Quiz controls</h2>
-              <p class="muted">An ungraded radio-control fixture, not an agent-generated quiz.</p>
-              <fieldset class="sample-choices">
-                <legend>In this fictional example, what does the generation check protect?</legend>
-                <label
-                  v-for="(choice, index) in sampleChoices"
-                  :key="choice"
-                  :class="{ 'is-selected': selectedChoice === choice }"
-                >
-                  <input
-                    v-model="selectedChoice"
-                    type="radio"
-                    :name="`${tabsId}-sample-answer`"
-                    :value="choice"
-                  />
-                  <span class="muted" aria-hidden="true">{{
-                    String.fromCharCode(65 + index)
-                  }}</span>
-                  <span>{{ choice }}</span>
-                </label>
-              </fieldset>
-              <p :id="`${tabsId}-quiz-unavailable`" class="muted small">
-                Selection stays in this page. Generation, grading and saved attempts are not
-                implemented.
-              </p>
-              <UiButton variant="primary" disabled :aria-describedby="`${tabsId}-quiz-unavailable`"
-                >Check answer — unavailable</UiButton
-              >
-            </div>
-          </ScrollRegion>
+          <QuizPreview @source="showQuizSource" />
         </div>
       </template>
       <template #conversation>
@@ -324,64 +318,7 @@ function selectFile(id: string): void {
   min-height: 0;
   min-width: 0;
 }
-.fixture-body {
-  flex: 1;
-  padding: var(--space-6) var(--space-8);
-}
-.fixture-stack {
-  display: grid;
-  justify-items: start;
-  gap: var(--space-5);
-  width: min(100%, 48.75rem);
-  margin-inline: auto;
-}
-.fixture-stack > * {
-  max-width: 100%;
-}
-.fixture-stack > .ui-field {
-  width: 100%;
-}
-.fixture-stack h2 {
-  font-size: var(--text-heading);
-  font-weight: 500;
-}
-.fixture-stack h3 {
-  font-size: var(--text-prose);
-  font-weight: 550;
-}
-.sample-choices {
-  display: grid;
-  gap: var(--space-3);
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-.sample-choices legend {
-  margin-bottom: var(--space-5);
-  font-size: var(--text-prose);
-  line-height: 1.7;
-}
-.sample-choices label {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  min-height: var(--target-control);
-  padding: var(--space-4);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-control);
-  background: var(--color-panel);
-  cursor: pointer;
-}
-.sample-choices label:hover {
-  background: var(--color-surface);
-}
-.sample-choices label.is-selected {
-  border-color: var(--color-accent);
-  background: var(--color-accent-soft);
-}
-.sample-choices input {
-  flex-shrink: 0;
-  accent-color: var(--color-accent);
+@container workspace (max-width: 56.25rem) {
+  .is-quiz :deep(.workspace-content) { flex: 1; min-height: 0; }
 }
 </style>

@@ -6,6 +6,7 @@ import SampleWorkspace from './SampleWorkspace.vue'
 import PullRequestLibrary from './PullRequestLibrary.vue'
 import SourceStatusPreview from './SourceStatusPreview.vue'
 import HistoricalWorkspace from './HistoricalWorkspace.vue'
+import ConfigurationPreview from './ConfigurationPreview.vue'
 import { samplePullRequests, sampleWorkspaceEntry, type QuestionSummary, type SourcePreviewState } from './library'
 import monoLicense from '../assets/fonts/OFL.txt?url'
 import sansLicense from '../assets/fonts/DM-Sans-LICENSE.txt?url'
@@ -26,6 +27,10 @@ const previewOpen = ref(false)
 const announcement = ref('')
 const header = ref<InstanceType<typeof ApplicationHeader>>()
 const application = ref<HTMLElement>()
+const configuration = ref<InstanceType<typeof ConfigurationPreview>>()
+const configurationOrigin = ref(current.value === 'config' ? 'library' : current.value)
+const pendingNavigation = ref<string | null>(null)
+const originLabel = computed(configurationOriginLabel)
 const openWorkspaces = computed((): typeof workspaces.value =>
   workspaces.value.filter((workspace): boolean => workspace.open),
 )
@@ -47,9 +52,47 @@ function headerEntries(): { id: string; repository: string; number: number; titl
 function navigate(id: string, event: MouseEvent): void {
   if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
   event.preventDefault()
+  if (current.value === 'config' && id !== 'config' && configuration.value?.dirty) {
+    pendingNavigation.value = id
+    configuration.value.confirmLeave()
+    return
+  }
+  applyDestination(id)
+  void focusCurrentWorkspace()
+}
+
+/**
+ * Changes destinations without implicitly saving settings or replacing retained PR state.
+ * @param id Local destination to show.
+ */
+function applyDestination(id: string): void {
+  if (id === 'config' && current.value !== 'config') configurationOrigin.value = current.value
   current.value = id
   const workspace = workspaces.value.find((item): boolean => item.id === id)
-  if (workspace) workspace.visited = ++visit
+  if (workspace) {
+    workspace.open = true
+    workspace.visited = ++visit
+  }
+}
+
+/**
+ * Labels the actual settings origin even when its workspace tab has been closed.
+ * @returns Recoverable origin description.
+ */
+function configurationOriginLabel(): string {
+  if (configurationOrigin.value === 'library') return 'All PRs'
+  const workspace = workspaces.value.find((item): boolean => item.id === configurationOrigin.value)
+  return workspace ? `${workspace.repository} #${workspace.number}` : 'All PRs'
+}
+
+/**
+ * Honors a pending departure only after explicit settings discard.
+ */
+function leaveConfiguration(): void {
+  if (!pendingNavigation.value) return
+  applyDestination(pendingNavigation.value)
+  pendingNavigation.value = null
+  void focusCurrentWorkspace()
 }
 
 /**
@@ -214,11 +257,7 @@ function focusContent(event: MouseEvent): void {
         <SourceStatusPreview v-show="workspace.sourceState !== 'ready' && workspace.sourceState !== 'stale'" :pr="workspace" :state="workspace.sourceState" :has-cache="hasSnapshot(workspace.id)" @library="showLibrary" @restore="restoreSnapshot(workspace.id)" />
       </div>
       <PullRequestLibrary v-show="current === 'library'" :workspaces="workspaces" :summaries="summaries" @open="openLibraryPR" @source="previewSource" @extra="openSample()" />
-      <main v-show="current === 'config'" class="destination-placeholder" tabindex="-1">
-        <h1>Configuration</h1>
-        <p>Personal configuration preview. Model discovery and saved preferences are not implemented.</p>
-        <p>Existing PR-revision sessions keep their model; this navigation preview changes no settings.</p>
-      </main>
+      <ConfigurationPreview v-show="current === 'config'" ref="configuration" :origin-id="configurationOrigin" :origin-label="originLabel" @navigate="navigate" @leave="leaveConfiguration" @cancel-leave="pendingNavigation = null" />
     </div>
   </div>
 </template>
@@ -239,8 +278,5 @@ function focusContent(event: MouseEvent): void {
 .preview-details p + p { margin-top: var(--space-2); }
 .preview-links { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-3); }
 .preview-links a { display: inline-flex; align-items: center; min-height: var(--target-control); }
-.destination-placeholder { flex: 1; min-width: 0; overflow: auto; padding: var(--space-6); }
-.destination-placeholder h1 { font-size: 1.5rem; font-weight: 500; }
-.destination-placeholder p { margin-top: var(--space-3); color: var(--color-muted); }
 .preview-trigger { white-space: nowrap; font-size: var(--text-small); }
 </style>
