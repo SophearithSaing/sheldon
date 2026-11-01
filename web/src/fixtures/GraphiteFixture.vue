@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, useId } from 'vue'
 import WorkspaceShell from '../components/WorkspaceShell.vue'
 import UiBadge from '../components/ui/UiBadge.vue'
 import UiButton from '../components/ui/UiButton.vue'
@@ -7,8 +7,6 @@ import UiField from '../components/ui/UiField.vue'
 import UiTabs from '../components/ui/UiTabs.vue'
 import ScrollRegion from '../components/ui/ScrollRegion.vue'
 import SampleDiffLines from './SampleDiffLines.vue'
-import fontLicenseUrl from '../assets/fonts/OFL.txt?url'
-import sansLicenseUrl from '../assets/fonts/DM-Sans-LICENSE.txt?url'
 import {
   sampleChoices,
   sampleDiffs,
@@ -17,6 +15,8 @@ import {
   workspaceTabs,
 } from './workspace'
 
+withDefaults(defineProps<{ workspaceNumber?: number }>(), { workspaceNumber: 248 })
+const tabsId = useId()
 const activeTab = ref('files')
 const activeFile = ref('refresh')
 const fileSearch = ref('')
@@ -39,52 +39,47 @@ const beforeDraft = computed(() => diff.value.slice(0, draftIndex.value))
 const afterDraft = computed(() => diff.value.slice(draftIndex.value))
 
 /**
- * Selects a sample file and closes the file rail.
+ * Selects a sample file without changing the native tree disclosure.
  * @param id Sample file identifier.
- * @param closeFiles Callback that closes the file rail drawer.
  */
-function selectFile(id: string, closeFiles: () => void): void {
+function selectFile(id: string): void {
   activeFile.value = id
-  closeFiles()
 }
 </script>
 
 <template>
   <div class="fixture-page">
-    <div class="fixture-notice">
-      <UiBadge tone="warning">UI fixture</UiBadge>
-      <p>No PR loaded. No agent connected. All source and conversation content is sample data.</p>
-    </div>
     <WorkspaceShell
       v-model:conversation-open="conversationOpen"
       :has-file-rail="activeTab === 'files'"
       conversation-title="Sample conversation"
     >
-      <template #context><span>sample / platform / pull request preview</span></template>
       <template #summary>
         <h1 class="fixture-title">
-          Deduplicate concurrent session refreshes <span class="muted">· sample PR</span>
+          <template v-if="workspaceNumber === 251">Handle retries after a failed refresh</template>
+          <template v-else>Deduplicate concurrent session refreshes</template>
+          <span class="muted"> #{{ workspaceNumber }} · sample PR</span>
         </h1>
         <div class="fixture-meta">
-          <UiBadge tone="info">Design preview</UiBadge>
+          <span>Sample source</span>
           <code class="context-chip">fix/session-refresh → main</code>
           <span>Sample revision <code>a81c2f4</code></span>
           <span class="muted">Nothing is posted to GitHub.</span>
         </div>
+        <UiButton class="github-sample" disabled :aria-describedby="`${tabsId}-github-unavailable`">
+          Open in GitHub <span aria-hidden="true">↗</span>
+        </UiButton>
+        <p :id="`${tabsId}-github-unavailable`" class="sr-only">Unavailable: this is a sample PR, not a loaded GitHub pull request.</p>
       </template>
       <template #tabs>
         <UiTabs
-          id="workspace"
+          :id="tabsId"
           v-model="activeTab"
           label="Workspace previews"
           :items="workspaceTabs"
         />
       </template>
-      <template #files="{ closeFiles }">
-        <div class="file-list-header">
-          <h2>Sample files</h2>
-          <span class="muted">{{ sampleFiles.length }}</span>
-        </div>
+      <template #files>
         <UiField
           v-model="fileSearch"
           label="Find a sample file"
@@ -97,7 +92,7 @@ function selectFile(id: string, closeFiles: () => void): void {
             :key="file.id"
             type="button"
             :aria-current="activeFile === file.id ? 'true' : undefined"
-            @click="selectFile(file.id, closeFiles)"
+            @click="selectFile(file.id)"
           >
             {{ file.path }}
           </button>
@@ -110,9 +105,9 @@ function selectFile(id: string, closeFiles: () => void): void {
       <template #default="{ openConversation }">
         <div
           v-show="activeTab === 'files'"
-          id="workspace-panel-files"
+          :id="`${tabsId}-panel-files`"
           role="tabpanel"
-          aria-labelledby="workspace-tab-files"
+          :aria-labelledby="`${tabsId}-tab-files`"
           class="fixture-panel"
         >
           <div class="fixture-toolbar">
@@ -135,13 +130,13 @@ function selectFile(id: string, closeFiles: () => void): void {
                   hint="Editable local draft only. No question will be created or sent."
                   placeholder="What would you like to understand?"
                 />
-                <p id="line-unavailable" class="muted small">
+                <p :id="`${tabsId}-line-unavailable`" class="muted small">
                   Agent requests are not implemented. A real reply will open in the conversation
                   pane.
                 </p>
                 <div class="fixture-actions">
                   <UiButton variant="quiet" @click="lineDraft = ''">Clear sample draft</UiButton>
-                  <UiButton variant="primary" disabled aria-describedby="line-unavailable"
+                  <UiButton variant="primary" disabled :aria-describedby="`${tabsId}-line-unavailable`"
                     >Ask agent — unavailable</UiButton
                   >
                 </div>
@@ -161,9 +156,9 @@ function selectFile(id: string, closeFiles: () => void): void {
 
         <div
           v-show="activeTab === 'questions'"
-          id="workspace-panel-questions"
+          :id="`${tabsId}-panel-questions`"
           role="tabpanel"
-          aria-labelledby="workspace-tab-questions"
+          :aria-labelledby="`${tabsId}-tab-questions`"
           class="fixture-panel"
         >
           <ScrollRegion label="Question control samples" class="fixture-body">
@@ -177,8 +172,8 @@ function selectFile(id: string, closeFiles: () => void): void {
                 hint="This field demonstrates input styling. Search is not connected."
                 placeholder="Search questions…"
               />
-              <section class="sample-card" aria-labelledby="status-samples">
-                <h3 id="status-samples">Status samples</h3>
+              <section class="sample-card" :aria-labelledby="`${tabsId}-status-samples`">
+                <h3 :id="`${tabsId}-status-samples`">Status samples</h3>
                 <div class="fixture-meta">
                   <UiBadge tone="warning">Investigating · sample</UiBadge>
                   <UiBadge tone="info">Answered · sample</UiBadge>
@@ -190,16 +185,16 @@ function selectFile(id: string, closeFiles: () => void): void {
                   samples represents a running service.
                 </p>
               </section>
-              <section class="sample-card" aria-labelledby="sample-question-title">
+              <section class="sample-card" :aria-labelledby="`${tabsId}-sample-question-title`">
                 <UiBadge>Sample question</UiBadge>
-                <h3 id="sample-question-title">Can an older refresh restore a session?</h3>
+                <h3 :id="`${tabsId}-sample-question-title`">Can an older refresh restore a session?</h3>
                 <p class="muted">src/auth/refresh-session.ts · L27–30 · sample revision</p>
                 <UiButton @click="openConversation">Preview sample conversation</UiButton>
               </section>
-              <p id="questions-unavailable" class="muted small">
+              <p :id="`${tabsId}-questions-unavailable`" class="muted small">
                 Creating and saving questions is not implemented.
               </p>
-              <UiButton variant="primary" disabled aria-describedby="questions-unavailable"
+              <UiButton variant="primary" disabled :aria-describedby="`${tabsId}-questions-unavailable`"
                 >New question — unavailable</UiButton
               >
             </div>
@@ -208,9 +203,9 @@ function selectFile(id: string, closeFiles: () => void): void {
 
         <div
           v-show="activeTab === 'quiz'"
-          id="workspace-panel-quiz"
+          :id="`${tabsId}-panel-quiz`"
           role="tabpanel"
-          aria-labelledby="workspace-tab-quiz"
+          :aria-labelledby="`${tabsId}-tab-quiz`"
           class="fixture-panel"
         >
           <ScrollRegion label="Quiz control samples" class="fixture-body">
@@ -227,7 +222,7 @@ function selectFile(id: string, closeFiles: () => void): void {
                   <input
                     v-model="selectedChoice"
                     type="radio"
-                    name="sample-answer"
+                    :name="`${tabsId}-sample-answer`"
                     :value="choice"
                   />
                   <span class="muted" aria-hidden="true">{{
@@ -236,11 +231,11 @@ function selectFile(id: string, closeFiles: () => void): void {
                   <span>{{ choice }}</span>
                 </label>
               </fieldset>
-              <p id="quiz-unavailable" class="muted small">
+              <p :id="`${tabsId}-quiz-unavailable`" class="muted small">
                 Selection stays in this page. Generation, grading and saved attempts are not
                 implemented.
               </p>
-              <UiButton variant="primary" disabled aria-describedby="quiz-unavailable"
+              <UiButton variant="primary" disabled :aria-describedby="`${tabsId}-quiz-unavailable`"
                 >Check answer — unavailable</UiButton
               >
             </div>
@@ -267,22 +262,13 @@ function selectFile(id: string, closeFiles: () => void): void {
             multiline
             hint="Local text only. Closing the preview keeps this draft until page reload."
           />
-          <p id="followup-unavailable" class="muted small">
+          <p :id="`${tabsId}-followup-unavailable`" class="muted small">
             No harness is connected; sending is unavailable.
           </p>
-          <UiButton variant="primary" disabled aria-describedby="followup-unavailable"
+          <UiButton variant="primary" disabled :aria-describedby="`${tabsId}-followup-unavailable`"
             >Send — unavailable</UiButton
           >
         </div>
-      </template>
-      <template #footer>
-        <span>Sample workspace · no PR loading or agent connection</span>
-        <a :href="fontLicenseUrl" target="_blank" rel="noopener noreferrer"
-          >JetBrains Mono license <span class="sr-only">(opens in a new tab)</span></a
-        >
-        <a :href="sansLicenseUrl" target="_blank" rel="noopener noreferrer">
-              DM Sans license <span class="sr-only">(opens in a new tab)</span>
-        </a>
       </template>
     </WorkspaceShell>
   </div>
@@ -292,20 +278,13 @@ function selectFile(id: string, closeFiles: () => void): void {
 .fixture-page {
   display: flex;
   flex-direction: column;
-  height: 100dvh;
-  min-height: 39rem;
-}
-.fixture-notice {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-3);
-  padding: var(--space-2) var(--space-6);
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-muted);
-  font-size: var(--text-small);
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
 }
 .fixture-title {
+  grid-column: 1;
+  grid-row: 1;
   font-size: var(--text-heading);
   font-weight: 550;
   line-height: 1.3;
@@ -322,29 +301,13 @@ function selectFile(id: string, closeFiles: () => void): void {
 .fixture-meta {
   font-size: var(--text-small);
 }
+.github-sample { grid-column: 2; grid-row: 1 / 3; align-self: center; }
 .fixture-meta code {
   font-size: var(--text-code-meta);
 }
 .context-chip {
   font-size: var(--text-code-meta);
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-canvas);
   overflow-wrap: anywhere;
-}
-.file-list-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin-bottom: var(--space-5);
-}
-.file-list-header h2 {
-  font-size: var(--text-small);
-  font-weight: 550;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 .file-list {
   display: grid;
@@ -388,16 +351,17 @@ function selectFile(id: string, closeFiles: () => void): void {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-6);
+  min-height: var(--target-control);
+  margin-bottom: var(--space-2);
 }
 .diff-scroll {
   flex: 1;
-  padding: var(--space-2) var(--space-6) var(--space-6);
+  padding-bottom: var(--space-4);
 }
 .diff-card {
   min-width: 0;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-panel);
 }
 .diff-file-title {
   font-family: var(--font-code);

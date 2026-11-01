@@ -27,8 +27,8 @@ test('isolated release binary serves the authenticated shell, fonts and complete
   const response = await page.goto(`${url}/#token=${token}`)
   expect(response?.headers()['content-security-policy']).not.toContain('unsafe-inline')
   await expect(page).toHaveURL(url + '/')
-  const runtime = page.getByRole('region', { name: 'Runtime connection' })
-  await expect(runtime.getByRole('status').first()).toContainText('Backend connected')
+  await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
+  await page.getByRole('button', { name: 'UI fixture', exact: true }).click()
   await expect(page.getByText('No PR loaded. No agent connected.', { exact: false })).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
   expect(await page.evaluate(() => document.fonts.check('400 13px "Sheldon JetBrains Mono"'))).toBe(
@@ -59,6 +59,7 @@ test('isolated release binary serves the authenticated shell, fonts and complete
   expect(urls.some((value) => value.includes(token))).toBe(false)
   expect(await page.content()).not.toContain(token)
   expect(errors).toEqual([])
+  await page.getByRole('button', { name: 'UI fixture', exact: true }).click()
   await page.screenshot({ path: testInfo.outputPath('release-shell.png'), fullPage: true })
   const binary = process.env.SHELDON_RELEASE_BINARY!
   const result = await promisify(execFile)(
@@ -73,6 +74,8 @@ test('isolated release binary serves the authenticated shell, fonts and complete
   expect(result.stdout + result.stderr).not.toContain(token)
   await page.goto('about:blank')
   await page.goto(`${url}/#token=${token}`)
+  await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
+  await page.getByRole('button', { name: 'Local runtime — Backend connected', exact: true }).click()
   await expect(page.getByText('Pending open request:', { exact: false })).toContainText(
     'https://github.com/owner/repo/pull/8',
   )
@@ -145,6 +148,8 @@ test('release reload requires explicit reconnecting and wrong proof never receiv
 }) => {
   const { url, token } = await state()
   await page.goto(`${url}/#token=${token}`)
+  await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
+  await page.getByRole('button', { name: 'Local runtime — Backend connected', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Disconnect backend' })).toBeVisible()
   await page.reload()
   await expect(page.getByLabel('API token', { exact: true })).toHaveValue('')

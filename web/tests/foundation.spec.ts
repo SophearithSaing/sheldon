@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
 
 test('keyboard users can skip directly to the labeled workspace content', async ({ page }) => {
   await page.keyboard.press('Tab')
-  const skip = page.getByRole('link', { name: 'Skip to workspace', exact: true })
+  const skip = page.getByRole('link', { name: 'Skip to content', exact: true })
   await expect(skip).toBeFocused()
   await expect(skip).toBeInViewport()
   await skip.press('Enter')
@@ -16,6 +16,7 @@ test('keyboard users can skip directly to the labeled workspace content', async 
 
 test('uses local Slate typography, foundation geometry and bundled licenses', async ({ page }) => {
   await expect(page.getByText('UI fixture', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'UI fixture', exact: true }).click()
   await expect(page.getByText('No PR loaded. No agent connected.', { exact: false })).toBeVisible()
   const typography = await page.evaluate(() => {
     const style = getComputedStyle(document.documentElement)
@@ -53,10 +54,10 @@ test('uses local Slate typography, foundation geometry and bundled licenses', as
     .getByRole('complementary', { name: 'Sample conversation' })
     .boundingBox()
   expect(conversation?.width).toBeCloseTo(440, 0)
-  await expect(page.locator('.sample-explanation')).toHaveCSS('font-size', '14px')
-  await expect(page.locator('.sample-explanation')).toHaveCSS('line-height', '24.5px')
-  await expect(page.locator('.sample-prompt')).toHaveCSS('font-size', '15px')
-  await expect(page.locator('.sample-prompt')).toHaveCSS('line-height', '24.75px')
+  await expect(page.locator('.sample-explanation:visible')).toHaveCSS('font-size', '14px')
+  await expect(page.locator('.sample-explanation:visible')).toHaveCSS('line-height', '24.5px')
+  await expect(page.locator('.sample-prompt:visible')).toHaveCSS('font-size', '15px')
+  await expect(page.locator('.sample-prompt:visible')).toHaveCSS('line-height', '24.75px')
   const license = await page
     .getByRole('link', { name: 'JetBrains Mono license' })
     .getAttribute('href')
@@ -71,7 +72,7 @@ test('uses local Slate typography, foundation geometry and bundled licenses', as
 test('tabs support roving focus and retain editable drafts and scroll position', async ({
   page,
 }) => {
-  const draft = page.getByLabel('Sample line question', { exact: true })
+  const draft = page.getByRole('textbox', { name: 'Sample line question', exact: true })
   await draft.fill('A local draft')
   await draft.press('End')
   await draft.press('Enter')
@@ -88,7 +89,7 @@ test('tabs support roving focus and retain editable drafts and scroll position',
   await files.press('ArrowRight')
   await expect(questions).toBeFocused()
   await expect(questions).toHaveAttribute('aria-selected', 'true')
-  await page.getByLabel('Sample search text').fill('Retained search text')
+  await page.getByRole('searchbox', { name: 'Sample search text' }).fill('Retained search text')
   await questions.focus()
   await questions.press('End')
   await expect(page.getByRole('tab', { name: 'Quiz', exact: true })).toBeFocused()
@@ -99,10 +100,10 @@ test('tabs support roving focus and retain editable drafts and scroll position',
   await expect(draft).toHaveValue('A local draft\na')
   expect(await source.evaluate((element) => element.scrollTop)).toBeCloseTo(scrollTop, 0)
   await questions.click()
-  await expect(page.getByLabel('Sample search text')).toHaveValue('Retained search text')
+  await expect(page.getByRole('searchbox', { name: 'Sample search text' })).toHaveValue('Retained search text')
   await page.getByRole('tab', { name: 'Quiz', exact: true }).click()
   await expect(page.getByRole('radio').nth(1)).toBeChecked()
-  await expect(page.locator('[role="tab"][tabindex="0"]')).toHaveCount(1)
+  await expect(page.locator('[role="tab"][tabindex="0"]:visible')).toHaveCount(1)
 })
 
 test('unfinished actions are labeled, focusable and do not initiate requests', async ({ page }) => {
@@ -127,22 +128,21 @@ test('unfinished actions are labeled, focusable and do not initiate requests', a
   expect(requests).toEqual([])
 })
 
-test('file drawer is recoverable at 1180px and restores focus on Escape', async ({ page }) => {
+test('file disclosure stays available at 1180px and preserves state on collapse', async ({ page }) => {
   await page.setViewportSize({ width: 1180, height: 1080 })
   const rail = page.getByRole('complementary', { name: 'Changed files' })
-  const trigger = page.getByRole('button', { name: 'Files', exact: true })
-  await expect(rail).not.toBeVisible()
-  await trigger.click()
+  const trigger = rail.locator('summary')
   await expect(rail).toBeVisible()
-  await expect(rail).toBeFocused()
-  await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+  await page.getByRole('searchbox', { name: 'Find a sample file', exact: true }).fill('session')
+  await trigger.focus()
   await rail.press('Escape')
-  await expect(rail).not.toBeVisible()
+  await expect(rail.locator('details')).not.toHaveAttribute('open')
+  await expect(rail).toBeVisible()
   await expect(trigger).toBeFocused()
   await trigger.click()
+  await expect(page.getByRole('searchbox', { name: 'Find a sample file', exact: true })).toHaveValue('session')
   await page.getByRole('button', { name: 'src/auth/session-store.ts', exact: true }).click()
-  await expect(trigger).toBeFocused()
-  await expect(rail).not.toBeVisible()
+  await expect(rail.locator('details')).toHaveAttribute('open', '')
   await expect(
     page.getByRole('heading', { name: 'src/auth/session-store.ts', exact: true }),
   ).toBeVisible()
@@ -154,25 +154,26 @@ test('file drawer is recoverable at 1180px and restores focus on Escape', async 
 })
 
 for (const width of [900, 899]) {
-  test(`conversation switches panes at ${width}px without losing draft or focus`, async ({
+  test(`conversation stacks with source and files at ${width}px without losing state`, async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width, height: 1080 })
-    await page.getByLabel('Sample line question', { exact: true }).fill('Keep the inline draft')
+    await page.getByRole('textbox', { name: 'Sample line question', exact: true }).fill('Keep the inline draft')
     const trigger = page.getByRole('button', { name: 'Preview sample conversation' })
     await trigger.click()
-    await expect(page.getByRole('main')).not.toBeVisible()
+    await expect(page.getByRole('main')).toBeVisible()
+    await expect(page.getByRole('complementary', { name: 'Changed files' })).toBeVisible()
     await expect(
       page.getByRole('heading', { name: 'Sample conversation', exact: true }),
     ).toBeFocused()
-    await page.getByLabel('Sample follow-up', { exact: true }).fill('Keep this follow-up too')
+    await page.getByRole('textbox', { name: 'Sample follow-up', exact: true }).fill('Keep this follow-up too')
     await page.getByRole('button', { name: 'Back to workspace' }).click()
     await expect(trigger).toBeFocused()
-    await expect(page.getByLabel('Sample line question', { exact: true })).toHaveValue(
+    await expect(page.getByRole('textbox', { name: 'Sample line question', exact: true })).toHaveValue(
       'Keep the inline draft',
     )
     await trigger.click()
-    await expect(page.getByLabel('Sample follow-up', { exact: true })).toHaveValue(
+    await expect(page.getByRole('textbox', { name: 'Sample follow-up', exact: true })).toHaveValue(
       'Keep this follow-up too',
     )
     expect(
@@ -225,7 +226,7 @@ test('200% text scaling reflows the shell instead of clipping controls', async (
     document.documentElement.style.fontSize = '200%'
   })
   await expect(page.locator('body')).toHaveCSS('font-size', '26px')
-  await expect(page.getByRole('button', { name: 'Files', exact: true })).toBeVisible()
+  await expect(page.getByRole('complementary', { name: 'Changed files' }).locator('summary')).toBeVisible()
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
@@ -234,20 +235,20 @@ test('200% text scaling reflows the shell instead of clipping controls', async (
   const trigger = page.getByRole('button', { name: 'Preview sample conversation' })
   await trigger.click()
   await expect(page.getByRole('button', { name: 'Back to workspace' })).toBeVisible()
-  await expect(page.getByRole('main')).not.toBeVisible()
+  await expect(page.getByRole('main')).toBeVisible()
   await expect(page.getByRole('region', { name: 'Sample conversation messages' })).toBeVisible()
-  await page.getByLabel('Sample follow-up', { exact: true }).fill('Still reachable at 200%')
+  await page.getByRole('textbox', { name: 'Sample follow-up', exact: true }).fill('Still reachable at 200%')
   const send = page.getByRole('button', { name: 'Send — unavailable' })
   await send.scrollIntoViewIfNeeded()
-  const paneBounds = await page.getByRole('complementary', { name: 'Sample conversation' }).boundingBox()
   const sendBounds = await send.boundingBox()
-  expect(sendBounds!.y + sendBounds!.height).toBeLessThanOrEqual(paneBounds!.y + paneBounds!.height)
+  expect(sendBounds!.height).toBeGreaterThanOrEqual(44)
+  await expect(send).toBeInViewport()
   await page.screenshot({ path: testInfo.outputPath('conversation-text-scale-200.png'), fullPage: true })
   await page.getByRole('button', { name: 'Back to workspace' }).click()
   await expect(trigger).toBeFocused()
   expect(
     await page.evaluate(() => {
-      const fixtureHeight = document.querySelector('.fixture-page')!.getBoundingClientRect().height
+      const fixtureHeight = document.querySelector('.fixture-application')!.getBoundingClientRect().height
       return document.documentElement.scrollHeight <= Math.ceil(fixtureHeight) + 1
     }),
   ).toBe(true)

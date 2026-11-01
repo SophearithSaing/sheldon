@@ -79,7 +79,11 @@ test('launch fragments clear before authenticated REST', async ({ page }, testIn
   expect(urls.some((url) => url.includes(token))).toBe(false)
   expect(messages.some((message) => message.includes(token))).toBe(false)
   expect(await page.content()).not.toContain(token)
+  await page.getByRole('link', { name: 'Configuration', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
+  await page.getByRole('link', { name: 'platform #248 — Session refresh', exact: true }).click()
   await page.screenshot({ path: testInfo.outputPath('connected-development.png'), fullPage: true })
+  await page.getByRole('button', { name: 'Development backend — Backend connected', exact: true }).click()
   await page.getByRole('button', { name: 'Disconnect backend' }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Disconnected' })).toBeVisible()
   await page.reload()
@@ -90,12 +94,13 @@ test('launch fragments clear before authenticated REST', async ({ page }, testIn
 
 test('manual connection rejects bad credentials without reflecting or saving them', async ({
   page,
-}) => {
+}, testInfo) => {
   let bearerSent = false
   page.on('request', (request) => {
     if (request.headers().authorization) bearerSent = true
   })
   await page.goto('/')
+  await page.screenshot({ path: testInfo.outputPath('runtime-disconnected.png'), fullPage: true })
   const invalid = 'A'.repeat(43)
   await page.getByLabel('API token', { exact: true }).fill(invalid)
   await page.getByRole('button', { name: 'Connect backend' }).click()
@@ -103,6 +108,7 @@ test('manual connection rejects bad credentials without reflecting or saving the
   await expect(page.getByLabel('API token', { exact: true })).toHaveValue('')
   expect(await page.content()).not.toContain(invalid)
   expect(bearerSent).toBe(false)
+  await page.screenshot({ path: testInfo.outputPath('runtime-error.png'), fullPage: true })
   const { token } = await credentials()
   await page.getByLabel('API token', { exact: true }).fill(token)
   await page.getByRole('button', { name: 'Connect backend' }).click()

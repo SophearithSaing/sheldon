@@ -71,7 +71,7 @@ internal/app/        Launch, browser handoff + single-writer lifecycle
 internal/githubpr/   GitHub PR URL validation (no fetching)
 internal/ui/         Embedded release shell / asset-free development fallback
 scripts/build.js     Frontend → embed copy → Go build
-web/                 Vue + Graphite fixtures + browser tests
+web/                 Vue + Slate shell/fixtures + browser tests
 ```
 
 Further launches reuse the running instance. A private `instance.lock` lives in the OS data directory; do not delete it while Sheldon is running.
