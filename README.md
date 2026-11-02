@@ -2,7 +2,7 @@
 
 **Don't just merge it. Understand it.**
 
-A local pull-request explainer. **Runtime + frontend fixtures only**—PR loading and agent integration are not implemented yet.
+A local pull-request explainer. **Runtime + Slate UI previews only**—PR fetching, agent integration and durable saving are not implemented yet.
 
 ## Toolchains
 
@@ -22,6 +22,8 @@ SHELDON_DEV_ORIGIN=http://127.0.0.1:5173 go run ./cmd/sheldon # terminal 2: Go
 ```
 
 UI: <http://127.0.0.1:5173> · backend: `127.0.0.1:7331`. Stop any existing standalone instance first. The CLI opens the authenticated UI; after reloading, rerun the CLI in another terminal to reconnect.
+
+The UI uses fictional sample data. Files changed, Questions, Quiz, Semantic review, All PRs and Configuration keep state only in page memory. Generation/creation controls are explicitly labeled local simulations; real Send, Save, discovery and PR import remain unavailable. Semantic review never starts work on entry.
 
 ## Release
 
@@ -55,10 +57,12 @@ Browser tests:
 ```sh
 npm exec --workspace=@sheldon/web -- playwright install chromium # first run
 npm run test:web
-npm run test:release # isolated binary + browser lifecycle checks (Linux/macOS)
+npm run test:release # clean source build + isolated binary/browser checks (Linux/macOS)
 ```
 
 [Foundation CI](.github/workflows/ci.yml) runs these checks on Ubuntu 24.04, starting without generated assets. It also compiles Windows/amd64 and macOS/arm64 tests; that is **not native platform validation**. CI never runs live agent experiments and does not upload private test artifacts.
+
+Release browser checks build a disposable application-source copy without `refs/` or existing bundles, using installed dependencies. They remove the copy before running only the binary with private temporary storage and no Node on its PATH. This does not regenerate the repository's embedded assets; run `npm run build` before release-tag Go checks.
 
 ## Layout
 
