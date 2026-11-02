@@ -33,7 +33,7 @@ type Resolution struct {
 	Failure *MetadataError
 }
 
-// BaseCandidate describes a commit branch supplied by the future managed fetch layer.
+// BaseCandidate describes a fetched commit branch supplied by the managed cache.
 type BaseCandidate struct {
 	RepositoryID string
 	Branch       string

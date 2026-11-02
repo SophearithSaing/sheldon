@@ -7,13 +7,17 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/SophearithSaing/sheldon/internal/git"
 )
 
 // instance holds one stable OS-locked discovery file per data root.
 type instance struct {
-	mu    sync.Mutex
-	file  *os.File
-	owned bool
+	mu        sync.Mutex
+	file      *os.File
+	owned     bool
+	cache     *git.Cache
+	cacheRoot string
 }
 
 type record struct {
@@ -86,8 +90,11 @@ func (i *instance) close() error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	var err error
+	if i.cache != nil {
+		err = i.cache.Close()
+	}
 	if i.owned {
-		err = i.file.Truncate(0)
+		err = errors.Join(err, i.file.Truncate(0))
 	}
 	i.owned = false
 	return errors.Join(err, i.file.Close())
