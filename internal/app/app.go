@@ -108,7 +108,7 @@ func serve(ctx context.Context, paths platform.Paths, i *instance, prURL, devOri
 			address = "127.0.0.1:7331"
 		}
 	}
-	s, err := httpapi.Listen(address, devOrigin, i)
+	s, err := httpapi.Listen(address, devOrigin, &sourceRegistry{instance: i, paths: paths})
 	if err != nil {
 		return err
 	}

@@ -7,19 +7,21 @@ const props = defineProps<{
   current: string
   counts: Record<string, number>
   viewed: Record<string, boolean>
+  real?: boolean
 }>()
 const search = defineModel<string>({ default: '' })
 const emit = defineEmits<{ select: [id: string] }>()
 
 /**
- * Groups matching sample paths without changing their source order.
+ * Groups matching paths without changing their source order.
  * @returns Directory groups containing the visible files.
  */
 function groups(): { path: string; files: { id: string; path: string }[] }[] {
   const result: { path: string; files: { id: string; path: string }[] }[] = []
   for (const file of props.files) {
     if (!file.path.toLowerCase().includes(search.value.trim().toLowerCase())) continue
-    const path = file.path.slice(0, file.path.lastIndexOf('/'))
+    const slash = file.path.lastIndexOf('/')
+    const path = slash < 0 ? '' : file.path.slice(0, slash)
     let group = result.find((item): boolean => item.path === path)
     if (!group) {
       group = { path, files: [] }
@@ -33,19 +35,19 @@ const visibleGroups = computed(groups)
 </script>
 
 <template>
-  <UiField v-model="search" label="Find a sample file" type="search" placeholder="Find a file…" />
-  <nav class="changed-file-tree" aria-label="Sample file selection">
+  <UiField v-model="search" :label="real ? 'Find a changed file' : 'Find a sample file'" type="search" placeholder="Find a file…" />
+  <nav class="changed-file-tree" :aria-label="real ? 'Changed file selection' : 'Sample file selection'">
     <div v-for="group in visibleGroups" :key="group.path" class="file-group">
-      <p class="folder">⌄ <span>{{ group.path.replaceAll('/', ' / ') }}</span></p>
+      <p class="folder">⌄ <span>{{ group.path.replaceAll('/', ' / ') || 'Repository root' }}</span></p>
       <button v-for="file in group.files" :key="file.id" type="button" :aria-label="file.path" :aria-current="current === file.id ? 'true' : undefined" @click="emit('select', file.id)">
         <span aria-hidden="true">▱</span><span class="file-name">{{ file.path.slice(file.path.lastIndexOf('/') + 1) }}</span>
-        <span v-if="counts[file.id]" class="file-count" :aria-label="`${counts[file.id]} sample questions`">{{ counts[file.id] }}</span>
+        <span v-if="!real && counts[file.id]" class="file-count" :aria-label="`${counts[file.id]} sample questions`">{{ counts[file.id] }}</span>
         <span v-else-if="viewed[file.id]" class="viewed-icon" aria-label="Viewed">✓</span>
       </button>
     </div>
-    <p v-if="visibleGroups.length === 0" role="status">No sample paths match.</p>
+    <p v-if="visibleGroups.length === 0" role="status">{{ real ? 'No changed paths match.' : 'No sample paths match.' }}</p>
   </nav>
-  <div class="viewed-summary">
+  <div v-if="!real" class="viewed-summary">
     <p>Files viewed <strong>{{ files.filter((file) => viewed[file.id]).length }} / {{ files.length }}</strong></p>
     <div class="viewed-segments" aria-hidden="true"><span v-for="file in files" :key="file.id" :class="{ done: viewed[file.id] }" /></div>
     <p>At your own pace.</p>

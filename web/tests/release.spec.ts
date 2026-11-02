@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import http from 'node:http'
+import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 
 /**
@@ -29,9 +30,9 @@ test('isolated release binary serves the authenticated shell, fonts and complete
   page.on('console', (message): void => {
     if (message.type() === 'error') errors.push(message.text())
   })
-  const response = await page.goto(`${url}/#token=${token}`)
+  const response = await page.goto(`${url}/?preview=sample#token=${token}`)
   expect(response?.headers()['content-security-policy']).not.toContain('unsafe-inline')
-  await expect(page).toHaveURL(url + '/')
+  await expect(page).toHaveURL(url + '/?preview=sample')
   await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
   await page.getByRole('button', { name: 'UI preview', exact: true }).click()
   await expect(page.getByText('No PR loaded. No agent connected.', { exact: false })).toBeVisible()
@@ -95,7 +96,7 @@ test('isolated release binary serves the authenticated shell, fonts and complete
   await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Pull request #8')
   await expect(page.getByText('https://github.com/owner/repo/pull/8', { exact: true })).toBeVisible()
-  await expect(page.getByText('PR registered. Source fetching and pinned diffs are not implemented yet.')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'PR registered. Source not loaded.' })).toBeVisible()
 })
 
 /**
@@ -106,7 +107,7 @@ test('release cannot enable the fixture-only control gallery', async ({ page }):
   const { url } = await state()
   await page.goto(`${url}/?fixture=controls`)
   await expect(page.getByRole('heading', { name: 'Slate control fixtures' })).toHaveCount(0)
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Deduplicate concurrent session refreshes')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Open a pull request')
   await expect(page.getByRole('button', { name: 'Connect backend' })).toBeVisible()
 })
 
@@ -198,7 +199,7 @@ test('release reload requires explicit reconnecting and wrong proof never receiv
  */
 test('release reconnects manually and disconnects without rebinding sample workspaces', async ({ page }, testInfo): Promise<void> => {
   const { url, token } = await state()
-  await page.goto(`${url}/#token=${token}`)
+  await page.goto(`${url}/?preview=sample#token=${token}`)
   await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
   await page.reload()
   await expect(page.getByLabel('API token', { exact: true })).toHaveValue('')
@@ -298,4 +299,42 @@ test('registered release route errors hide raw details and verify before lookup'
   await expect(page.getByText('Cannot read this PR.', { exact: false })).toBeVisible()
   expect(bearerSent).toBe(false)
   await expect(page.getByRole('heading', { name: 'Pull request #303' })).toHaveCount(0)
+})
+
+/**
+ * Exercises embedded source controls using explicit offline HTTP response fixtures.
+ * @param fixtures Browser page and protected API client.
+ * @param testInfo Screenshot output location.
+ */
+test('release source UI distinguishes metadata fallback, explicit selection and pinned empty source', async ({ page, request }, testInfo): Promise<void> => {
+  const { url, token } = await state()
+  const headers = { Authorization: `Bearer ${token}` }
+  const opened: { prID: string; route: string } = await (await request.post(url + '/api/open', { headers, data: { url: 'https://github.com/release/fixture/pull/801' } })).json()
+  const pr = await (await request.get(url + '/api/reviews/' + opened.prID, { headers })).json()
+  const revision = { prID: opened.prID, baseBranch: 'release/target', baseSource: 'user-selected', baseSHA: 'a'.repeat(40), headSHA: 'c'.repeat(40), mergeBaseSHA: 'b'.repeat(40) }
+  const revisionID = createHash('sha256').update([opened.prID, revision.baseSHA, revision.headSHA, revision.mergeBaseSHA].join('\n')).digest('hex')
+  let calls = 0
+  await page.route(`**/api/reviews/${opened.prID}/source`, async (route): Promise<void> => {
+    calls++
+    const input = route.request().postDataJSON()
+    if (input.action === 'load') await route.fulfill({ json: { state: 'fallback-required', pr } })
+    else if (input.action === 'git-only') await route.fulfill({ json: { state: 'base-selection-required', pr, candidates: [{ branch: revision.baseBranch, sha: revision.baseSHA }] } })
+    else {
+      expect(input).toEqual({ action: 'select-base', branch: revision.baseBranch, sha: revision.baseSHA })
+      await route.fulfill({ json: { state: 'ready', pr, diff: { revision, revisionID, complete: true, files: [] } } })
+    }
+  })
+  await page.goto(url + opened.route + '#token=' + token)
+  await expect(page.getByRole('heading', { name: 'PR registered. Source not loaded.' })).toBeVisible()
+  expect(calls).toBe(0)
+  await page.getByRole('button', { name: 'Load pinned source' }).click()
+  await page.getByRole('button', { name: 'Use Git-only fallback' }).click()
+  await expect(page.getByLabel('Fetched base branch')).toHaveValue('')
+  await page.getByLabel('Fetched base branch').selectOption(revision.baseBranch)
+  await page.getByRole('button', { name: 'Load selected base', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'No changes in this comparison' })).toBeVisible()
+  expect(calls).toBe(3)
+  await expect(page.getByRole('button', { name: 'Questions — unavailable' })).toBeDisabled()
+  expect(await page.content()).not.toContain(token)
+  await page.screenshot({ path: testInfo.outputPath('release-pinned-empty-source.png') })
 })

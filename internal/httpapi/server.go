@@ -81,6 +81,7 @@ func Listen(address, devOrigin string, prs PRRegistry) (*Server, error) {
 	s.mux.HandleFunc("GET /instance-proof", s.identify)
 	s.mux.HandleFunc("POST /api/open", s.open)
 	s.mux.HandleFunc("GET /api/reviews/{id}", s.review)
+	s.mux.HandleFunc("POST /api/reviews/{id}/source", s.source)
 	s.mux.HandleFunc("/api", http.NotFound)
 	s.mux.HandleFunc("/api/", http.NotFound)
 	s.mux.Handle("/", ui.Handler())

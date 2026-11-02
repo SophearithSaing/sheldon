@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import UiButton from '../components/ui/UiButton.vue'
-import { inspectBackend, readRegisteredPR, takeLaunchToken, type ReviewState } from './client'
+import { inspectBackend, readRegisteredPR, takeLaunchToken, runtimeClient, type RuntimeClient, type ReviewState } from './client'
 
 const props = defineProps<{ reviewId?: string }>()
 
@@ -10,7 +10,7 @@ const tokenInput = ref('')
 const state = ref('Disconnected')
 const connected = ref(false)
 const expanded = defineModel<boolean>('expanded', { default: true })
-const emit = defineEmits<{ state: [value: string]; review: [value: ReviewState] }>()
+const emit = defineEmits<{ state: [value: string]; review: [value: ReviewState]; connection: [value: RuntimeClient | null] }>()
 let controller: AbortController | undefined
 
 /**
@@ -21,6 +21,7 @@ function disconnect(): void {
   controller?.abort()
   controller = undefined
   connected.value = false
+  emit('connection', null)
   emit('review', { status: 'disconnected' })
   state.value = 'Disconnected'
 }
@@ -50,6 +51,7 @@ async function connect(token = tokenInput.value): Promise<void> {
       emit('review', pr ? { status: 'registered', pr } : { status: 'not-found' })
     }
     connected.value = true
+    emit('connection', runtimeClient(token, current.signal))
     state.value = 'Backend connected'
     expanded.value = false
   } catch {

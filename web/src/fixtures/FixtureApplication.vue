@@ -12,6 +12,7 @@ import monoLicense from '../assets/fonts/OFL.txt?url'
 import sansLicense from '../assets/fonts/DM-Sans-LICENSE.txt?url'
 
 const requested = new URLSearchParams(location.search).get('preview')
+const realEntryAvailable = import.meta.env.MODE !== 'fixture'
 const workspaces = ref([sampleWorkspaceEntry(samplePullRequests[0]!, 8), sampleWorkspaceEntry(samplePullRequests[1]!, 7)])
 const requestedPR = samplePullRequests.find((pr): boolean => pr.id === requested)
 if (requestedPR && !workspaces.value.some((item): boolean => item.id === requestedPR.id)) workspaces.value.push(sampleWorkspaceEntry(requestedPR, 9))
@@ -224,6 +225,7 @@ function focusContent(event: MouseEvent): void {
       @close="closeWorkspace"
     >
       <template #tools>
+        <a v-if="realEntryAvailable" href="/">Open a real PR</a>
         <UiButton
           class="preview-trigger"
           variant="quiet"

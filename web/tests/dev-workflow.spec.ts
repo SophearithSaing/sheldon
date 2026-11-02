@@ -73,8 +73,8 @@ test('launch fragments clear before authenticated REST', async ({ page }, testIn
   const messages: string[] = []
   page.on('request', (request) => urls.push(request.url()))
   page.on('console', (message) => messages.push(message.text()))
-  await page.goto(`/#token=${token}`)
-  await expect(page).toHaveURL(frontend + '/')
+  await page.goto(`/?preview=sample#token=${token}`)
+  await expect(page).toHaveURL(frontend + '/?preview=sample')
   await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
   expect(urls.some((url) => url.includes(token))).toBe(false)
   expect(messages.some((message) => message.includes(token))).toBe(false)
@@ -207,7 +207,7 @@ test('HMR updates disposable frontend sources without rebuilding Go or losing co
   page,
 }) => {
   const { token } = await credentials()
-  await page.goto(`/#token=${token}`)
+  await page.goto(`/?preview=sample#token=${token}`)
   await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
   await page.evaluate(() => {
     const marker = document.createElement('div')

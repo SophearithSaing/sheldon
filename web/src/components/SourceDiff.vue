@@ -7,6 +7,7 @@ const props = withDefaults(defineProps<{
   selection: LineRange | null
   highlight?: boolean
   selectable?: boolean
+  real?: boolean
 }>(), { selectable: true })
 const emit = defineEmits<{ select: [side: 'base' | 'head', line: number, extend: boolean] }>()
 
@@ -49,18 +50,18 @@ function tokens(text: string): { text: string; tone: string }[] {
   <section class="sample-source" :aria-label="label" tabindex="0">
     <table class="diff-table">
       <caption class="sr-only">
-        Sample unified diff. Plus and minus signs identify additions and removals.
+        {{ real ? 'Unified diff.' : 'Sample unified diff.' }} Plus and minus signs identify additions and removals.
       </caption>
       <thead class="sr-only">
         <tr>
-          <th>Base</th>
+          <th>{{ real ? 'Merge base' : 'Base' }}</th>
           <th>Head</th>
           <th>Change</th>
           <th>Source</th>
         </tr>
       </thead>
       <tbody>
-        <template v-for="(line, index) in lines" :key="index">
+        <template v-for="(line, index) in lines" :key="line.id ?? index">
           <tr v-if="line.hunkHeader" class="diff-omission"><td colspan="4">{{ line.hunkHeader }}</td></tr>
           <tr :class="[`diff-line--${line.kind}`, { 'is-selected': selected(line) }]">
             <td class="line-number">
@@ -73,9 +74,10 @@ function tokens(text: string): { text: string; tone: string }[] {
               {{ line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : '' }}
             </td>
             <td class="line-source">
-              <code><span v-for="(token, tokenIndex) in tokens(line.text || ' ')" :key="tokenIndex" :class="token.tone ? `syntax-${token.tone}` : undefined">{{ token.text }}</span></code>
+              <code><span v-for="(token, tokenIndex) in tokens(line.text || (real ? '' : ' '))" :key="tokenIndex" :class="token.tone ? `syntax-${token.tone}` : undefined">{{ token.text }}</span></code>
             </td>
           </tr>
+          <tr v-if="line.noNewline" class="diff-omission"><td colspan="4">\ No newline at end of file</td></tr>
         </template>
       </tbody>
     </table>

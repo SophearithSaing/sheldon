@@ -2,13 +2,13 @@
 
 **Don't just merge it. Understand it.**
 
-A local pull-request explainer. **Local PR registration + Slate UI previews**—PR pages do not load source or diffs yet; agent integration and durable review saving remain unimplemented.
+A local pull-request explainer. **Real pinned Files changed + separate Slate UI previews**—agent integration, questions and durable review saving remain unimplemented.
 
 ## Toolchains
 
 Go **1.26.5** · Node **26.5.0** · npm **11.17.0**
 
-Browser checks also need Playwright Chromium and its system libraries. Agent/GitHub checks use offline fixtures, not provider logins or paid requests. The planned review flow needs Git and a compatible externally installed/authenticated harness; `gh` is optional.
+Browser checks also need Playwright Chromium and its system libraries. Tests use offline fixtures, not provider logins or paid requests. Real source loading needs native Git and existing repository access; optional authenticated `gh` resolves the actual PR target. No harness is needed for source browsing.
 
 ## Develop
 
@@ -23,7 +23,9 @@ SHELDON_DEV_ORIGIN=http://127.0.0.1:5173 go run ./cmd/sheldon # terminal 2: Go
 
 UI: <http://127.0.0.1:5173> · backend: `127.0.0.1:7331`. Stop any existing standalone instance first. The CLI opens the authenticated UI; after reloading, rerun the CLI in another terminal to reconnect.
 
-The root UI uses fictional sample data. Files changed, Questions, Quiz, Semantic review, All PRs and Configuration keep state only in page memory. Generation/creation controls are explicitly labeled local simulations; real Send, Save, discovery and UI PR import remain unavailable. Semantic review never starts work on entry.
+Connect the runtime, choose **Open a PR**, then **Register and open PR**. Opening from an existing PR uses a separate browser tab; allow that tab to preserve the current pinned view. On the registered page choose **Load pinned source**. If GitHub metadata is unavailable, explicitly choose **Use Git-only fallback**, select a fetched upstream branch, then **Load selected base**. No default target is assumed. Registration and source errors are separate; retry is explicit. Real PR pages offer file filtering and a pinned unified diff, not Ask, Split, Questions, Quiz or Semantic review.
+
+**Sample UI previews** opens the separate `/?preview=library` entry. Its Files changed, Questions, Quiz, Semantic review, All PRs and Configuration use fictional data and page-memory simulations, never real PR source or inference.
 
 ## Release
 
@@ -38,7 +40,9 @@ npm run build
 
 Windows output: `bin/sheldon.exe`. Plain `go run`/`go build` omit the embedded UI; use Vite for development.
 
-`sheldon open <url>` registers/reuses the PR in private `prs.json` under the OS data directory and opens `/reviews/<id>` on the existing backend. Each browser tab reads only its routed PR; opening another PR does not replace it. These pages show registration only, not a fetched diff. Plain `sheldon` opens the sample-UI root. Reloading either page requires reconnecting; rerun the original command or enter the token from private `instance.lock`.
+`sheldon open <url>` registers/reuses the PR in private `prs.json` under the OS data directory and opens `/reviews/<id>` on the existing backend. Source loads only after **Load pinned source**; registration/reconnection alone never fetches it. Each browser tab owns its routed PR and displayed snapshot. Plain `sheldon` opens the real PR entry page. Reloading requires reconnecting; rerun the command or enter the token from private `instance.lock`. In-page snapshot refresh remains unimplemented.
+
+Source uses OS cache storage (`~/.cache/sheldon` on Linux, `%LOCALAPPDATA%\sheldon\cache` on Windows), not the project directory. Worktrees and diffs are bounded; unsafe cache state, unavailable history or oversized comparisons produce errors rather than partial source. Existing credential helpers/SSH routes remain trusted. A worktree is not an agent sandbox.
 
 ## Check & build
 
@@ -72,11 +76,11 @@ Release browser checks build a disposable application-source copy without `refs/
 cmd/sheldon/          Go CLI + tests
 internal/platform/   OS storage paths
 internal/process/    Owned command execution + cancellation
-internal/httpapi/    Protected loopback API + registered PR lookup
-internal/app/        Launch, browser handoff, writer lifecycle + durable PR index
+internal/httpapi/    Protected loopback registration, lookup and source API
+internal/app/        Writer lifecycle, PR index and source orchestration
 internal/githubpr/   Canonical PR/revision contracts (no fetching)
-internal/github/     Optional gh base-resolution backend (not yet connected)
-internal/git/        Managed fetch, pinned worktrees and unified diffs (UI pending)
+internal/github/     Optional gh target-branch resolution
+internal/git/        Managed fetch, pinned worktrees and unified diffs
 internal/ui/         Embedded release shell / asset-free development fallback
 scripts/build.js     Frontend → embed copy → Go build
 web/                 Vue + Slate shell/fixtures + browser tests
