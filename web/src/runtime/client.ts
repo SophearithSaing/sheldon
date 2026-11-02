@@ -1,5 +1,30 @@
 let launchToken = ''
 
+export interface RegisteredPR {
+  id: string
+  url: string
+  owner: string
+  repository: string
+  number: string
+  title: string | null
+  author: string | null
+}
+
+export interface ReviewState {
+  status: 'disconnected' | 'loading' | 'registered' | 'not-found' | 'failed'
+  pr?: RegisteredPR
+}
+
+/**
+ * Recognizes an exact review route without treating it as authentication.
+ * @param path Browser pathname.
+ * @returns PR identifier, or an empty string for other routes.
+ */
+export function reviewID(path: string): string {
+  const match = /^\/reviews\/([a-f0-9]{64})$/.exec(path)
+  return match && !/^0+$/.test(match[1]!) ? match[1]! : ''
+}
+
 /**
  * Captures the launch token from the URL fragment and immediately clears it.
  * Keeps the credential out of component props and Vue diagnostic traces.
@@ -84,20 +109,36 @@ async function verifyBackend(token: string, signal: AbortSignal): Promise<void> 
 }
 
 /**
- * Verifies the backend and reads the pending open URL.
+ * Verifies the backend and checks authenticated runtime availability.
  * @param token Bearer token for the local runtime.
  * @param signal Abort signal for cancellation.
- * @returns Pending PR URL, or an empty string if none is queued.
  */
-export async function inspectBackend(token: string, signal: AbortSignal): Promise<string> {
+export async function inspectBackend(token: string, signal: AbortSignal): Promise<void> {
   await verifyBackend(token, signal)
   const options = authenticatedRequest(token, signal)
   const health = await fetch('/api/health', options)
   if (!health.ok || (await health.json()).status !== 'ok')
     throw new Error('Backend authentication failed.')
-  const open = await fetch('/api/open', options)
-  if (!open.ok) throw new Error('Backend request failed.')
-  const state: { url?: unknown } = await open.json()
-  if (typeof state.url !== 'string') throw new Error('Unexpected backend response.')
-  return state.url
+}
+
+/**
+ * Reads the registered PR for this tab without fetching source.
+ * @param token Verified runtime bearer token.
+ * @param signal Abort signal for cancellation.
+ * @param id PR identifier from the current route.
+ * @returns Registered metadata, or null when the PR is not registered.
+ */
+export async function readRegisteredPR(token: string, signal: AbortSignal, id: string): Promise<RegisteredPR | null> {
+  if (reviewID(`/reviews/${id}`) !== id || !id) throw new Error('Invalid review route.')
+  const response = await fetch(`/api/reviews/${id}`, authenticatedRequest(token, signal))
+  if (response.status === 404) return null
+  if (!response.ok) throw new Error('Cannot read registered PR.')
+  const pr: Partial<RegisteredPR> | null = await response.json()
+  if (!pr || pr.id !== id || typeof pr.owner !== 'string' || typeof pr.repository !== 'string' ||
+      typeof pr.number !== 'string' || !/^[1-9][0-9]*$/.test(pr.number) ||
+      pr.url !== `https://github.com/${pr.owner}/${pr.repository}/pull/${pr.number}` ||
+      !(pr.title === null || typeof pr.title === 'string') || !(pr.author === null || typeof pr.author === 'string')) {
+    throw new Error('Unexpected registered PR response.')
+  }
+  return pr as RegisteredPR
 }

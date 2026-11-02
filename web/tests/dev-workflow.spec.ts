@@ -187,18 +187,20 @@ test('proxy rejects hostile authority/origin/metadata and never injects authenti
 test('authenticated browser mutations preserve Origin through Vite', async ({ page }) => {
   const { token } = await credentials()
   await page.goto('/')
-  const status = await page.evaluate(async (token) => {
+  const opened = await page.evaluate(async (token): Promise<{ status: number; prID: string; route: string }> => {
     const response = await fetch('/api/open', {
       method: 'POST',
       credentials: 'omit',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: 'https://github.com/owner/repo/pull/7' }),
     })
-    return response.status
+    return { status: response.status, ...await response.json() }
   }, token)
-  expect(status).toBe(202)
-  const state = await request('/api/open', { Authorization: `Bearer ${token}` })
+  expect(opened.status).toBe(202)
+  expect(opened.route).toBe(`/reviews/${opened.prID}`)
+  const state = await request(`/api/reviews/${opened.prID}`, { Authorization: `Bearer ${token}` })
   expect(JSON.parse(state.body).url).toBe('https://github.com/owner/repo/pull/7')
+  expect((await request('/api/open', { Authorization: `Bearer ${token}` })).status).toBe(404)
 })
 
 test('HMR updates disposable frontend sources without rebuilding Go or losing connection', async ({
@@ -256,7 +258,7 @@ test('HMR upgrades reject foreign origins, and private test state is outside Vit
   expect(response).toContain('403')
   const denied = await request('/@fs/' + process.env.SHELDON_TEST_STATE!)
   expect(denied.status).toBe(403)
-  for (const path of ['/instance.lock', '/%69nstance.lock?raw', '/instance.lock::$DATA']) {
+  for (const path of ['/instance.lock', '/%69nstance.lock?raw', '/instance.lock::$DATA', '/prs.json', '/%70rs.json?raw', '/prs.json::$DATA', '/.prs-example.tmp']) {
     const response = await request(path)
     expect(response.status).toBe(403)
     expect(response.body).not.toContain('private fixture value')
@@ -265,4 +267,46 @@ test('HMR upgrades reject foreign origins, and private test state is outside Vit
   expect(denied.body).not.toContain(token)
   const logs = await readFile(process.env.SHELDON_TEST_SERVER_LOG!, 'utf8')
   expect(logs).not.toContain(token)
+})
+
+/**
+ * Keeps proxied review routes separate from samples and isolates metadata per tab.
+ * @param fixtures Browser pages and request client.
+ * @param testInfo Screenshot output location.
+ */
+test('development review routes isolate PRs and ignore cancelled metadata replies', async ({ page, context, request: api }, testInfo): Promise<void> => {
+  const { token } = await credentials()
+  const headers = { Authorization: `Bearer ${token}` }
+  const first = await api.post(frontend + '/api/open', { headers, data: { url: 'https://github.com/dev/routes/pull/201' } })
+  const a: { prID: string; route: string } = await first.json()
+  await page.goto(frontend + a.route + '#token=' + token)
+  await expect(page).toHaveURL(frontend + a.route)
+  await expect(page.getByRole('heading', { name: 'Pull request #201' })).toBeVisible()
+  const second = await api.post(frontend + '/api/open', { headers, data: { url: 'https://github.com/dev/routes/pull/202' } })
+  const b: { prID: string; route: string } = await second.json()
+  const other = await context.newPage()
+  await other.goto(frontend + b.route + '#token=' + token)
+  await expect(other.getByRole('heading', { name: 'Pull request #202' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Pull request #201' })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('registered-development.png'), fullPage: true })
+  await page.reload()
+  let release: (() => void) | undefined
+  const gate = new Promise<void>((resolve): void => { release = resolve })
+  await page.route(`**/api/reviews/${a.prID}`, async (route): Promise<void> => {
+    await gate
+    await route.fulfill({ json: { id: a.prID, url: 'https://github.com/dev/routes/pull/201', owner: 'dev', repository: 'routes', number: '201', title: null, author: null } })
+  })
+  await page.getByLabel('API token', { exact: true }).fill(token)
+  await page.getByRole('button', { name: 'Connect backend' }).click()
+  await expect(page.getByText('Reading registered PR…', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Disconnect backend' }).click()
+  release!()
+  await page.unrouteAll({ behavior: 'wait' })
+  await expect(page.getByRole('heading', { name: 'Pull request #201' })).toHaveCount(0)
+  await expect(page.getByLabel('API token', { exact: true })).toHaveValue('')
+  expect(await page.content()).not.toContain(token)
+  await other.close()
+  for (const path of ['/reviews/invalid', '/reviews/' + 'a'.repeat(64) + '/extra', '/reviews/' + 'A'.repeat(64), '/reviews/' + '0'.repeat(64)]) {
+    expect((await api.get(frontend + path)).status()).toBe(404)
+  }
 })

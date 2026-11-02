@@ -2,7 +2,11 @@
 import { defineAsyncComponent, ref } from 'vue'
 import FixtureApplication from './fixtures/FixtureApplication.vue'
 import UiButton from './components/ui/UiButton.vue'
+import RegisteredPR from './runtime/RegisteredPR.vue'
+import { reviewID as parseReviewID, type ReviewState } from './runtime/client'
 
+const reviewID = parseReviewID(location.pathname)
+const reviewState = ref<ReviewState>({ status: 'disconnected' })
 const runtimeExpanded = ref(true)
 const runtimeState = ref('Disconnected')
 const runtimeLabel = import.meta.env.DEV ? 'Development backend' : 'Local runtime'
@@ -22,7 +26,7 @@ const RuntimeConnection =
 <template>
   <div class="application">
     <ControlsFixture v-if="ControlsFixture" />
-    <FixtureApplication v-else>
+    <component v-else :is="reviewID ? RegisteredPR : FixtureApplication" v-bind="reviewID ? { reviewId: reviewID, reviewState } : {}">
       <template v-if="RuntimeConnection" #runtime-trigger>
         <UiButton
           class="runtime-trigger"
@@ -39,9 +43,9 @@ const RuntimeConnection =
         </UiButton>
       </template>
       <template v-if="RuntimeConnection" #runtime-panel>
-        <RuntimeConnection v-model:expanded="runtimeExpanded" @state="runtimeState = $event" />
+        <RuntimeConnection v-model:expanded="runtimeExpanded" :review-id="reviewID || undefined" @state="runtimeState = $event" @review="reviewState = $event" />
       </template>
-    </FixtureApplication>
+    </component>
   </div>
 </template>
 
