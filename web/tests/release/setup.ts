@@ -1,8 +1,35 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { copyFile, cp, mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+/**
+ * Builds from application-owned source with no references or previous generated assets.
+ * @param root Repository supplying source and installed pinned dependencies.
+ * @param binary Destination for the standalone binary.
+ */
+async function buildRelease(root: string, binary: string): Promise<void> {
+  const source = await mkdtemp(join(tmpdir(), 'sheldon-clean-build-'))
+  try {
+    for (const name of ['package.json', 'package-lock.json', '.npmrc', 'go.mod', 'go.sum', 'scripts', 'cmd', 'internal', 'web']) {
+      await cp(join(root, name), join(source, name), {
+        recursive: true,
+        filter: (path): boolean => !['node_modules', 'dist', 'test-results', 'playwright-report'].includes(basename(path)),
+      })
+    }
+    await symlink(join(root, 'node_modules'), join(source, 'node_modules'), 'dir')
+    execFileSync(process.execPath, [process.env.npm_execpath!, 'run', 'build'], {
+      cwd: source,
+      stdio: 'inherit',
+      timeout: 120000,
+      env: { ...process.env, GOOS: '', GOARCH: '', GOFLAGS: '' },
+    })
+    await copyFile(join(source, 'bin/sheldon'), binary)
+  } finally {
+    await rm(source, { recursive: true, force: true })
+  }
+}
 
 /**
  * Builds the release binary, starts it in an isolated environment and returns a cleanup function.
@@ -14,14 +41,14 @@ export default async function setup(): Promise<() => Promise<void>> {
     throw new Error('Release browser lifecycle tests currently require Linux or macOS.')
   }
   const root = fileURLToPath(new URL('../../../', import.meta.url))
-  execFileSync(process.execPath, [process.env.npm_execpath!, 'run', 'build'], {
-    cwd: root,
-    stdio: 'inherit',
-    timeout: 120000,
-    env: { ...process.env, GOOS: '', GOARCH: '', GOFLAGS: '' },
-  })
   const directory = await mkdtemp(join(tmpdir(), 'sheldon-release-'))
   const binary = join(directory, 'sheldon')
+  try {
+    await buildRelease(root, binary)
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true })
+    throw error
+  }
   const home = join(directory, 'home')
   const env = {
     HOME: home,
@@ -36,7 +63,6 @@ export default async function setup(): Promise<() => Promise<void>> {
       ? join(home, 'Library/Application Support/sheldon/instance.lock')
       : join(directory, 'data/sheldon/instance.lock')
   await mkdir(home)
-  await copyFile(join(root, 'bin/sheldon'), binary)
   const child = spawn(binary, [], { cwd: directory, env, stdio: ['ignore', 'pipe', 'pipe'] })
   let output = ''
   let origin = ''

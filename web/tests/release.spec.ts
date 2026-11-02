@@ -13,15 +13,20 @@ async function state(): Promise<{ url: string; token: string }> {
   return JSON.parse((await readFile(process.env.SHELDON_RELEASE_STATE!)).subarray(1).toString())
 }
 
+/**
+ * Checks standalone assets, credentials and second-instance forwarding after a clean source build.
+ * @param fixtures Playwright page fixture.
+ * @param testInfo Screenshot output location.
+ */
 test('isolated release binary serves the authenticated shell, fonts and complete licenses', async ({
   page,
-}, testInfo) => {
+}, testInfo): Promise<void> => {
   const { url, token } = await state()
   const urls: string[] = []
   const errors: string[] = []
-  page.on('request', (request) => urls.push(request.url()))
-  page.on('pageerror', (error) => errors.push(error.message))
-  page.on('console', (message) => {
+  page.on('request', (request): void => { urls.push(request.url()) })
+  page.on('pageerror', (error): void => { errors.push(error.message) })
+  page.on('console', (message): void => {
     if (message.type() === 'error') errors.push(message.text())
   })
   const response = await page.goto(`${url}/#token=${token}`)
@@ -30,17 +35,25 @@ test('isolated release binary serves the authenticated shell, fonts and complete
   await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
   await page.getByRole('button', { name: 'UI preview', exact: true }).click()
   await expect(page.getByText('No PR loaded. No agent connected.', { exact: false })).toBeVisible()
-  await page.evaluate(() => document.fonts.ready)
-  expect(await page.evaluate(() => document.fonts.check('400 13px "Sheldon JetBrains Mono"'))).toBe(
+  await page.evaluate((): Promise<FontFaceSet> => document.fonts.ready)
+  expect(await page.evaluate((): boolean => document.fonts.check('400 13px "Sheldon JetBrains Mono"'))).toBe(
     true,
   )
-  const font = urls.find((value) => value.endsWith('.ttf'))
+  const font = urls.find((value): boolean => value.endsWith('.ttf'))
   expect(font).toBeTruthy()
-  expect((await page.request.get(font!)).headers()['content-type']).toBe('font/ttf')
-  expect(await page.evaluate(() => document.fonts.check('400 13px "Sheldon Slate Sans"'))).toBe(true)
-  const sansFont = urls.find((value) => value.endsWith('.woff2'))
+  const fontResponse = await page.request.get(font!)
+  expect(fontResponse.headers()['content-type']).toBe('font/ttf')
+  expect(await fontResponse.body()).toEqual(
+    await readFile(new URL('../src/assets/fonts/JetBrainsMono-Variable.ttf', import.meta.url)),
+  )
+  expect(await page.evaluate((): boolean => document.fonts.check('400 13px "Sheldon Slate Sans"'))).toBe(true)
+  const sansFont = urls.find((value): boolean => value.endsWith('.woff2'))
   expect(sansFont).toBeTruthy()
-  expect((await page.request.get(sansFont!)).headers()['content-type']).toBe('font/woff2')
+  const sansFontResponse = await page.request.get(sansFont!)
+  expect(sansFontResponse.headers()['content-type']).toBe('font/woff2')
+  expect(await sansFontResponse.body()).toEqual(
+    await readFile(new URL('../src/assets/fonts/DMSans-Latin-Variable.woff2', import.meta.url)),
+  )
   const license = await page
     .getByRole('link', { name: 'JetBrains Mono license' })
     .getAttribute('href')
@@ -49,14 +62,16 @@ test('isolated release binary serves the authenticated shell, fonts and complete
   const licenseText = await licenseResponse.text()
   expect(licenseText).toContain('SIL OPEN FONT LICENSE Version 1.1')
   expect(licenseText.length).toBeGreaterThan(4000)
+  expect(licenseText).toBe(await readFile(new URL('../src/assets/fonts/OFL.txt', import.meta.url), 'utf8'))
   const sansLicense = await page.getByRole('link', { name: 'DM Sans license' }).getAttribute('href')
   const sansLicenseResponse = await page.request.get(url + sansLicense!)
   expect(sansLicenseResponse.headers()['content-type']).toContain('text/plain')
   const sansLicenseText = await sansLicenseResponse.text()
   expect(sansLicenseText).toContain('SIL OPEN FONT LICENSE')
   expect(sansLicenseText.length).toBeGreaterThan(4000)
-  expect(urls.every((value) => value.startsWith(url + '/'))).toBe(true)
-  expect(urls.some((value) => value.includes(token))).toBe(false)
+  expect(sansLicenseText).toBe(await readFile(new URL('../src/assets/fonts/DM-Sans-LICENSE.txt', import.meta.url), 'utf8'))
+  expect(urls.every((value): boolean => value.startsWith(url + '/'))).toBe(true)
+  expect(urls.some((value): boolean => value.includes(token))).toBe(false)
   expect(await page.content()).not.toContain(token)
   expect(errors).toEqual([])
   await page.getByRole('button', { name: 'UI preview', exact: true }).click()
@@ -167,4 +182,40 @@ test('release reload requires explicit reconnecting and wrong proof never receiv
   expect(bearerSent).toBe(false)
   await expect(page.getByLabel('API token', { exact: true })).toHaveValue('')
   expect(await page.content()).not.toContain(token)
+})
+
+/**
+ * Verifies manual recovery and disconnect across Slate destinations with no credential persistence.
+ * @param fixtures Playwright page fixture.
+ * @param testInfo Screenshot output location.
+ */
+test('release reconnects manually and disconnects without rebinding sample workspaces', async ({ page }, testInfo): Promise<void> => {
+  const { url, token } = await state()
+  await page.goto(`${url}/#token=${token}`)
+  await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
+  await page.reload()
+  await expect(page.getByLabel('API token', { exact: true })).toHaveValue('')
+  await page.getByLabel('API token', { exact: true }).fill(token)
+  await page.getByRole('button', { name: 'Connect backend', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
+  await expect(page.getByLabel('API token', { exact: true })).toHaveCount(0)
+  const draft = page.getByRole('textbox', { name: 'Your question', exact: true })
+  await draft.fill('Keep the sample draft across runtime recovery')
+  await page.getByRole('tab', { name: 'Semantic review', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Preview semantic generation', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Finish sample grouping', exact: true })).toHaveCount(0)
+  await page.getByRole('link', { name: 'Configuration', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
+  await page.getByRole('link', { name: 'All PRs', exact: true }).click()
+  await page.getByRole('button', { name: 'Local runtime — Backend connected', exact: true }).click()
+  await page.getByRole('button', { name: 'Disconnect backend', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Disconnected' })).toBeVisible()
+  await expect(page.getByLabel('API token', { exact: true })).toHaveValue('')
+  await page.getByRole('link', { name: 'platform #248 — Session refresh', exact: true }).click()
+  await page.getByRole('tab', { name: 'Files changed', exact: true }).click()
+  await expect(draft).toHaveValue('Keep the sample draft across runtime recovery')
+  await expect(page.getByRole('tab', { name: 'Questions', exact: true })).toHaveAttribute('aria-description', '0 sample items')
+  expect(await page.evaluate((): number => localStorage.length + sessionStorage.length)).toBe(0)
+  expect(await page.content()).not.toContain(token)
+  await page.screenshot({ path: testInfo.outputPath('release-disconnected-draft.png') })
 })
