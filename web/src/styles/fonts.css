@@ -6,3 +6,12 @@
   font-weight: 100 800;
   font-display: swap;
 }
+
+/* Local, unmodified DM Sans Latin variable font; license bundled beside it. */
+@font-face {
+  font-family: 'Sheldon Slate Sans';
+  src: url('../assets/fonts/DMSans-Latin-Variable.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}

@@ -15,10 +15,12 @@ withDefaults(
 .ui-badge {
   display: inline-flex;
   align-items: center;
-  padding: var(--space-1) var(--space-2);
+  gap: 0.3125rem;
+  padding: var(--space-1) 0.5625rem;
   border-radius: var(--radius-pill);
-  font-size: var(--text-small);
+  font-size: var(--text-code-meta);
   font-weight: 550;
+  line-height: 1.5;
   color: var(--color-muted);
   background: var(--color-surface);
 }

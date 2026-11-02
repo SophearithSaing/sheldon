@@ -1,20 +1,41 @@
-// Deterministic design samples only. None of these records came from a repository or agent.
+import type { DiffLine, LineRange } from '../components/diff'
+
 export const workspaceTabs = [
   { id: 'files', label: 'Files changed' },
   { id: 'questions', label: 'Questions' },
   { id: 'quiz', label: 'Quiz' },
+  { id: 'semantic', label: 'Semantic review' },
 ] as const
 
-export interface DiffLine {
-  base: number | null
-  head: number | null
-  kind: 'context' | 'added' | 'removed'
-  text: string
+export interface SampleAnchor {
+  fileId: string
+  revision: string
+  range: LineRange | null
+}
+
+export interface SampleThread {
+  id: number
+  anchor: SampleAnchor
+  relatedAnchors?: SampleAnchor[]
+  question: string
+  status: 'answered' | 'investigating' | 'understood' | 'failed' | 'interrupted'
+  followup: string
+  messages: SampleMessage[]
+  outdated?: boolean
+}
+
+export interface SampleMessage {
+  author: 'You' | 'Agent'
+  paragraphs: string[]
+  citations?: SampleAnchor[]
 }
 
 export const sampleFiles = [
-  { id: 'refresh', path: 'src/auth/refresh-session.ts' },
-  { id: 'store', path: 'src/auth/session-store.ts' },
+  { id: 'refresh', path: 'src/auth/refresh-session.ts', added: 24, removed: 8, hunk: '@@ −22,12 +22,24 @@ refreshSession' },
+  { id: 'store', path: 'src/auth/session-store.ts', added: 8, removed: 2, hunk: '@@ −41,3 +41,4 @@ logout' },
+  { id: 'client', path: 'src/http/client.ts', added: 16, removed: 5, hunk: '@@ −12,3 +12,4 @@ authenticatedRequest' },
+  { id: 'test', path: 'tests/auth/refresh-session.test.ts', added: 14, removed: 0, hunk: '@@ −12,0 +12,7 @@' },
+  { id: 'docs', path: 'docs/sessions.md', added: 4, removed: 1, hunk: '@@ −1,2 +1,4 @@' },
 ] as const
 
 export const sampleDiffs: Record<string, DiffLine[]> = {
@@ -61,20 +82,105 @@ export const sampleDiffs: Record<string, DiffLine[]> = {
     { base: 33, head: 45, kind: 'context', text: '}' },
   ],
   store: [
-    {
-      base: 1,
-      head: 1,
-      kind: 'context',
-      text: '// Sample session store, not a loaded application file.',
-    },
-    { base: 2, head: 2, kind: 'context', text: 'let session: Session | null = null;' },
-    { base: null, head: 3, kind: 'added', text: 'let generation = 0;' },
-    { base: 3, head: 4, kind: 'context', text: '' },
-    { base: 4, head: 5, kind: 'context', text: 'export function clearSession() {' },
-    { base: null, head: 6, kind: 'added', text: '  generation += 1;' },
-    { base: 5, head: 7, kind: 'context', text: '  session = null;' },
-    { base: 6, head: 8, kind: 'context', text: '}' },
+    { base: 41, head: 41, kind: 'context', text: 'export function logout() {' },
+    { base: 42, head: 42, kind: 'context', text: '  store.set(null);' },
+    { base: null, head: 43, kind: 'added', text: '  store.generation += 1;' },
+    { base: 43, head: 44, kind: 'context', text: '}' },
   ],
+  client: [
+    { base: 12, head: 12, kind: 'context', text: 'export async function authenticatedRequest() {' },
+    { base: 13, head: null, kind: 'removed', text: '  return send(store.get());' },
+    { base: null, head: 13, kind: 'added', text: '  const session = await getSessionForRequest(request, options);' },
+    { base: null, head: 14, kind: 'added', text: '  return send(session);' },
+    { base: 14, head: 15, kind: 'context', text: '}' },
+  ],
+  test: [
+    { base: null, head: 12, kind: 'added', text: 'it("ignores refresh after logout", async () => {' },
+    { base: null, head: 13, kind: 'added', text: '  const pending = refreshSession();' },
+    { base: null, head: 14, kind: 'added', text: '  logout();' },
+    { base: null, head: 15, kind: 'added', text: '  resolveSession(oldSession);' },
+    { base: null, head: 16, kind: 'added', text: '  await pending;' },
+    { base: null, head: 17, kind: 'added', text: '  expect(store.get()).toBe(null);' },
+    { base: null, head: 18, kind: 'added', text: '});' },
+    { hunkHeader: '… omitted sample source … @@ −23,0 +30,7 @@', base: null, head: 30, kind: 'added', text: 'it("allows another refresh after failure", async () => {' },
+    { base: null, head: 31, kind: 'added', text: '  rejectSession(new Error("offline"));' },
+    { base: null, head: 32, kind: 'added', text: '  await expect(refreshSession()).rejects.toThrow("offline");' },
+    { base: null, head: 33, kind: 'added', text: '  resolveSession(newSession);' },
+    { base: null, head: 34, kind: 'added', text: '  const next = await refreshSession();' },
+    { base: null, head: 35, kind: 'added', text: '  expect(next).toBe(newSession);' },
+    { base: null, head: 36, kind: 'added', text: '});' },
+  ],
+  docs: [
+    { base: 1, head: 1, kind: 'context', text: '# Session refresh' },
+    { base: 2, head: null, kind: 'removed', text: 'Each caller starts a refresh request.' },
+    { base: null, head: 2, kind: 'added', text: 'Concurrent callers share the in-flight request.' },
+    { base: null, head: 3, kind: 'added', text: 'Logout invalidates the generation before older results can update the store.' },
+    { base: null, head: 4, kind: 'added', text: 'Example markup stays literal: <img src=x onerror=alert(1)>.' },
+  ],
+}
+
+/**
+ * Creates an independent set of threads for the populated UI preview.
+ * @returns Four fictional threads, or none for the first-use preview.
+ */
+export function initialSampleThreads(): SampleThread[] {
+  if (new URLSearchParams(location.search).get('sample') !== 'review') return []
+  return [
+    makeSampleThread(1, { fileId: 'refresh', revision: 'a81c2f4', range: { side: 'head', start: 27, end: 30 } }, 'Can an old refresh restore a session?', 'answered'),
+    {
+      ...makeSampleThread(2, { fileId: 'refresh', revision: 'a81c2f4', range: { side: 'head', start: 23, end: 35 } }, 'Is this a cache, or only an in-flight promise?', 'answered'),
+      followup: 'Could you walk me through the failure case?',
+      messages: [
+        { author: 'You', paragraphs: ['Is this caching the session, or just sharing an in-flight request?'] },
+        { author: 'Agent', paragraphs: ['It shares work, not the result. While the request is running, every caller receives the same promise.', 'A calls → starts a request. B calls → joins the same promise. Once settled, C starts a new request.', 'That is why cleanup is in finally(): success or failure, the next call can try again.'], citations: [{ fileId: 'refresh', revision: 'a81c2f4', range: { side: 'head', start: 23, end: 35 } }] },
+      ],
+    },
+    makeSampleThread(3, { fileId: 'test', revision: 'a81c2f4', range: { side: 'head', start: 12, end: 18 } }, 'What happens when the refresh request fails?', 'investigating'),
+    {
+      ...makeSampleThread(4, { fileId: 'store', revision: 'a81c2f4', range: { side: 'head', start: 41, end: 44 } }, 'Why increment the session generation on logout?', 'understood'),
+      messages: [
+        { author: 'You', paragraphs: ['Why increment the session generation on logout?'] },
+        { author: 'Agent', paragraphs: ['It invalidates the generation captured by an older refresh, so that result cannot replace the cleared store.'], citations: [{ fileId: 'store', revision: 'a81c2f4', range: { side: 'head', start: 41, end: 44 } }] },
+        { author: 'You', paragraphs: ['So this guards the store write rather than cancelling the request?'] },
+        { author: 'Agent', paragraphs: ['Yes. In this fictional excerpt, the generation check guards the write. Cancellation is a separate concern.'] },
+      ],
+    },
+  ]
+}
+
+/**
+ * Creates a local transcript with explicitly illustrative, never generated, content.
+ * @param id Local thread number.
+ * @param anchor Pinned sample source.
+ * @param question Submitted question text.
+ * @param status Initial preview status.
+ * @returns An independent thread and transcript.
+ */
+export function makeSampleThread(id: number, anchor: SampleAnchor, question: string, status: SampleThread['status']): SampleThread {
+  const messages: SampleMessage[] = [{ author: 'You', paragraphs: [question] }]
+  if (status === 'answered' || status === 'understood') {
+    messages.push({ author: 'Agent', paragraphs: [...sampleExplanation], citations: [anchor] })
+  }
+  return { id, anchor, question, status, followup: '', messages }
+}
+
+/**
+ * Describes a pinned sample source location.
+ * @param anchor Source coordinates to describe.
+ * @returns Path, side/range and revision without implying verified evidence.
+ */
+export function sampleSourceLabel(anchor: SampleAnchor): string {
+  const path = sampleFiles.find((file): boolean => file.id === anchor.fileId)?.path ?? anchor.fileId
+  return `${path} · ${anchor.range ? `${anchor.range.side} L${anchor.range.start}–${anchor.range.end}` : 'Whole file'} · ${anchor.revision}`
+}
+
+/**
+ * Lists every pinned range of a single- or multi-range sample thread.
+ * @param thread Local question whose context is displayed.
+ * @returns Its primary anchor followed by explicit additional anchors.
+ */
+export function threadAnchors(thread: SampleThread): SampleAnchor[] {
+  return [thread.anchor, ...(thread.relatedAnchors ?? [])]
 }
 
 export const sampleExplanation = [
@@ -86,11 +192,4 @@ export const sampleExplanation = [
   'Related sources should remain visible and tied to a revision. A source citation is not evidence until the backend has resolved it against the pinned snapshot.',
   'An answered question is not automatically understood. That is a reader decision, separate from whether a file has been viewed or whether a change should be merged.',
   'Longer conversations must keep native scrolling and keyboard focus available. This final paragraph intentionally makes the sample longer so that behavior can be reviewed without a connected service.',
-]
-
-export const sampleChoices = [
-  'Every caller immediately receives a new session.',
-  'An older response cannot overwrite the newer store generation.',
-  'The browser cancels all earlier network requests.',
-  'The promise can never resolve after logout.',
 ]

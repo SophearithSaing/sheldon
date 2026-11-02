@@ -54,13 +54,14 @@ jobs:
       - name: Verify authenticated development, HMR and UI fixtures
         run: npm run test:web
 
-      # This rebuilds Vue, copies assets, compiles the release, then runs only its
-      # binary outside the source tree with no Node or desktop opener on PATH.
+      # Build a disposable source copy without refs or generated bundles, then run
+      # only its binary with no Node or desktop opener on PATH.
       - name: Verify embedded release and CLI lifecycle
         run: npm run test:release
 
       - name: Test and vet the release-tag build
         run: |
+          npm run build
           go test -race -tags=release -count=1 -timeout=3m ./...
           go vet -tags=release ./...
 

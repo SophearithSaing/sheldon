@@ -34,6 +34,8 @@ func assetHandler(assets fs.FS) http.Handler {
 				contentType = "text/css; charset=utf-8"
 			case ".ttf":
 				contentType = "font/ttf"
+			case ".woff2":
+				contentType = "font/woff2"
 			case ".txt":
 				contentType = "text/plain; charset=utf-8"
 			}

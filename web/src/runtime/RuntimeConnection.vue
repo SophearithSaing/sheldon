@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import UiButton from '../components/ui/UiButton.vue'
 import { inspectBackend, takeLaunchToken } from './client'
 
@@ -8,12 +8,15 @@ const tokenInput = ref('')
 const state = ref('Disconnected')
 const pendingURL = ref('')
 const connected = ref(false)
+const expanded = defineModel<boolean>('expanded', { default: true })
+const emit = defineEmits<{ state: [value: string] }>()
 let controller: AbortController | undefined
 
 /**
  * Aborts any in-flight connection and resets the UI to a disconnected state.
  */
 function disconnect(): void {
+  expanded.value = true
   controller?.abort()
   controller = undefined
   connected.value = false
@@ -40,10 +43,12 @@ async function connect(token = tokenInput.value): Promise<void> {
     if (current.signal.aborted) return
     connected.value = true
     state.value = 'Backend connected'
+    expanded.value = false
   } catch {
     if (current.signal.aborted) return
     current.abort()
     connected.value = false
+    expanded.value = true
     state.value = 'Connection failed or closed. Check the backend and API token, then reconnect.'
   } finally {
     if (current === controller) {
@@ -53,15 +58,30 @@ async function connect(token = tokenInput.value): Promise<void> {
   }
 }
 
-onMounted(() => {
+/**
+ * Reports nonsecret connection status to the persistent header trigger.
+ * @param value Public connection status text.
+ */
+function reportState(value: string): void {
+  emit('state', value)
+}
+
+/**
+ * Consumes the transient launch token when the runtime first mounts.
+ */
+function connectLaunch(): void {
   const token = takeLaunchToken()
   if (token) void connect(token)
-})
+}
+watch(state, reportState, { immediate: true })
+onMounted(connectLaunch)
 onUnmounted(disconnect)
 </script>
 
 <template>
   <section
+    v-show="expanded"
+    id="runtime-panel"
     class="runtime-connection"
     :aria-label="development ? 'Development backend connection' : 'Runtime connection'"
   >
@@ -86,7 +106,7 @@ onUnmounted(disconnect)
       instance.lock. Tokens stay in page memory; reloading requires reconnecting.
     </p>
     <div class="runtime-status">
-      <p role="status">{{ state }}</p>
+      <p>{{ state }}</p>
       <UiButton v-if="connected || state === 'Connecting'" variant="quiet" @click="disconnect">
         Disconnect backend
       </UiButton>
