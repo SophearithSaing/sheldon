@@ -4,7 +4,7 @@ import ScrollRegion from '../components/ui/ScrollRegion.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiField from '../components/ui/UiField.vue'
 import ThreadStatus from './ThreadStatus.vue'
-import { sampleSourceLabel, type SampleAnchor, type SampleThread } from './workspace'
+import { sampleSourceLabel, threadAnchors, type SampleAnchor, type SampleThread } from './workspace'
 
 const props = withDefaults(defineProps<{ thread: SampleThread; busyThread: number | null; previewControls?: boolean; sourceActionLabel?: string }>(), { previewControls: true, sourceActionLabel: 'View in diff' })
 const followup = defineModel<string>('followup', { required: true })
@@ -113,7 +113,7 @@ function source(anchor: SampleAnchor): void {
 <template>
   <div ref="root" class="thread-conversation">
     <div class="thread-summary"><ThreadStatus :status="thread.status" /><p>Shared agent context · This PR revision</p></div>
-    <button type="button" class="thread-source" :aria-disabled="thread.outdated || undefined" :aria-describedby="thread.outdated ? `${id}-outdated` : undefined" @click="source(thread.anchor)"><span>Selected sample context</span><strong>{{ sampleSourceLabel(thread.anchor) }}</strong><span aria-hidden="true">{{ sourceActionLabel }} →</span></button>
+    <div class="thread-contexts" :class="{ 'is-multi-range': thread.relatedAnchors?.length }" :role="thread.relatedAnchors?.length ? 'region' : undefined" :aria-label="thread.relatedAnchors?.length ? 'Pinned multi-range question context' : undefined" :tabindex="thread.relatedAnchors?.length ? 0 : undefined"><p v-if="thread.relatedAnchors?.length" class="multi-range-label">{{ threadAnchors(thread).length }} pinned source ranges · One UI thread</p><button v-for="(anchor, anchorIndex) in threadAnchors(thread)" :key="anchorIndex" type="button" class="thread-source" :aria-disabled="thread.outdated || undefined" :aria-describedby="thread.outdated ? `${id}-outdated` : undefined" @click="source(anchor)"><span>Selected sample context</span><strong>{{ sampleSourceLabel(anchor) }}</strong><span aria-hidden="true">{{ sourceActionLabel }} →</span></button></div>
     <p v-if="thread.outdated" :id="`${id}-outdated`" class="thread-warning" role="status">Outdated context preview. The transcript remains pinned to {{ thread.anchor.revision }}; source navigation and sending are unavailable. Nothing is silently rebound to a newer revision.</p>
     <ScrollRegion ref="messages" label="Sample conversation messages" class="conversation-messages" @scroll="rememberScroll">
       <p class="transcript-disclosure">Sample transcript · Replies are fixed illustrative text, not generated for your question. No agent is connected.</p>
@@ -150,6 +150,9 @@ function source(anchor: SampleAnchor): void {
 <style scoped>
 .thread-conversation { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
 .thread-summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); font-size: var(--text-small); color: var(--color-muted); }
+.thread-contexts { flex-shrink: 0; }
+.thread-contexts.is-multi-range { max-height: 17rem; overflow: auto; }
+.multi-range-label { padding: var(--space-2) var(--space-6); color: var(--color-muted); font-size: var(--text-small); }
 .thread-source { display: grid; justify-items: start; gap: var(--space-1); flex-shrink: 0; width: 100%; min-height: var(--target-control); padding: var(--space-3) var(--space-6); border: 0; border-block: 1px solid var(--color-border); background: transparent; text-align: left; overflow-wrap: anywhere; font-size: var(--text-small); }
 .thread-source span { color: var(--color-muted); font-size: var(--text-code-meta); }
 .thread-source strong { font-weight: 500; }

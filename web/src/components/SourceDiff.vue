@@ -60,24 +60,23 @@ function tokens(text: string): { text: string; tone: string }[] {
         </tr>
       </thead>
       <tbody>
-        <tr
-          v-for="(line, index) in lines"
-          :key="index"
-          :class="[`diff-line--${line.kind}`, { 'is-selected': selected(line) }]"
-        >
-          <td class="line-number">
-            <button v-if="line.base !== null && selectable !== false" type="button" :data-line="line.base" data-side="base" :aria-label="`Select base line ${line.base}`" :aria-pressed="selected(line) && selection?.side === 'base'" @keydown.shift.enter.prevent="emit('select', 'base', line.base, true)" @click="emit('select', 'base', line.base, $event.shiftKey)">{{ line.base }}</button><span v-else>{{ line.base }}</span>
-          </td>
-          <td class="line-number">
-            <button v-if="line.head !== null && selectable !== false" type="button" :data-line="line.head" data-side="head" :aria-label="`Select head line ${line.head}`" :aria-pressed="selected(line) && selection?.side === 'head'" @keydown.shift.enter.prevent="emit('select', 'head', line.head, true)" @click="emit('select', 'head', line.head, $event.shiftKey)">{{ line.head }}</button><span v-else>{{ line.head }}</span>
-          </td>
-          <td class="line-sign">
-            {{ line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : '' }}
-          </td>
-          <td class="line-source">
-            <code><span v-for="(token, tokenIndex) in tokens(line.text || ' ')" :key="tokenIndex" :class="token.tone ? `syntax-${token.tone}` : undefined">{{ token.text }}</span></code>
-          </td>
-        </tr>
+        <template v-for="(line, index) in lines" :key="index">
+          <tr v-if="line.hunkHeader" class="diff-omission"><td colspan="4">{{ line.hunkHeader }}</td></tr>
+          <tr :class="[`diff-line--${line.kind}`, { 'is-selected': selected(line) }]">
+            <td class="line-number">
+              <button v-if="line.base !== null && selectable !== false" type="button" :data-line="line.base" data-side="base" :aria-label="`Select base line ${line.base}`" :aria-pressed="selected(line) && selection?.side === 'base'" @keydown.shift.enter.prevent="emit('select', 'base', line.base, true)" @click="emit('select', 'base', line.base, $event.shiftKey)">{{ line.base }}</button><span v-else>{{ line.base }}</span>
+            </td>
+            <td class="line-number">
+              <button v-if="line.head !== null && selectable !== false" type="button" :data-line="line.head" data-side="head" :aria-label="`Select head line ${line.head}`" :aria-pressed="selected(line) && selection?.side === 'head'" @keydown.shift.enter.prevent="emit('select', 'head', line.head, true)" @click="emit('select', 'head', line.head, $event.shiftKey)">{{ line.head }}</button><span v-else>{{ line.head }}</span>
+            </td>
+            <td class="line-sign">
+              {{ line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : '' }}
+            </td>
+            <td class="line-source">
+              <code><span v-for="(token, tokenIndex) in tokens(line.text || ' ')" :key="tokenIndex" :class="token.tone ? `syntax-${token.tone}` : undefined">{{ token.text }}</span></code>
+            </td>
+          </tr>
+        </template>
       </tbody>
     </table>
   </section>
@@ -104,6 +103,7 @@ function tokens(text: string): { text: string; tone: string }[] {
   padding-block: 0;
   vertical-align: top;
 }
+.diff-omission td { padding: var(--space-3); border-block: 1px solid var(--color-border); color: var(--color-muted); font-size: var(--text-code-meta); white-space: normal; }
 .line-number {
   font-size: var(--text-code-meta);
   width: 4ch;

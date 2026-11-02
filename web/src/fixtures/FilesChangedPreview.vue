@@ -6,7 +6,7 @@ import ScrollRegion from '../components/ui/ScrollRegion.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiField from '../components/ui/UiField.vue'
 import type { LineRange } from '../components/diff'
-import { makeSampleThread, sampleDiffs, sampleFiles, type SampleAnchor, type SampleThread } from './workspace'
+import { makeSampleThread, sampleDiffs, sampleFiles, threadAnchors, type SampleAnchor, type SampleThread } from './workspace'
 
 interface Draft {
   id: number
@@ -44,8 +44,19 @@ const outcomes = [
 const selectedFile = computed(() => sampleFiles.find((item): boolean => item.id === file.value)!)
 const lines = computed(() => sampleDiffs[file.value] ?? [])
 const draft = computed(() => drafts.value.find((item): boolean => item.id === expanded.value && item.anchor.fileId === file.value))
-const fileThreads = computed(() => props.threads.filter((thread): boolean => thread.anchor.fileId === file.value))
+const fileThreads = computed(threadsForFile)
 const revisionBusy = computed((): boolean => props.threads.some((thread): boolean => thread.status === 'investigating'))
+
+/**
+ * Displays one marker per thread/file while retaining its full multi-range context in the panel.
+ * @returns Local marker projections, never mutations of the submitted thread anchors.
+ */
+function threadsForFile(): SampleThread[] {
+  return props.threads.flatMap((thread): SampleThread[] => {
+    const anchor = threadAnchors(thread).find((item): boolean => item.fileId === file.value)
+    return anchor ? [{ ...thread, anchor }] : []
+  })
+}
 
 /**
  * Describes pinned source without implying repository-backed validation.

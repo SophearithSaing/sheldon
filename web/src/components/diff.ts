@@ -1,4 +1,5 @@
 export interface DiffLine {
+  hunkHeader?: string
   base: number | null
   head: number | null
   kind: 'context' | 'added' | 'removed'

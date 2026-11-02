@@ -4,6 +4,7 @@ export const workspaceTabs = [
   { id: 'files', label: 'Files changed' },
   { id: 'questions', label: 'Questions' },
   { id: 'quiz', label: 'Quiz' },
+  { id: 'semantic', label: 'Semantic review' },
 ] as const
 
 export interface SampleAnchor {
@@ -15,6 +16,7 @@ export interface SampleAnchor {
 export interface SampleThread {
   id: number
   anchor: SampleAnchor
+  relatedAnchors?: SampleAnchor[]
   question: string
   status: 'answered' | 'investigating' | 'understood' | 'failed' | 'interrupted'
   followup: string
@@ -32,7 +34,7 @@ export const sampleFiles = [
   { id: 'refresh', path: 'src/auth/refresh-session.ts', added: 24, removed: 8, hunk: '@@ −22,12 +22,24 @@ refreshSession' },
   { id: 'store', path: 'src/auth/session-store.ts', added: 8, removed: 2, hunk: '@@ −41,3 +41,4 @@ logout' },
   { id: 'client', path: 'src/http/client.ts', added: 16, removed: 5, hunk: '@@ −12,3 +12,4 @@ authenticatedRequest' },
-  { id: 'test', path: 'tests/auth/refresh-session.test.ts', added: 12, removed: 0, hunk: '@@ −12,0 +12,7 @@' },
+  { id: 'test', path: 'tests/auth/refresh-session.test.ts', added: 14, removed: 0, hunk: '@@ −12,0 +12,7 @@' },
   { id: 'docs', path: 'docs/sessions.md', added: 4, removed: 1, hunk: '@@ −1,2 +1,4 @@' },
 ] as const
 
@@ -100,6 +102,13 @@ export const sampleDiffs: Record<string, DiffLine[]> = {
     { base: null, head: 16, kind: 'added', text: '  await pending;' },
     { base: null, head: 17, kind: 'added', text: '  expect(store.get()).toBe(null);' },
     { base: null, head: 18, kind: 'added', text: '});' },
+    { hunkHeader: '… omitted sample source … @@ −23,0 +30,7 @@', base: null, head: 30, kind: 'added', text: 'it("allows another refresh after failure", async () => {' },
+    { base: null, head: 31, kind: 'added', text: '  rejectSession(new Error("offline"));' },
+    { base: null, head: 32, kind: 'added', text: '  await expect(refreshSession()).rejects.toThrow("offline");' },
+    { base: null, head: 33, kind: 'added', text: '  resolveSession(newSession);' },
+    { base: null, head: 34, kind: 'added', text: '  const next = await refreshSession();' },
+    { base: null, head: 35, kind: 'added', text: '  expect(next).toBe(newSession);' },
+    { base: null, head: 36, kind: 'added', text: '});' },
   ],
   docs: [
     { base: 1, head: 1, kind: 'context', text: '# Session refresh' },
@@ -163,6 +172,15 @@ export function makeSampleThread(id: number, anchor: SampleAnchor, question: str
 export function sampleSourceLabel(anchor: SampleAnchor): string {
   const path = sampleFiles.find((file): boolean => file.id === anchor.fileId)?.path ?? anchor.fileId
   return `${path} · ${anchor.range ? `${anchor.range.side} L${anchor.range.start}–${anchor.range.end}` : 'Whole file'} · ${anchor.revision}`
+}
+
+/**
+ * Lists every pinned range of a single- or multi-range sample thread.
+ * @param thread Local question whose context is displayed.
+ * @returns Its primary anchor followed by explicit additional anchors.
+ */
+export function threadAnchors(thread: SampleThread): SampleAnchor[] {
+  return [thread.anchor, ...(thread.relatedAnchors ?? [])]
 }
 
 export const sampleExplanation = [

@@ -93,6 +93,8 @@ test('tabs support roving focus and retain editable drafts and scroll position',
   await page.getByRole('searchbox', { name: 'Search sample questions, answers, or files' }).fill('Retained search text')
   await questions.focus()
   await questions.press('End')
+  await expect(page.getByRole('tab', { name: 'Semantic review', exact: true })).toBeFocused()
+  await page.getByRole('tab', { name: 'Semantic review', exact: true }).press('ArrowLeft')
   await expect(page.getByRole('tab', { name: 'Quiz', exact: true })).toBeFocused()
   await page.getByRole('radio').nth(1).check()
   await page.getByRole('tab', { name: 'Quiz', exact: true }).focus()

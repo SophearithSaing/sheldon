@@ -4,7 +4,7 @@ import ScrollRegion from '../components/ui/ScrollRegion.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiField from '../components/ui/UiField.vue'
 import ThreadStatus from './ThreadStatus.vue'
-import { sampleSourceLabel, type SampleThread } from './workspace'
+import { sampleSourceLabel, threadAnchors, type SampleThread } from './workspace'
 
 const props = defineProps<{ threads: SampleThread[]; current: number | null }>()
 const emit = defineEmits<{ open: [id: number, trigger: HTMLElement]; files: [] }>()
@@ -41,7 +41,7 @@ function inBucket(thread: SampleThread, bucket: string): boolean {
 function matchingThreads(): SampleThread[] {
   const query = search.value.trim().toLowerCase()
   const result = props.threads.filter((thread): boolean => {
-    const text = [thread.question, sampleSourceLabel(thread.anchor), ...thread.messages.flatMap((message): string[] => message.paragraphs)].join(' ').toLowerCase()
+    const text = [thread.question, ...threadAnchors(thread).map(sampleSourceLabel), ...thread.messages.flatMap((message): string[] => message.paragraphs)].join(' ').toLowerCase()
     return inBucket(thread, filter.value) && text.includes(query)
   })
   return sort.value === 'oldest' ? result.reverse() : result
@@ -77,7 +77,7 @@ function open(id: number, event: MouseEvent): void {
       <h3>{{ bucket === 'open' ? 'Open questions' : 'Understood' }} <span>{{ matches.filter((thread) => inBucket(thread, bucket)).length }}</span></h3>
       <button v-for="thread in matches.filter((item) => inBucket(item, bucket))" :key="thread.id" type="button" class="question-card" :aria-label="`Open question ${String(thread.id).padStart(2, '0')}: ${thread.question}`" :aria-current="current === thread.id ? 'true' : undefined" @click="open(thread.id, $event)">
         <span class="question-number">{{ String(thread.id).padStart(2, '0') }}</span>
-        <span class="question-copy"><strong>{{ thread.question }}</strong><span>{{ sampleSourceLabel(thread.anchor) }} · {{ thread.messages.length }} sample {{ thread.messages.length === 1 ? 'message' : 'messages' }}<span v-if="thread.outdated"> · Outdated context</span></span><span>{{ thread.status === 'understood' ? 'Marked understood by the sample reader' : thread.messages.at(-1)?.paragraphs[0] }}</span></span>
+        <span class="question-copy"><strong>{{ thread.question }}</strong><span>{{ sampleSourceLabel(thread.anchor) }}<span v-if="thread.relatedAnchors?.length"> · {{ threadAnchors(thread).length }} pinned ranges</span> · {{ thread.messages.length }} sample {{ thread.messages.length === 1 ? 'message' : 'messages' }}<span v-if="thread.outdated"> · Outdated context</span></span><span>{{ thread.status === 'understood' ? 'Marked understood by the sample reader' : thread.messages.at(-1)?.paragraphs[0] }}</span></span>
         <ThreadStatus :status="thread.status" />
       </button>
     </section>

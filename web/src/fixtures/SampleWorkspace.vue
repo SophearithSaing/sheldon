@@ -8,11 +8,13 @@ import FilesChangedPreview from './FilesChangedPreview.vue'
 import QuestionsPreview from './QuestionsPreview.vue'
 import ThreadConversation from './ThreadConversation.vue'
 import QuizPreview from './QuizPreview.vue'
+import SemanticReviewPreview from './SemanticReviewPreview.vue'
 import type { QuestionSummary } from './library'
 import {
   sampleFiles,
   workspaceTabs,
   initialSampleThreads,
+  threadAnchors,
   type SampleThread,
   type SampleAnchor,
 } from './workspace'
@@ -28,6 +30,7 @@ const shell = ref<InstanceType<typeof WorkspaceShell>>()
 const filesPreview = ref<InstanceType<typeof FilesChangedPreview>>()
 const viewed = ref<Record<string, boolean>>({ client: true, docs: true })
 const conversationOpen = ref(threads.value.length > 0)
+const semanticConversation = ref(false)
 const visibleConversation = computed({ get: getConversation, set: setConversation })
 const activeThread = computed(() => threads.value.find((thread): boolean => thread.id === activeThreadId.value))
 const conversationTitle = computed((): string => activeThread.value ? `Question ${String(activeThread.value.id).padStart(2, '0')}` : 'Sample conversation')
@@ -43,7 +46,7 @@ watch(summary, reportSummary, { immediate: true })
  * @returns Whether the ordinary thread panel is visible.
  */
 function getConversation(): boolean {
-  return activeTab.value !== 'quiz' && conversationOpen.value
+  return activeTab.value !== 'quiz' && (activeTab.value !== 'semantic' || semanticConversation.value) && conversationOpen.value
 }
 
 /**
@@ -55,13 +58,22 @@ function setConversation(value: boolean): void {
 }
 
 /**
- * Reveals quiz evidence without creating or selecting a conversation thread.
+ * Reveals quiz or semantic evidence without creating or selecting a conversation thread.
  * @param anchor Pinned illustrative source location.
  */
 async function showQuizSource(anchor: SampleAnchor): Promise<void> {
   activeTab.value = 'files'
   await nextTick()
   filesPreview.value?.revealAnchor(anchor)
+}
+
+/**
+ * Returns from semantic navigation to the ordinary file view with its existing draft guards.
+ * @param fileId Sample file selected in the semantic tree.
+ */
+async function selectSemanticFile(fileId: string): Promise<void> {
+  await showFiles()
+  filesPreview.value?.selectFile(fileId)
 }
 
 /**
@@ -87,7 +99,9 @@ function reportSummary(value: QuestionSummary): void {
  */
 function countQuestions(): Record<string, number> {
   const result: Record<string, number> = {}
-  for (const thread of threads.value) result[thread.anchor.fileId] = (result[thread.anchor.fileId] ?? 0) + 1
+  for (const thread of threads.value) {
+    for (const fileId of new Set(threadAnchors(thread).map((anchor): string => anchor.fileId))) result[fileId] = (result[fileId] ?? 0) + 1
+  }
   return result
 }
 
@@ -175,6 +189,7 @@ function createThread(thread: SampleThread): void {
  */
 async function openThread(id: number, trigger: HTMLElement): Promise<void> {
   activeThreadId.value = id
+  if (activeTab.value === 'semantic') semanticConversation.value = true
   await shell.value?.openConversation(trigger)
 }
 
@@ -188,7 +203,7 @@ function selectFile(id: string): void {
 </script>
 
 <template>
-  <div class="sample-workspace" :class="{ 'is-quiz': activeTab === 'quiz' }">
+  <div class="sample-workspace" :class="{ 'is-full-page': activeTab === 'quiz' || (activeTab === 'semantic' && !visibleConversation) }">
     <WorkspaceShell
       ref="shell"
       v-model:conversation-open="visibleConversation"
@@ -269,6 +284,9 @@ function selectFile(id: string): void {
         >
           <QuizPreview @source="showQuizSource" />
         </div>
+        <div v-show="activeTab === 'semantic'" :id="`${tabsId}-panel-semantic`" role="tabpanel" :aria-labelledby="`${tabsId}-tab-semantic`" class="fixture-panel semantic-panel">
+          <SemanticReviewPreview :threads="threads" :counts="fileCounts" :viewed="viewed" :file="activeFile" :busy="busyThread !== null" @file="selectSemanticFile" @source="showQuizSource" @files="showFiles" @create="createThread" @open="openThread" />
+        </div>
       </template>
       <template #conversation>
         <KeepAlive><ThreadConversation v-if="activeThread" :key="activeThread.id" v-model:followup="activeThread.followup" :thread="activeThread" :busy-thread="busyThread" @source="showSource" @understood="setUnderstood" @preview="previewState" /></KeepAlive>
@@ -319,6 +337,7 @@ function selectFile(id: string): void {
   min-width: 0;
 }
 @container workspace (max-width: 56.25rem) {
-  .is-quiz :deep(.workspace-content) { flex: 1; min-height: 0; }
+  .is-full-page :deep(.workspace-content) { flex: 1; min-height: 0; }
 }
+.semantic-panel { container: semantic-panel / inline-size; }
 </style>
