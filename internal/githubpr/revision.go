@@ -29,7 +29,7 @@ func (r Revision) Validate(prID string) error {
 	if !ValidID(prID) || r.PRID != prID {
 		return errors.New("invalid revision pull request identity")
 	}
-	if !validBranch(r.BaseBranch) || r.BaseSource != GitHubBase && r.BaseSource != UserSelectedBase {
+	if !ValidBranch(r.BaseBranch) || r.BaseSource != GitHubBase && r.BaseSource != UserSelectedBase {
 		return errors.New("invalid revision base selection")
 	}
 	size := len(r.BaseSHA)
@@ -47,8 +47,13 @@ func (r Revision) ID() (string, error) {
 	return digest(strings.Join([]string{r.PRID, r.BaseSHA, r.HeadSHA, r.MergeBaseSHA}, "\n")), nil
 }
 
-// validBranch checks a short upstream branch name without invoking Git.
-func validBranch(branch string) bool {
+// ValidCommit checks a full nonzero Git object ID, not object existence or type.
+func ValidCommit(sha string) bool {
+	return (len(sha) == 40 || len(sha) == 64) && validHex(sha, len(sha))
+}
+
+// ValidBranch checks a short upstream branch name without invoking Git.
+func ValidBranch(branch string) bool {
 	if branch == "" || len(branch) > 1024 || !utf8.ValidString(branch) || branch == "@" || strings.HasPrefix(branch, "-") || strings.Contains(branch, "..") || strings.Contains(branch, "@{") || strings.HasSuffix(branch, ".") {
 		return false
 	}

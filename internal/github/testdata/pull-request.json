@@ -1,0 +1,16 @@
+{
+  "number": 31,
+  "html_url": "https://github.com/Owner/Repo/pull/31",
+  "title": "Explain changed refresh behavior",
+  "user": {"login": "example-author"},
+  "base": {
+    "ref": "feat/go-rewrite",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "repo": {"full_name": "Owner/Repo"}
+  },
+  "head": {
+    "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "repo": {"full_name": "contributor/fork", "clone_url": "file:///never-use-this-remote"}
+  },
+  "future_field": {"ignored": true}
+}
