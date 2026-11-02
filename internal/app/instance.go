@@ -6,10 +6,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // instance holds one stable OS-locked discovery file per data root.
 type instance struct {
+	mu    sync.Mutex
 	file  *os.File
 	owned bool
 }
@@ -37,6 +39,8 @@ func openInstance(dataDir string) (*instance, error) {
 
 // acquire tries the OS lock; it never decides ownership from a PID or timestamp.
 func (i *instance) acquire() (bool, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	if i.owned {
 		return true, nil
 	}
@@ -47,6 +51,8 @@ func (i *instance) acquire() (bool, error) {
 
 // publish replaces stale discovery bytes only while holding the writer lock.
 func (i *instance) publish(r record) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	if !i.owned {
 		return errors.New("writer lock required")
 	}
@@ -65,6 +71,8 @@ func (i *instance) publish(r record) error {
 
 // read reads bounded discovery bytes without touching Windows' locked byte zero.
 func (i *instance) read() (record, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	var r record
 	data, err := io.ReadAll(io.NewSectionReader(i.file, 1, 2049))
 	if err != nil || len(data) > 2048 || json.Unmarshal(data, &r) != nil {
@@ -75,9 +83,12 @@ func (i *instance) read() (record, error) {
 
 // close releases the OS lock and clears an owned record.
 func (i *instance) close() error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	var err error
 	if i.owned {
 		err = i.file.Truncate(0)
 	}
+	i.owned = false
 	return errors.Join(err, i.file.Close())
 }

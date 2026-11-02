@@ -33,22 +33,38 @@ func privateOwner(info os.FileInfo) bool {
 
 // privateFile opens a private regular file, refusing links and FIFOs.
 func privateFile(path string) (*os.File, error) {
-	fd, err := unix.Open(path, unix.O_RDWR|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0600)
+	return openPrivateFile(path, true)
+}
+
+// openPrivateFile opens checked storage, optionally creating it for the instance lock.
+func openPrivateFile(path string, create bool) (*os.File, error) {
+	flags := unix.O_RDONLY
+	if create {
+		flags = unix.O_RDWR | unix.O_CREAT
+	}
+	fd, err := unix.Open(path, flags|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0600)
 	if err != nil {
 		return nil, err
 	}
 	f := os.NewFile(uintptr(fd), path)
-	info, err := f.Stat()
-	if err != nil {
+	if err := checkPrivateFile(f); err != nil {
 		f.Close()
 		return nil, err
 	}
+	return f, nil
+}
+
+// checkPrivateFile rejects nonprivate, linked or nonregular storage files.
+func checkPrivateFile(f *os.File) error {
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !info.Mode().IsRegular() || !privateOwner(info) || info.Mode().Perm() != 0600 || !ok || stat.Nlink != 1 {
-		f.Close()
-		return nil, errors.New("instance record must be a private (0600), current-user-owned regular file")
+		return errors.New("storage file must be a private (0600), current-user-owned regular file without links")
 	}
-	return f, nil
+	return nil
 }
 
 // lockFile acquires a nonblocking advisory lock.

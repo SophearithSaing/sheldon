@@ -84,6 +84,11 @@ func privateDirectory(path string) error {
 
 // privateFile opens a regular file with a private ACL.
 func privateFile(path string) (*os.File, error) {
+	return openPrivateFile(path, true)
+}
+
+// openPrivateFile opens checked storage, optionally creating it for the instance lock.
+func openPrivateFile(path string, create bool) (*os.File, error) {
 	sa, err := privateSecurity()
 	if err != nil {
 		return nil, err
@@ -92,26 +97,36 @@ func privateFile(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	h, err := windows.CreateFile(p, windows.GENERIC_READ|windows.GENERIC_WRITE|windows.READ_CONTROL, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, sa, windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	access, disposition := uint32(windows.GENERIC_READ|windows.READ_CONTROL), uint32(windows.OPEN_EXISTING)
+	if create {
+		access |= windows.GENERIC_WRITE
+		disposition = windows.OPEN_ALWAYS
+	}
+	h, err := windows.CreateFile(p, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, sa, disposition, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
 		return nil, err
 	}
 	f := os.NewFile(uintptr(h), path)
-	var info windows.ByHandleFileInformation
-	err = windows.GetFileInformationByHandle(h, &info)
-	if err != nil || info.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 || info.NumberOfLinks != 1 {
+	if err := checkPrivateFile(f); err != nil {
 		f.Close()
-		return nil, errors.New("instance record must be a regular file, not a link or reparse point")
+		return nil, err
+	}
+	return f, nil
+}
+
+// checkPrivateFile rejects nonprivate, linked or nonregular storage files.
+func checkPrivateFile(f *os.File) error {
+	h := windows.Handle(f.Fd())
+	var info windows.ByHandleFileInformation
+	err := windows.GetFileInformationByHandle(h, &info)
+	if err != nil || info.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 || info.NumberOfLinks != 1 {
+		return errors.New("storage file must be a regular file, not a link or reparse point")
 	}
 	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err == nil {
 		err = checkPrivateSecurity(sd)
 	}
-	if err != nil {
-		f.Close()
-		return nil, err
-	}
-	return f, nil
+	return err
 }
 
 // lockFile locks byte zero without blocking.

@@ -2,7 +2,7 @@
 
 **Don't just merge it. Understand it.**
 
-A local pull-request explainer. **Runtime + Slate UI previews only**—PR fetching, agent integration and durable saving are not implemented yet.
+A local pull-request explainer. **Runtime + Slate UI previews only**—PR fetching, agent integration and durable review saving are not implemented yet.
 
 ## Toolchains
 
@@ -71,8 +71,8 @@ cmd/sheldon/          Go CLI + tests
 internal/platform/   OS storage paths
 internal/process/    Owned command execution + cancellation
 internal/httpapi/    Protected loopback REST/SSE foundation
-internal/app/        Launch, browser handoff + single-writer lifecycle
-internal/githubpr/   GitHub PR URL validation (no fetching)
+internal/app/        Launch, browser handoff, writer lifecycle + internal PR index
+internal/githubpr/   Canonical PR/revision contracts (no fetching)
 internal/ui/         Embedded release shell / asset-free development fallback
 scripts/build.js     Frontend → embed copy → Go build
 web/                 Vue + Slate shell/fixtures + browser tests
