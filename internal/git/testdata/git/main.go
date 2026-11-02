@@ -62,6 +62,17 @@ func main() {
 			safe = safe && found && strings.HasPrefix(destination, "refs/sheldon/")
 		}
 	}
+	if operation == "diff" {
+		for _, flag := range []string{"--raw", "-z", "--patch", "--no-abbrev", "--full-index", "--no-ext-diff", "--no-textconv", "--no-relative", "--ignore-submodules=none", "--submodule=short"} {
+			found := false
+			for _, arg := range args[index+1:] {
+				if arg == flag {
+					found = true
+				}
+			}
+			safe = safe && found
+		}
+	}
 	wd, _ := os.Getwd()
 	audit, _ := json.Marshal(struct {
 		Operation, Directory          string
@@ -78,6 +89,23 @@ func main() {
 		os.Exit(92)
 	}
 	mode := os.Getenv("SHELDON_GIT_MODE")
+	if operation == "diff" {
+		switch mode {
+		case "diff-fail":
+			fmt.Fprint(os.Stderr, "synthetic-secret private diagnostics")
+			os.Exit(7)
+		case "diff-overflow":
+			fmt.Print(strings.Repeat("x", (4<<20)+1))
+			return
+		case "diff-truncated":
+			fmt.Print(":100644")
+			return
+		case "diff-hang":
+			for {
+				time.Sleep(time.Second)
+			}
+		}
+	}
 	if operation == "cat-file" && len(args) > index+1 && args[index+1] == "blob" && mode == "materialize-hang" {
 		for {
 			time.Sleep(time.Second)

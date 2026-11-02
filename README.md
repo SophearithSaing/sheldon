@@ -76,7 +76,7 @@ internal/httpapi/    Protected loopback API + registered PR lookup
 internal/app/        Launch, browser handoff, writer lifecycle + durable PR index
 internal/githubpr/   Canonical PR/revision contracts (no fetching)
 internal/github/     Optional gh base-resolution backend (not yet connected)
-internal/git/        Managed fetch, merge-base and pinned-worktree backend (UI pending)
+internal/git/        Managed fetch, pinned worktrees and unified diffs (UI pending)
 internal/ui/         Embedded release shell / asset-free development fallback
 scripts/build.js     Frontend → embed copy → Go build
 web/                 Vue + Slate shell/fixtures + browser tests
