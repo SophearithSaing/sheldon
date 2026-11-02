@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SophearithSaing/sheldon/internal/githubpr"
 	"github.com/SophearithSaing/sheldon/internal/httpapi"
 	"github.com/SophearithSaing/sheldon/internal/platform"
 )
@@ -130,7 +131,7 @@ func startApp(t *testing.T, env appEnvironment, prURL string) *runningApp {
 	return a
 }
 
-func readOpenState(t *testing.T, target string) (string, string) {
+func readLaunchedPR(t *testing.T, target string) (string, string) {
 	t.Helper()
 	u, err := url.Parse(target)
 	if err != nil {
@@ -142,7 +143,11 @@ func readOpenState(t *testing.T, target string) (string, string) {
 	}
 	token := fragment.Get("token")
 	u.Fragment = ""
-	u.Path = "/api/open"
+	id, review := githubpr.ReviewID(u.Path)
+	if !review {
+		return "", token
+	}
+	u.Path = "/api/reviews/" + id
 	r, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -160,7 +165,7 @@ func readOpenState(t *testing.T, target string) (string, string) {
 		URL string `json:"url"`
 	}
 	if response.StatusCode != http.StatusOK || json.NewDecoder(response.Body).Decode(&body) != nil {
-		t.Fatal("cannot read pending open intent")
+		t.Fatal("cannot read registered PR")
 	}
 	return body.URL, token
 }
@@ -168,7 +173,7 @@ func readOpenState(t *testing.T, target string) (string, string) {
 func TestFirstLaunchAndSecondInstanceForwarding(t *testing.T) {
 	env := newAppEnvironment(t)
 	a := startApp(t, env, "https://github.com/owner/repo/pull/1")
-	state, token := readOpenState(t, a.target)
+	state, token := readLaunchedPR(t, a.target)
 	if state != "https://github.com/owner/repo/pull/1" {
 		t.Fatal("initial PR request was lost")
 	}
@@ -178,19 +183,29 @@ func TestFirstLaunchAndSecondInstanceForwarding(t *testing.T) {
 	if err := Run(ctx, "https://github.com/owner/repo/pull/2#discussion", &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	if targets := env.launches(t); len(targets) != 2 || targets[1] != a.target {
+	targets := env.launches(t)
+	if len(targets) != 2 || targets[1] == a.target {
+		t.Fatal("second PR did not get its own route")
+	}
+	first, _ := url.Parse(a.target)
+	second, _ := url.Parse(targets[1])
+	if first.Host != second.Host || first.Fragment != second.Fragment {
 		t.Fatal("second process started another server or changed its credential")
 	}
-	state, _ = readOpenState(t, a.target)
+	state, _ = readLaunchedPR(t, targets[1])
 	if state != "https://github.com/owner/repo/pull/2" {
 		t.Fatal("second-instance request not delivered")
 	}
 	if err := Run(ctx, "", &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	state, _ = readOpenState(t, a.target)
-	if state != "https://github.com/owner/repo/pull/2" {
-		t.Fatal("plain launch cleared pending PR")
+	state, _ = readLaunchedPR(t, a.target)
+	if state != "https://github.com/owner/repo/pull/1" {
+		t.Fatal("opening another PR replaced the first route")
+	}
+	plain, _ := url.Parse(env.launches(t)[2])
+	if plain.Path != "/" || plain.Host != first.Host {
+		t.Fatal("plain launch did not open the same instance root")
 	}
 	if strings.Contains(stdout.String()+stderr.String(), token) {
 		t.Fatal("CLI output exposed token")
@@ -200,7 +215,7 @@ func TestFirstLaunchAndSecondInstanceForwarding(t *testing.T) {
 	if err := Run(ctx, "", io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if targets := env.launches(t); len(targets) != 4 || targets[3] != a.target {
+	if targets := env.launches(t); len(targets) != 4 || targets[3] != env.launches(t)[2] {
 		t.Fatal("data-root locking was bypassed")
 	}
 }
@@ -230,7 +245,7 @@ func TestDevelopmentLaunchAndForwardingUseTheOwnersVerifiedUI(t *testing.T) {
 	t.Setenv("SHELDON_DEV_LISTEN", target.Host)
 	reserved.Close()
 	a := startApp(t, env, "https://github.com/owner/repo/pull/1")
-	if !strings.HasPrefix(a.target, frontend.URL+"/#token=") {
+	if !strings.HasPrefix(a.target, frontend.URL+"/reviews/") {
 		t.Fatal("development launch did not use the verified proxy")
 	}
 	// A plain later invocation uses the owner's recorded UI, not its own environment.
@@ -240,10 +255,10 @@ func TestDevelopmentLaunchAndForwardingUseTheOwnersVerifiedUI(t *testing.T) {
 	if err := Run(ctx, "https://github.com/owner/repo/pull/2", io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if launches := env.launches(t); len(launches) != 2 || launches[1] != a.target {
+	if launches := env.launches(t); len(launches) != 2 || !strings.HasPrefix(launches[1], frontend.URL+"/reviews/") || launches[1] == a.target {
 		t.Fatal("forwarder lost the owner's development UI")
 	}
-	state, _ := readOpenState(t, a.target)
+	state, _ := readLaunchedPR(t, env.launches(t)[1])
 	if state != "https://github.com/owner/repo/pull/2" {
 		t.Fatal("development open request was not forwarded")
 	}
@@ -251,9 +266,9 @@ func TestDevelopmentLaunchAndForwardingUseTheOwnersVerifiedUI(t *testing.T) {
 	if Run(ctx, "https://github.com/owner/repo/pull/3", io.Discard, io.Discard) == nil {
 		t.Fatal("different development configuration silently reused the owner")
 	}
-	state, _ = readOpenState(t, a.target)
-	if state != "https://github.com/owner/repo/pull/2" {
-		t.Fatal("mismatched development launch changed the pending PR")
+	state, _ = readLaunchedPR(t, a.target)
+	if state != "https://github.com/owner/repo/pull/1" {
+		t.Fatal("mismatched development launch changed the first PR")
 	}
 }
 
@@ -374,7 +389,7 @@ func TestStaleUnlockedRecordIsReplaced(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := startApp(t, env, "")
-	_, token := readOpenState(t, a.target)
+	_, token := readLaunchedPR(t, a.target)
 	if token == "stale" {
 		t.Fatal("stale credential reused")
 	}
@@ -490,7 +505,7 @@ func TestContenderWaitsForPublication(t *testing.T) {
 	if owned, err := i.acquire(); err != nil || !owned {
 		t.Fatal("could not own fixture lock")
 	}
-	s, err := httpapi.Listen("", "")
+	s, err := httpapi.Listen("", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +551,7 @@ func TestBrowserFailureKeepsRuntimeAndRedactsURL(t *testing.T) {
 	env := newAppEnvironment(t)
 	t.Setenv("SHELDON_TEST_BROWSER_FAIL", "1")
 	a := startApp(t, env, "")
-	_, token := readOpenState(t, a.target)
+	_, token := readLaunchedPR(t, a.target)
 	a.cancel()
 	err := <-a.done
 	a.done <- err
@@ -565,6 +580,91 @@ func TestCanceledLaunchDoesNotCreateStorage(t *testing.T) {
 	}
 	if len(env.launches(t)) != 0 {
 		t.Fatal("browser invoked")
+	}
+}
+
+func TestRegisteredRouteReopensAcrossRestart(t *testing.T) {
+	env := newAppEnvironment(t)
+	a := startApp(t, env, "https://github.com/Owner/Repo/pull/31")
+	first, _ := url.Parse(a.target)
+	a.cancel()
+	err := <-a.done
+	a.done <- err
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := startApp(t, env, "https://github.com/OWNER/REPO/pull/31/?tab=files#discussion")
+	second, _ := url.Parse(b.target)
+	if first.Path != second.Path || first.Fragment == second.Fragment {
+		t.Fatal("restart lost PR identity or reused credential")
+	}
+	if got, _ := readLaunchedPR(t, b.target); got != "https://github.com/owner/repo/pull/31" {
+		t.Fatal("reopened wrong registered PR")
+	}
+	data, err := os.ReadFile(filepath.Join(env.paths.Data, "prs.json"))
+	var index prIndex
+	if err != nil || json.Unmarshal(data, &index) != nil || len(index.PRs) != 1 {
+		t.Fatal("restart/alias created duplicate registration")
+	}
+}
+
+func TestFailedRegistrationDoesNotLaunchOrPublish(t *testing.T) {
+	env := newAppEnvironment(t)
+	i, err := openInstance(env.paths.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i.close()
+	path := filepath.Join(env.paths.Data, "prs.json")
+	before := []byte("{private corrupt fixture")
+	if err := os.WriteFile(path, before, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), "https://github.com/owner/repo/pull/1", io.Discard, io.Discard); err == nil {
+		t.Fatal("failed registration started runtime")
+	}
+	if len(env.launches(t)) != 0 {
+		t.Fatal("failed registration launched browser")
+	}
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(before, after) {
+		t.Fatal("failed registration changed evidence")
+	}
+	i, err = openInstance(env.paths.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer i.close()
+	if owned, err := i.acquire(); err != nil || !owned {
+		t.Fatal("failed startup retained writer lock")
+	}
+	if _, err := i.read(); err == nil {
+		t.Fatal("failed registration published discovery")
+	}
+}
+
+func TestForwardedRegistrationFailureRetainsExistingRoute(t *testing.T) {
+	env := newAppEnvironment(t)
+	a := startApp(t, env, "https://github.com/owner/repo/pull/1")
+	path := filepath.Join(env.paths.Data, "prs.json")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("corrupt fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), "https://github.com/owner/repo/pull/2", io.Discard, io.Discard); err == nil {
+		t.Fatal("failed forwarding reported success")
+	}
+	if len(env.launches(t)) != 1 {
+		t.Fatal("failed forwarding opened another tab")
+	}
+	if err := os.WriteFile(path, before, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := readLaunchedPR(t, a.target); got != "https://github.com/owner/repo/pull/1" {
+		t.Fatal("forwarding failure changed original route")
 	}
 }
 

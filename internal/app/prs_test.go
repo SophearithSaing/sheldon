@@ -33,14 +33,14 @@ func TestPRIndexRegisterReopenAndCacheRemoval(t *testing.T) {
 	paths := testPaths(t)
 	i := ownedPRInstance(t, paths.Data)
 	id, _ := githubpr.ParseURL("https://github.com/owner/repo/pull/1")
-	if _, err := i.readPR(id.ID); !errors.Is(err, os.ErrNotExist) {
+	if _, err := i.ReadPR(id.ID); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing PR lookup: %v", err)
 	}
 	path := filepath.Join(paths.Data, "prs.json")
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("lookup created the index")
 	}
-	pr, err := i.registerPR("https://github.com/Owner/Repo/pull/1?tab=files#discussion")
+	pr, err := i.RegisterPR("https://github.com/Owner/Repo/pull/1?tab=files#discussion")
 	if err != nil || !reflect.DeepEqual(pr, id) {
 		t.Fatalf("register: %+v, %v", pr, err)
 	}
@@ -49,7 +49,7 @@ func TestPRIndexRegisterReopenAndCacheRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, raw := range []string{pr.URL, "https://GITHUB.COM/OWNER/REPO/pull/1/"} {
-		got, err := i.registerPR(raw)
+		got, err := i.RegisterPR(raw)
 		if err != nil || !reflect.DeepEqual(got, pr) {
 			t.Fatalf("alias reopen: %+v, %v", got, err)
 		}
@@ -71,11 +71,11 @@ func TestPRIndexRegisterReopenAndCacheRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	reopened := ownedPRInstance(t, paths.Data)
-	got, err := reopened.readPR(pr.ID)
+	got, err := reopened.ReadPR(pr.ID)
 	if err != nil || !reflect.DeepEqual(got, pr) {
 		t.Fatalf("restart/cache removal lost PR: %+v, %v", got, err)
 	}
-	if _, err := reopened.readPR(strings.Repeat("f", 64)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := reopened.ReadPR(strings.Repeat("f", 64)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("unregistered ID accepted: %v", err)
 	}
 }
@@ -86,7 +86,7 @@ func TestConcurrentPRRegistration(t *testing.T) {
 	for n := 1; n <= 24; n++ {
 		for _, spelling := range []string{"owner/repo", "OWNER/REPO"} {
 			wg.Go(func() {
-				_, err := i.registerPR(fmt.Sprintf("https://github.com/%s/pull/%d", spelling, n))
+				_, err := i.RegisterPR(fmt.Sprintf("https://github.com/%s/pull/%d", spelling, n))
 				if err != nil {
 					t.Errorf("register: %v", err)
 				}
@@ -102,7 +102,7 @@ func TestConcurrentPRRegistration(t *testing.T) {
 	}
 	for n := 1; n <= 24; n++ {
 		pr, _ := githubpr.ParseURL(fmt.Sprintf("https://github.com/owner/repo/pull/%d", n))
-		if _, err := i.readPR(pr.ID); err != nil {
+		if _, err := i.ReadPR(pr.ID); err != nil {
 			t.Fatalf("lost PR %d: %v", n, err)
 		}
 	}
@@ -111,7 +111,7 @@ func TestConcurrentPRRegistration(t *testing.T) {
 func TestPRIndexRequiresWriterOwnership(t *testing.T) {
 	paths := testPaths(t)
 	owner := ownedPRInstance(t, paths.Data)
-	pr, err := owner.registerPR("https://github.com/owner/repo/pull/1")
+	pr, err := owner.RegisterPR("https://github.com/owner/repo/pull/1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,17 +129,17 @@ func TestPRIndexRequiresWriterOwnership(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if got, err := i.registerPR(pr.URL); err == nil || got != (githubpr.PullRequest{}) {
+		if got, err := i.RegisterPR(pr.URL); err == nil || got != (githubpr.PullRequest{}) {
 			t.Fatal("unowned/closed instance registered PR")
 		}
-		if got, err := i.readPR(pr.ID); err == nil || got != (githubpr.PullRequest{}) {
+		if got, err := i.ReadPR(pr.ID); err == nil || got != (githubpr.PullRequest{}) {
 			t.Fatal("unowned/closed instance read index")
 		}
 	}
 	if owned, err := contender.acquire(); err != nil || !owned {
 		t.Fatalf("could not acquire released owner: %v", err)
 	}
-	if _, err := contender.registerPR("https://github.com/owner/repo/pull/2"); err != nil {
+	if _, err := contender.RegisterPR("https://github.com/owner/repo/pull/2"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -147,12 +147,12 @@ func TestPRIndexRequiresWriterOwnership(t *testing.T) {
 func TestPRIndexRejectsInvalidInputBeforeStorage(t *testing.T) {
 	i := ownedPRInstance(t, testPaths(t).Data)
 	for _, raw := range []string{"", "https://attacker.example/owner/repo/pull/1", "../../escape", "https://github.com/owner/repo/pull/01"} {
-		if pr, err := i.registerPR(raw); err == nil || pr != (githubpr.PullRequest{}) {
+		if pr, err := i.RegisterPR(raw); err == nil || pr != (githubpr.PullRequest{}) {
 			t.Fatal("invalid URL registered")
 		}
 	}
 	for _, id := range []string{"", "../instance.lock", "/tmp/escape", strings.Repeat("A", 64)} {
-		if pr, err := i.readPR(id); err == nil || pr != (githubpr.PullRequest{}) {
+		if pr, err := i.ReadPR(id); err == nil || pr != (githubpr.PullRequest{}) {
 			t.Fatal("invalid lookup ID accepted")
 		}
 	}
@@ -181,10 +181,10 @@ func TestPRIndexPreservesInvalidFiles(t *testing.T) {
 			if err := os.WriteFile(path, data, 0600); err != nil {
 				t.Fatal(err)
 			}
-			if got, err := i.registerPR(pr.URL); err == nil || got != (githubpr.PullRequest{}) || strings.Contains(err.Error(), "synthetic-secret") {
+			if got, err := i.RegisterPR(pr.URL); err == nil || got != (githubpr.PullRequest{}) || strings.Contains(err.Error(), "synthetic-secret") {
 				t.Fatalf("invalid index falsely registered or leaked data: %v", err)
 			}
-			if got, err := i.readPR(pr.ID); err == nil || got != (githubpr.PullRequest{}) {
+			if got, err := i.ReadPR(pr.ID); err == nil || got != (githubpr.PullRequest{}) {
 				t.Fatal("invalid index read as healthy")
 			}
 			after, err := os.ReadFile(path)
@@ -239,7 +239,7 @@ func TestPRIndexReopenPreservesMetadata(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := i.registerPR("https://github.com/OWNER/REPO/pull/1")
+	got, err := i.RegisterPR("https://github.com/OWNER/REPO/pull/1")
 	if err != nil || !reflect.DeepEqual(got, pr) {
 		t.Fatalf("reopen replaced saved metadata: %+v, %v", got, err)
 	}
@@ -251,7 +251,7 @@ func TestPRIndexReopenPreservesMetadata(t *testing.T) {
 
 func TestPRIndexAtomicVisibility(t *testing.T) {
 	i := ownedPRInstance(t, testPaths(t).Data)
-	if _, err := i.registerPR("https://github.com/owner/repo/pull/1"); err != nil {
+	if _, err := i.RegisterPR("https://github.com/owner/repo/pull/1"); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(filepath.Dir(i.file.Name()), "prs.json")
@@ -267,7 +267,7 @@ func TestPRIndexAtomicVisibility(t *testing.T) {
 		}
 	})
 	for n := 2; n <= 30; n++ {
-		if _, err := i.registerPR(fmt.Sprintf("https://github.com/owner/repo/pull/%d", n)); err != nil {
+		if _, err := i.RegisterPR(fmt.Sprintf("https://github.com/owner/repo/pull/%d", n)); err != nil {
 			t.Errorf("register: %v", err)
 		}
 	}

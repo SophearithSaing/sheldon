@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/SophearithSaing/sheldon/internal/githubpr"
 )
 
 func TestAssetsAreExactTypedFiles(t *testing.T) {
@@ -42,6 +44,26 @@ func TestAssetsAreExactTypedFiles(t *testing.T) {
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 404 || strings.Contains(w.Body.String(), "private") {
 			t.Fatalf("unexpected fallback or file exposure for %s: %d", path, w.Code)
+		}
+	}
+}
+
+func TestReviewShellOnlyAcceptsExactRoutes(t *testing.T) {
+	pr, _ := githubpr.ParseURL("https://github.com/owner/repo/pull/1")
+	route, _ := githubpr.ReviewPath(pr.ID)
+	h := assetHandler(fstest.MapFS{"index.html": {Data: []byte("<title>Review shell</title>")}})
+	for _, method := range []string{"GET", "HEAD"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(method, route, nil))
+		if w.Code != 200 || w.Header().Get("Content-Type") != "text/html; charset=utf-8" || w.Header().Get("Content-Security-Policy") != shellPolicy {
+			t.Fatalf("review shell %s: %d", method, w.Code)
+		}
+	}
+	for _, path := range []string{"/reviews", "/reviews/", "/reviews/unknown", route + "/", route + "/extra", "/reviews/" + strings.ToUpper(pr.ID), "/reviews/" + strings.Repeat("0", 64), "/reviews/%30" + pr.ID[1:], "/api/reviews/" + pr.ID, "/prs.json"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 404 {
+			t.Errorf("unexpected shell for %s: %d", path, w.Code)
 		}
 	}
 }

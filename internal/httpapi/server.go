@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/SophearithSaing/sheldon/internal/ui"
@@ -30,12 +29,11 @@ type Server struct {
 	authority string
 	apiToken  string
 	stop      context.CancelFunc
-	mu        sync.Mutex
-	openURL   string
+	prs       PRRegistry
 }
 
 // Listen opens a loopback listener and prepares the protected API.
-func Listen(address, devOrigin string) (*Server, error) {
+func Listen(address, devOrigin string, prs PRRegistry) (*Server, error) {
 	if devOrigin != "" {
 		if err := ValidateOrigin(devOrigin); err != nil {
 			return nil, err
@@ -65,6 +63,7 @@ func Listen(address, devOrigin string) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
+		prs:       prs,
 		listener:  listener,
 		mux:       http.NewServeMux(),
 		authority: listener.Addr().String(),
@@ -81,7 +80,7 @@ func Listen(address, devOrigin string) (*Server, error) {
 	s.mux.HandleFunc("GET /api/health", s.health)
 	s.mux.HandleFunc("GET /instance-proof", s.identify)
 	s.mux.HandleFunc("POST /api/open", s.open)
-	s.mux.HandleFunc("GET /api/open", s.openState)
+	s.mux.HandleFunc("GET /api/reviews/{id}", s.review)
 	s.mux.HandleFunc("/api", http.NotFound)
 	s.mux.HandleFunc("/api/", http.NotFound)
 	s.mux.Handle("/", ui.Handler())

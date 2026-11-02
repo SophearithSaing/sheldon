@@ -64,6 +64,12 @@ func ReviewPath(id string) (string, error) {
 	return "/reviews/" + id, nil
 }
 
+// ReviewID recognizes only an exact credential-free review route shape.
+func ReviewID(path string) (string, bool) {
+	id, found := strings.CutPrefix(path, "/reviews/")
+	return id, found && ValidID(id)
+}
+
 // ValidID checks a lowercase SHA-256 identifier, not its existence or ownership.
 func ValidID(id string) bool {
 	return validHex(id, 64)

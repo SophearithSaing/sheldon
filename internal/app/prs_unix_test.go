@@ -52,10 +52,10 @@ func TestPRIndexRejectsUnsafeFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			pr, _ := githubpr.ParseURL("https://github.com/owner/repo/pull/1")
-			if got, err := i.registerPR(pr.URL); err == nil || got != (githubpr.PullRequest{}) {
+			if got, err := i.RegisterPR(pr.URL); err == nil || got != (githubpr.PullRequest{}) {
 				t.Fatal("unsafe index accepted for registration")
 			}
-			if _, err := i.readPR(pr.ID); err == nil {
+			if _, err := i.ReadPR(pr.ID); err == nil {
 				t.Fatal("unsafe index accepted for lookup")
 			}
 			after, err := os.ReadFile(target)
@@ -72,7 +72,7 @@ func TestPRIndexRejectsUnsafeFiles(t *testing.T) {
 func TestPRIndexWriteFailurePreservesCommittedFile(t *testing.T) {
 	paths := testPaths(t)
 	i := ownedPRInstance(t, paths.Data)
-	if _, err := i.registerPR("https://github.com/owner/repo/pull/1"); err != nil {
+	if _, err := i.RegisterPR("https://github.com/owner/repo/pull/1"); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(paths.Data, "prs.json")
@@ -101,10 +101,10 @@ func TestPRIndexWriteFailurePreservesCommittedFile(t *testing.T) {
 	}
 	reopened := ownedPRInstance(t, paths.Data)
 	missing, _ := githubpr.ParseURL("https://github.com/owner/repo/pull/2")
-	if _, err := reopened.readPR(missing.ID); !os.IsNotExist(err) {
+	if _, err := reopened.ReadPR(missing.ID); !os.IsNotExist(err) {
 		t.Fatalf("failed registration left a phantom PR: %v", err)
 	}
-	if _, err := reopened.registerPR(missing.URL); err != nil {
+	if _, err := reopened.RegisterPR(missing.URL); err != nil {
 		t.Fatalf("could not retry registration: %v", err)
 	}
 	entries, err := filepath.Glob(filepath.Join(paths.Data, ".prs-*.tmp"))
@@ -123,7 +123,7 @@ func TestPRIndexWriteFailureHelper(t *testing.T) {
 	if err := unix.Setrlimit(unix.RLIMIT_FSIZE, &unix.Rlimit{Cur: 1, Max: 1}); err != nil {
 		t.Fatal(err)
 	}
-	pr, err := i.registerPR("https://github.com/owner/repo/pull/2")
+	pr, err := i.RegisterPR("https://github.com/owner/repo/pull/2")
 	if err == nil || pr != (githubpr.PullRequest{}) {
 		t.Fatal("failed temporary write reported registration success")
 	}

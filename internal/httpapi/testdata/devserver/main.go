@@ -7,15 +7,46 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/SophearithSaing/sheldon/internal/githubpr"
 	"github.com/SophearithSaing/sheldon/internal/httpapi"
 )
 
+// registry holds explicit in-memory browser fixtures, not production persistence.
+type registry struct {
+	mu  sync.Mutex
+	prs map[string]githubpr.PullRequest
+}
+
+// RegisterPR registers a synthetic browser-test PR without fetching source.
+func (s *registry) RegisterPR(raw string) (githubpr.PullRequest, error) {
+	pr, err := githubpr.ParseURL(raw)
+	if err != nil {
+		return pr, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prs[pr.ID] = pr
+	return pr, nil
+}
+
+// ReadPR looks up a synthetic browser-test PR.
+func (s *registry) ReadPR(id string) (githubpr.PullRequest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pr, ok := s.prs[id]
+	if !ok {
+		return githubpr.PullRequest{}, os.ErrNotExist
+	}
+	return pr, nil
+}
+
 // main starts the browser-test backend and writes its credentials to private storage.
 func main() {
-	s, err := httpapi.Listen(os.Getenv("SHELDON_DEV_LISTEN"), os.Getenv("SHELDON_DEV_ORIGIN"))
+	s, err := httpapi.Listen(os.Getenv("SHELDON_DEV_LISTEN"), os.Getenv("SHELDON_DEV_ORIGIN"), &registry{prs: make(map[string]githubpr.PullRequest)})
 	if err != nil {
 		os.Exit(1)
 	}

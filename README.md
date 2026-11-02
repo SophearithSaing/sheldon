@@ -2,7 +2,7 @@
 
 **Don't just merge it. Understand it.**
 
-A local pull-request explainer. **Runtime + Slate UI previews only**—PR fetching, agent integration and durable review saving are not implemented yet.
+A local pull-request explainer. **Local PR registration + Slate UI previews**—source fetching, diffs, agent integration and durable review saving are not implemented yet.
 
 ## Toolchains
 
@@ -23,7 +23,7 @@ SHELDON_DEV_ORIGIN=http://127.0.0.1:5173 go run ./cmd/sheldon # terminal 2: Go
 
 UI: <http://127.0.0.1:5173> · backend: `127.0.0.1:7331`. Stop any existing standalone instance first. The CLI opens the authenticated UI; after reloading, rerun the CLI in another terminal to reconnect.
 
-The UI uses fictional sample data. Files changed, Questions, Quiz, Semantic review, All PRs and Configuration keep state only in page memory. Generation/creation controls are explicitly labeled local simulations; real Send, Save, discovery and PR import remain unavailable. Semantic review never starts work on entry.
+The root UI uses fictional sample data. Files changed, Questions, Quiz, Semantic review, All PRs and Configuration keep state only in page memory. Generation/creation controls are explicitly labeled local simulations; real Send, Save, discovery and UI PR import remain unavailable. Semantic review never starts work on entry.
 
 ## Release
 
@@ -37,6 +37,8 @@ npm run build
 ```
 
 Windows output: `bin/sheldon.exe`. Plain `go run`/`go build` omit the embedded UI; use Vite for development.
+
+`sheldon open <url>` registers/reuses the PR in private `prs.json` under the OS data directory and opens `/reviews/<id>` on the existing backend. Each browser tab reads only its routed PR; opening another PR does not replace it. These pages show registration only, not a fetched diff. Plain `sheldon` opens the sample-UI root. Reloading either page requires reconnecting; rerun the original command or enter the token from private `instance.lock`.
 
 ## Check & build
 
@@ -70,8 +72,8 @@ Release browser checks build a disposable application-source copy without `refs/
 cmd/sheldon/          Go CLI + tests
 internal/platform/   OS storage paths
 internal/process/    Owned command execution + cancellation
-internal/httpapi/    Protected loopback REST/SSE foundation
-internal/app/        Launch, browser handoff, writer lifecycle + internal PR index
+internal/httpapi/    Protected loopback API + registered PR lookup
+internal/app/        Launch, browser handoff, writer lifecycle + durable PR index
 internal/githubpr/   Canonical PR/revision contracts (no fetching)
 internal/ui/         Embedded release shell / asset-free development fallback
 scripts/build.js     Frontend → embed copy → Go build

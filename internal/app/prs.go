@@ -20,8 +20,8 @@ type prIndex struct {
 	PRs           []githubpr.PullRequest `json:"prs"`
 }
 
-// registerPR saves or reuses a PR while holding the existing app writer ownership.
-func (i *instance) registerPR(raw string) (githubpr.PullRequest, error) {
+// RegisterPR saves or reuses a PR while holding the existing app writer ownership.
+func (i *instance) RegisterPR(raw string) (githubpr.PullRequest, error) {
 	pr, err := githubpr.ParseURL(raw)
 	if err != nil {
 		return githubpr.PullRequest{}, err
@@ -44,8 +44,8 @@ func (i *instance) registerPR(raw string) (githubpr.PullRequest, error) {
 	return pr, nil
 }
 
-// readPR looks up a validated ID without using caller data as a filesystem path.
-func (i *instance) readPR(id string) (githubpr.PullRequest, error) {
+// ReadPR looks up a validated ID without using caller data as a filesystem path.
+func (i *instance) ReadPR(id string) (githubpr.PullRequest, error) {
 	if !githubpr.ValidID(id) {
 		return githubpr.PullRequest{}, errors.New("invalid pull request ID")
 	}

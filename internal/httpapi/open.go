@@ -6,24 +6,29 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"os"
 
 	"github.com/SophearithSaing/sheldon/internal/githubpr"
 )
 
-// SetOpenURL records the latest validated PR request.
-func (s *Server) SetOpenURL(raw string) error {
-	u, err := githubpr.NormalizeURL(raw)
-	if err != nil {
-		return err
-	}
-	s.mu.Lock()
-	s.openURL = u
-	s.mu.Unlock()
-	return nil
+// PRRegistry provides the app-owned durable PR index.
+type PRRegistry interface {
+	RegisterPR(string) (githubpr.PullRequest, error)
+	ReadPR(string) (githubpr.PullRequest, error)
 }
 
-// open accepts a bounded PR-open intent.
+// OpenResult identifies a registered PR, not fetched source or an active review.
+type OpenResult struct {
+	PRID  string `json:"prID"`
+	Route string `json:"route"`
+}
+
+// open registers a bounded PR-open request without changing existing tabs.
 func (s *Server) open(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawQuery != "" {
+		writeError(w, http.StatusBadRequest, "open query parameters are not supported")
+		return
+	}
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" {
 		writeError(w, http.StatusUnsupportedMediaType, "JSON body required")
@@ -53,17 +58,47 @@ func (s *Server) open(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if s.SetOpenURL(input.URL) != nil {
+	expected, err := githubpr.ParseURL(input.URL)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid GitHub PR URL")
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	if s.prs == nil {
+		writeError(w, http.StatusServiceUnavailable, "PR registry is unavailable")
+		return
+	}
+	pr, err := s.prs.RegisterPR(input.URL)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "PR registration failed; check the private prs.json index and retry")
+		return
+	}
+	route, err := githubpr.ReviewPath(pr.ID)
+	if err != nil || pr.ID != expected.ID || pr.Validate() != nil {
+		writeError(w, http.StatusInternalServerError, "invalid registered PR")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, OpenResult{PRID: pr.ID, Route: route})
 }
 
-// openState reports the latest recorded open request.
-func (s *Server) openState(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	u := s.openURL
-	s.mu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]string{"url": u})
+// review reads one registered PR without fetching source or inspecting credentials.
+func (s *Server) review(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !githubpr.ValidID(id) || r.URL.RawQuery != "" || r.URL.EscapedPath() != r.URL.Path {
+		http.NotFound(w, r)
+		return
+	}
+	if s.prs == nil {
+		writeError(w, http.StatusServiceUnavailable, "PR registry is unavailable")
+		return
+	}
+	pr, err := s.prs.ReadPR(id)
+	if errors.Is(err, os.ErrNotExist) {
+		writeError(w, http.StatusNotFound, "PR is not registered in this Sheldon instance")
+		return
+	}
+	if err != nil || pr.ID != id || pr.Validate() != nil {
+		writeError(w, http.StatusInternalServerError, "cannot read PR; check the private prs.json index and retry")
+		return
+	}
+	writeJSON(w, http.StatusOK, pr)
 }

@@ -11,11 +11,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/SophearithSaing/sheldon/internal/githubpr"
 )
 
 func newTestServer(t *testing.T, address string) (*Server, *http.Client) {
 	t.Helper()
-	s, err := Listen(address, "")
+	s, err := Listen(address, "", &testPRRegistry{prs: make(map[string]githubpr.PullRequest)})
 	if err != nil {
 		var network *net.OpError
 		if strings.HasPrefix(address, "[::1]") && errors.As(err, &network) {
@@ -78,7 +80,7 @@ func request(t *testing.T, s *Server, client *http.Client, method, path, body st
 func TestListenOnlyOnNumericLoopback(t *testing.T) {
 	for _, address := range []string{":0", "0.0.0.0:0", "[::]:0", "192.0.2.1:0", "localhost:0", "example.com:80", "127.0.0.1", "127.0.0.1:65536", "127.0.0.1:+1"} {
 		t.Run(address, func(t *testing.T) {
-			s, err := Listen(address, "")
+			s, err := Listen(address, "", nil)
 			if err == nil {
 				s.Shutdown(context.Background())
 				t.Fatal("accepted unsafe address")
@@ -98,7 +100,7 @@ func TestListenOnlyOnNumericLoopback(t *testing.T) {
 
 func TestProtectedAPIRequiresBearer(t *testing.T) {
 	s, client := newTestServer(t, "")
-	for _, path := range []string{"/api", "/api/health", "/api/open", "/api/not-found"} {
+	for _, path := range []string{"/api", "/api/health", "/api/open", "/api/reviews/" + strings.Repeat("a", 64), "/api/not-found"} {
 		r := request(t, s, client, "GET", path, "", nil)
 		if r.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("unprotected %s: %d", path, r.StatusCode)
@@ -186,7 +188,7 @@ func TestCredentialsArePerServerAndNotFormatted(t *testing.T) {
 }
 
 func TestShutdownWithoutServe(t *testing.T) {
-	s, err := Listen("", "")
+	s, err := Listen("", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +207,7 @@ func TestShutdownWithoutServe(t *testing.T) {
 }
 
 func TestShutdownDeadlineClosesStalledRequest(t *testing.T) {
-	s, err := Listen("", "")
+	s, err := Listen("", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

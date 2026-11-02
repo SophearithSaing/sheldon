@@ -6,6 +6,8 @@ package ui
 import (
 	"io"
 	"net/http"
+
+	"github.com/SophearithSaing/sheldon/internal/githubpr"
 )
 
 // Handler serves development guidance without generated assets.
@@ -21,7 +23,7 @@ func Handler() http.Handler {
 			io.WriteString(w, "history.replaceState(null, '', location.pathname + location.search)")
 			return
 		}
-		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+		if _, review := githubpr.ReviewID(r.URL.Path); r.URL.Path != "/" && r.URL.Path != "/index.html" && !(review && r.URL.EscapedPath() == r.URL.Path) {
 			http.NotFound(w, r)
 			return
 		}

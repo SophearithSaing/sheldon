@@ -155,3 +155,16 @@ func TestParseURLRejectsInvalidInput(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewRouteShape(t *testing.T) {
+	pr, _ := ParseURL("https://github.com/owner/repo/pull/1")
+	path, _ := ReviewPath(pr.ID)
+	if id, ok := ReviewID(path); !ok || id != pr.ID {
+		t.Fatal("valid review route not recognized")
+	}
+	for _, path := range []string{"/", "/reviews/invalid", "/reviews/" + pr.ID + "/", "/reviews/" + pr.ID + "?token=secret", "/reviews/" + pr.ID + "#token=secret", "https://attacker.example/reviews/" + pr.ID, "//reviews/" + pr.ID} {
+		if _, ok := ReviewID(path); ok {
+			t.Errorf("accepted route %q", path)
+		}
+	}
+}

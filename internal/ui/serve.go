@@ -7,6 +7,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/SophearithSaing/sheldon/internal/githubpr"
 )
 
 const shellPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
@@ -20,7 +22,7 @@ func assetHandler(assets fs.FS) http.Handler {
 			return
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/")
-		if name == "" {
+		if _, review := githubpr.ReviewID(r.URL.Path); name == "" || review && r.URL.EscapedPath() == r.URL.Path {
 			name = "index.html"
 		}
 		contentType := ""
