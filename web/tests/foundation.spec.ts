@@ -259,18 +259,22 @@ test('200% text scaling reflows the shell instead of clipping controls', async (
   await page.screenshot({ path: testInfo.outputPath('text-scale-200.png'), fullPage: true })
 })
 
-test('captures deterministic foundation previews without external or API traffic', async ({
+/**
+ * Captures mapped Slate views while checking document, asset and interaction traffic stays local.
+ * @param fixtures Playwright page fixture.
+ * @param testInfo Screenshot output location.
+ */
+test('captures deterministic Slate destinations without external or API traffic', async ({
   page,
-}, testInfo) => {
+}, testInfo): Promise<void> => {
   const unexpected: string[] = []
-  page.on('request', (request) => {
+  page.on('request', (request): void => {
     const url = new URL(request.url())
     if (url.origin !== 'http://127.0.0.1:5174' || url.pathname.startsWith('/api/'))
       unexpected.push(request.url())
   })
-  // Reload so the network check includes the document, styles and bundled font.
   await page.reload()
-  await page.evaluate(() => document.fonts.ready)
+  await page.evaluate((): Promise<FontFaceSet> => document.fonts.ready)
   await page.screenshot({ path: testInfo.outputPath('files-1440.png'), fullPage: true })
   await openSampleThread(page)
   await page.screenshot({ path: testInfo.outputPath('conversation-1440.png'), fullPage: true })
@@ -279,5 +283,14 @@ test('captures deterministic foundation previews without external or API traffic
   await page.screenshot({ path: testInfo.outputPath('questions-1440.png'), fullPage: true })
   await page.getByRole('tab', { name: 'Quiz', exact: true }).click()
   await page.screenshot({ path: testInfo.outputPath('quiz-1440.png'), fullPage: true })
+  await page.getByRole('tab', { name: 'Semantic review', exact: true }).click()
+  await page.screenshot({ path: testInfo.outputPath('semantic-start-1440.png') })
+  await page.getByRole('button', { name: 'Preview semantic generation', exact: true }).click()
+  await page.getByRole('button', { name: 'Finish sample grouping', exact: true }).click()
+  await page.screenshot({ path: testInfo.outputPath('semantic-review-1440.png') })
+  await page.getByRole('link', { name: 'Configuration', exact: true }).click()
+  await page.screenshot({ path: testInfo.outputPath('configuration-1440.png') })
+  await page.getByRole('link', { name: 'All PRs', exact: true }).click()
+  await page.screenshot({ path: testInfo.outputPath('library-1440.png') })
   expect(unexpected).toEqual([])
 })

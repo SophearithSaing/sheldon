@@ -137,8 +137,9 @@ test('closing tabs preserves global destinations and returns to All PRs when non
 /**
  * Checks many local workspaces scroll inside the same global row without eviction.
  * @param fixtures Playwright page fixture.
+ * @param testInfo Screenshot output location.
  */
-test('many sample workspaces overflow horizontally without growing chrome or evicting tabs', async ({ page }): Promise<void> => {
+test('many sample workspaces overflow horizontally without growing chrome or evicting tabs', async ({ page }, testInfo): Promise<void> => {
   for (let index = 0; index < 8; index++) {
     await page.getByRole('link', { name: 'All PRs', exact: true }).click()
     if (index === 0) await page.getByText('Sample library controls', { exact: true }).click()
@@ -151,4 +152,5 @@ test('many sample workspaces overflow horizontally without growing chrome or evi
   await expect(navigation.getByRole('link').last()).toBeInViewport()
   expect((await page.locator('.application-header').boundingBox())!.height).toBeCloseTo(48, 0)
   expect(await page.evaluate((): boolean => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('many-workspaces-1440.png') })
 })

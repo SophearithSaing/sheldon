@@ -94,7 +94,7 @@ function open(id: number, event: MouseEvent): void {
 </template>
 
 <style scoped>
-.questions-preview { flex: 1; min-height: 0; padding: var(--space-3) var(--space-2); }
+.questions-preview { container: questions / inline-size; flex: 1; min-height: 0; padding: var(--space-3) var(--space-2); }
 .questions-heading { display: flex; align-items: start; flex-wrap: wrap; justify-content: space-between; gap: var(--space-3); }
 .questions-heading h2 { font-size: var(--text-heading); font-weight: 500; letter-spacing: -0.4px; }
 .questions-heading p { margin-top: var(--space-1); color: var(--color-muted); font-size: var(--text-small); }
@@ -122,5 +122,5 @@ function open(id: number, event: MouseEvent): void {
 .question-copy > span:last-child { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .questions-note { margin-top: var(--space-5); color: var(--color-muted); font-size: var(--text-small); }
 .question-empty { display: grid; justify-items: start; gap: var(--space-3); padding: var(--space-6); border: 1px solid var(--color-border); border-radius: var(--radius-panel); }
-@media (max-width: 1180px) { .question-card { grid-template-columns: 1.75rem minmax(0, 1fr); } .question-card > .ui-badge { grid-column: 2; justify-self: start; } }
+@container questions (max-width: 45rem) { .question-card { grid-template-columns: 1.75rem minmax(0, 1fr); } .question-card > .ui-badge { grid-column: 2; justify-self: start; } }
 </style>

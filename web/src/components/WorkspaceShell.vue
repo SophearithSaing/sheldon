@@ -215,8 +215,9 @@ async function closeConversation(): Promise<void> {
     overflow: auto;
     padding-inline: var(--space-4);
   }
-  .workspace-files { flex: 0 0 18rem; border-right: 0; padding-right: 0; }
-  .workspace-files:has(.file-disclosure:not([open])) { flex-basis: 3rem; }
+  .workspace-files { flex: 0 0 18rem; height: 18rem; border-right: 0; padding-right: 0; }
+  .workspace-files:has(.file-disclosure:not([open])) { flex-basis: 3rem; height: 3rem; }
+  .files-body { height: calc(18rem - var(--target-control)); }
   .workspace-content { flex: 0 0 38rem; }
   .workspace-conversation { flex: 0 0 38rem; }
   .pane-return { display: inline-flex; margin-top: var(--space-2); }
