@@ -2,7 +2,7 @@
 
 **Don't just merge it. Understand it.**
 
-A local pull-request explainer. **Local PR registration + Slate UI previews**—source fetching, diffs, agent integration and durable review saving are not implemented yet.
+A local pull-request explainer. **Local PR registration + Slate UI previews**—PR pages do not load source or diffs yet; agent integration and durable review saving remain unimplemented.
 
 ## Toolchains
 
@@ -76,7 +76,7 @@ internal/httpapi/    Protected loopback API + registered PR lookup
 internal/app/        Launch, browser handoff, writer lifecycle + durable PR index
 internal/githubpr/   Canonical PR/revision contracts (no fetching)
 internal/github/     Optional gh base-resolution backend (not yet connected)
-internal/git/        Managed bare-cache/fetch backend (not yet connected to UI)
+internal/git/        Managed fetch, merge-base and pinned-worktree backend (UI pending)
 internal/ui/         Embedded release shell / asset-free development fallback
 scripts/build.js     Frontend → embed copy → Go build
 web/                 Vue + Slate shell/fixtures + browser tests

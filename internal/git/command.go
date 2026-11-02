@@ -1,4 +1,4 @@
-// Package git manages disposable PR repositories without checking out or executing source.
+// Package git manages restricted PR caches and pinned source worktrees.
 package git
 
 import (

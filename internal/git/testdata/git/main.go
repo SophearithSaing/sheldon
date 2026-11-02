@@ -78,6 +78,11 @@ func main() {
 		os.Exit(92)
 	}
 	mode := os.Getenv("SHELDON_GIT_MODE")
+	if operation == "cat-file" && len(args) > index+1 && args[index+1] == "blob" && mode == "materialize-hang" {
+		for {
+			time.Sleep(time.Second)
+		}
+	}
 	if operation == "fetch" {
 		switch mode {
 		case "fail":
@@ -111,6 +116,9 @@ func main() {
 			os.Exit(exit.ExitCode())
 		}
 		os.Exit(93)
+	}
+	if operation == "worktree" && mode == "worktree-fail" {
+		os.Exit(7)
 	}
 	if operation == "fetch" && mode == "noncommit" {
 		command := exec.Command(os.Getenv("SHELDON_GIT_REAL"), "-C", wd, "-c", "core.hooksPath="+filepath.Join(config["core.hooksPath"]), "update-ref", "refs/sheldon/pr/1/head", os.Getenv("SHELDON_GIT_TREE"))
