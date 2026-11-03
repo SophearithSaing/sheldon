@@ -91,6 +91,7 @@ func TestSourceErrorsHideRawDetailsAndNoReadyOnFailure(t *testing.T) {
 		{git.ErrRefreshRequired, "refresh-required", 409},
 		{process.ErrOutputLimit, "source-too-large", 422},
 		{git.ErrHistoryUnavailable, "history-unavailable", 422},
+		{git.ErrSnapshotUnavailable, "snapshot-unavailable", 410},
 		{context.DeadlineExceeded, "source-timeout", 504},
 	} {
 		t.Run(tt.code, func(t *testing.T) {
@@ -109,6 +110,48 @@ func TestSourceErrorsHideRawDetailsAndNoReadyOnFailure(t *testing.T) {
 				t.Fatalf("unsafe failure: %d %s", r.StatusCode, data)
 			}
 		})
+	}
+}
+
+func TestRefreshAndSnapshotResponsesAreBoundToRequestedRevision(t *testing.T) {
+	pr, _ := githubpr.ParseURL("https://github.com/owner/repo/pull/1")
+	revision := githubpr.Revision{PRID: pr.ID, BaseBranch: "main", BaseSource: githubpr.GitHubBase, BaseSHA: strings.Repeat("a", 40), HeadSHA: strings.Repeat("b", 40), MergeBaseSHA: strings.Repeat("a", 40)}
+	id, _ := revision.ID()
+	registry := &testSourceRegistry{testPRRegistry: &testPRRegistry{prs: map[string]githubpr.PullRequest{pr.ID: pr}}, load: func(_ context.Context, got githubpr.PullRequest, input SourceRequest) (SourceResult, error) {
+		result := revision
+		if input.Action == "refresh" {
+			result.HeadSHA = strings.Repeat("c", 40)
+		}
+		resultID, _ := result.ID()
+		return SourceResult{State: "ready", PR: got, Diff: &git.Diff{Revision: result, RevisionID: resultID, Complete: true, Files: []git.DiffFile{}}}, nil
+	}}
+	s, err := Listen("", "", registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := startTestServer(t, s)
+	for _, action := range []string{"refresh", "snapshot"} {
+		body, _ := json.Marshal(SourceRequest{Action: action, Revision: &revision})
+		r := request(t, s, client, "POST", "/api/reviews/"+pr.ID+"/source", string(body), map[string]string{"Authorization": "Bearer " + s.APIToken(), "Content-Type": "application/json"})
+		var result SourceResult
+		if json.NewDecoder(r.Body).Decode(&result) != nil || r.StatusCode != 200 || result.RequestedRevisionID != id {
+			t.Fatal("response lost its requested snapshot association")
+		}
+		if action == "snapshot" && result.Diff.RevisionID != id {
+			t.Fatal("snapshot request was rebound")
+		}
+	}
+	wrongSnapshot := revision
+	wrongSnapshot.HeadSHA = strings.Repeat("d", 40)
+	badBody, _ := json.Marshal(SourceRequest{Action: "snapshot", Revision: &wrongSnapshot})
+	if r := request(t, s, client, "POST", "/api/reviews/"+pr.ID+"/source", string(badBody), map[string]string{"Authorization": "Bearer " + s.APIToken(), "Content-Type": "application/json"}); r.StatusCode != 500 {
+		t.Fatal("provider rebound a historical request to another snapshot")
+	}
+	wrong := revision
+	wrong.PRID = strings.Repeat("e", 64)
+	body, _ := json.Marshal(SourceRequest{Action: "refresh", Revision: &wrong})
+	if r := request(t, s, client, "POST", "/api/reviews/"+pr.ID+"/source", string(body), map[string]string{"Authorization": "Bearer " + s.APIToken(), "Content-Type": "application/json"}); r.StatusCode != 400 {
+		t.Fatal("cross-PR refresh context accepted")
 	}
 }
 

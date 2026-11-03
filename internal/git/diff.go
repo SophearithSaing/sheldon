@@ -74,7 +74,7 @@ func (c *Cache) Diff(ctx context.Context, pr githubpr.PullRequest, revision gith
 	}
 	ctx, cancel := operation(ctx)
 	defer cancel()
-	repo, release, err := c.repository(ctx, pr)
+	repo, release, err := c.existingRepository(ctx, pr)
 	if err != nil {
 		return Diff{}, errors.Join(ErrIncompleteDiff, err)
 	}

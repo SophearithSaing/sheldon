@@ -1,4 +1,4 @@
-import { parseSourceResponse, type SourceRequest, type SourceResponse } from './source'
+import { parseSourceResponse, pinnedID, type SourceRequest, type SourceResponse } from './source'
 
 let launchToken = ''
 
@@ -229,6 +229,7 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
         'source-too-large': 'Source exceeds the complete-view limits. No partial diff is shown.',
         'history-unavailable': 'Complete, unambiguous comparison history is unavailable.',
         'source-timeout': 'Source loading timed out or was cancelled. Retry explicitly.',
+        'snapshot-unavailable': 'The exact pinned source is unavailable or changed in the cache. No latest-source substitution was made.',
       }
       throw new Error(typeof failure?.code === 'string' && Object.hasOwn(messages, failure.code) && messages[failure.code] || 'Cannot prepare source. Check Git access and the managed cache, then retry.')
     }
@@ -236,7 +237,12 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
     if (text.length > 32 * 1024 * 1024) throw new Error('Source exceeds the complete-view limits.')
     let value: unknown
     try { value = JSON.parse(text) } catch { throw new Error('Unexpected source response.') }
-    return parseSourceResponse(value, id)
+    const result = await parseSourceResponse(value, id)
+    if (input.revision) {
+      const requested = await pinnedID(input.revision)
+      if (result.requestedRevisionID !== requested || input.action === 'snapshot' && (result.state !== 'ready' || result.diff?.revisionID !== requested)) throw new Error('Source response does not match the requested snapshot.')
+    }
+    return result
   }
   return { openPR, source }
 }

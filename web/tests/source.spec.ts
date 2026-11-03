@@ -41,10 +41,12 @@ async function registered(page: Page, number: number): Promise<RegisteredPR> {
  * Builds explicit source-UI fixture data, not a native Git result.
  * @param pr Registered browser fixture PR.
  * @param count Number of fixture changed files.
+ * @param baseSHA Fixture base tip.
+ * @param headSHA Fixture head commit.
  * @returns Pinned-looking fixture response for renderer testing only.
  */
-function sourceFixture(pr: RegisteredPR, count = 40): SourceResponse {
-  const revision = { prID: pr.id, baseBranch: 'release/target', baseSource: 'github' as const, baseSHA: 'a'.repeat(40), headSHA: 'c'.repeat(40), mergeBaseSHA: 'b'.repeat(40) }
+function sourceFixture(pr: RegisteredPR, count = 40, baseSHA = 'a'.repeat(40), headSHA = 'c'.repeat(40)): SourceResponse {
+  const revision = { prID: pr.id, baseBranch: 'release/target', baseSource: 'github' as const, baseSHA, headSHA, mergeBaseSHA: 'b'.repeat(40) }
   const revisionID = digest([pr.id, revision.baseSHA, revision.headSHA, revision.mergeBaseSHA].join('\n'))
   const files: SourceFile[] = []
   for (let index = 0; index < count; index++) {
@@ -257,4 +259,138 @@ test('opening another PR from pinned source preserves the original tab', async (
   await expect(page.getByRole('heading', { name: 'Offline source fixture #706' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'src/file0000.ts', exact: true })).toBeVisible()
   await other.close()
+})
+
+test('refresh isolates two tabs, preserves file navigation and reopens exact original source', async ({ page, context }, testInfo): Promise<void> => {
+  const pr = await registered(page, 710)
+  const initial = sourceFixture(pr, 2)
+  const baseOnly = sourceFixture(pr, 2, 'd'.repeat(40))
+  const headOnly = sourceFixture(pr, 2, 'd'.repeat(40), 'e'.repeat(40))
+  let refreshed = 0
+  const requests: string[] = []
+  await page.route(`**/api/reviews/${pr.id}/source`, async (route): Promise<void> => {
+    const input = route.request().postDataJSON()
+    requests.push(input.action)
+    if (input.action === 'load') await route.fulfill({ json: initial })
+    else if (input.action === 'snapshot') {
+      expect(input.revision).toEqual(initial.diff!.revision)
+      await route.fulfill({ json: { ...initial, requestedRevisionID: initial.diff!.revisionID } })
+    } else {
+      const expected = refreshed === 0 ? initial : baseOnly
+      expect(input.revision).toEqual(expected.diff!.revision)
+      const next = ++refreshed === 1 ? baseOnly : headOnly
+      await route.fulfill({ json: { ...next, requestedRevisionID: expected.diff!.revisionID } })
+    }
+  })
+  await page.getByRole('button', { name: 'Load pinned source' }).click()
+  await expect(page.getByRole('heading', { name: 'src/file0000.ts', exact: true })).toBeVisible()
+  const other = await context.newPage()
+  await other.route(`**/api/reviews/${pr.id}/source`, (route): Promise<void> => route.fulfill({ json: initial }))
+  await other.goto(`/reviews/${pr.id}#token=${await token()}`)
+  await other.getByRole('button', { name: 'Load pinned source' }).click()
+  await expect(other.getByText(`Pinned revision ${initial.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'src/file0001.ts', exact: true }).click()
+  await page.getByRole('searchbox', { name: 'Find a changed file' }).fill('file0001')
+  await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
+  await expect(page.getByText(`Pinned revision ${baseOnly.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'src/file0001.ts', exact: true })).toBeVisible()
+  await expect(page.getByRole('searchbox', { name: 'Find a changed file' })).toHaveValue('file0001')
+  await expect(other.getByText(`Pinned revision ${initial.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
+  await expect(page.getByText(`Pinned revision ${headOnly.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('refreshed-pinned-source.png') })
+  await page.getByRole('button', { name: 'Open original snapshot', exact: true }).click()
+  await expect(page.getByText(`Pinned revision ${initial.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
+  await expect(page.getByText('Exact pinned source verified in the cache; no latest source was fetched.')).toBeVisible()
+  await expect(other.getByText(`Pinned revision ${initial.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
+  expect(requests).toEqual(['load', 'refresh', 'refresh', 'snapshot'])
+  await other.close()
+})
+
+test('failed and cancelled refreshes retain readable source and ignore stale responses', async ({ page }, testInfo): Promise<void> => {
+  const pr = await registered(page, 711)
+  const initial = sourceFixture(pr, 2)
+  const updated = sourceFixture(pr, 2, 'd'.repeat(40))
+  let calls = 0
+  let release: (() => void) | undefined
+  await page.route(`**/api/reviews/${pr.id}/source`, async (route): Promise<void> => {
+    const input = route.request().postDataJSON()
+    if (input.action === 'load') { await route.fulfill({ json: initial }); return }
+    calls++
+    if (calls === 1) await route.fulfill({ status: 502, json: { code: 'source-unavailable', error: 'native private diagnostic' } })
+    else if (calls === 2) {
+      await new Promise<void>((resolve): void => { release = resolve })
+      await route.fulfill({ json: { ...updated, requestedRevisionID: initial.diff!.revisionID } })
+    } else await route.fulfill({ json: { ...initial, requestedRevisionID: initial.diff!.revisionID } })
+  })
+  await page.getByRole('button', { name: 'Load pinned source' }).click()
+  await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Cannot prepare source')
+  await expect(page.getByText('Stale / refresh needs attention.', { exact: false })).toBeVisible()
+  await expect(page.getByText(`Pinned revision ${initial.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
+  expect(await page.content()).not.toContain('native private diagnostic')
+  await page.screenshot({ path: testInfo.outputPath('refresh-failure-retains-source.png') })
+  await page.getByRole('button', { name: 'Retry source loading', exact: true }).click()
+  await expect(page.getByText('Refreshing source…', { exact: false })).toBeVisible()
+  await page.getByRole('button', { name: 'src/file0001.ts', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'src/file0001.ts', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel source request', exact: true }).click()
+  await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
+  await expect(page.getByText('Source unchanged. The displayed revision is still pinned.')).toBeVisible()
+  release!()
+  await page.unrouteAll({ behavior: 'wait' })
+  await expect(page.getByText(`Pinned revision ${initial.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
+  await expect(page.getByText(`Pinned revision ${updated.diff!.revisionID.slice(0, 8)}`, { exact: true })).toHaveCount(0)
+})
+
+test('historical cache loss and mismatched snapshot replies never substitute latest source', async ({ page }, testInfo): Promise<void> => {
+  const pr = await registered(page, 712)
+  const initial = sourceFixture(pr, 1)
+  const updated = sourceFixture(pr, 1, 'd'.repeat(40))
+  let calls = 0
+  let checks = 0
+  await page.route(`**/api/reviews/${pr.id}/source`, async (route): Promise<void> => {
+    const input = route.request().postDataJSON()
+    calls++
+    if (input.action === 'load') await route.fulfill({ json: initial })
+    else if (input.action === 'snapshot') {
+      if (++checks === 1) await route.fulfill({ status: 410, json: { code: 'snapshot-unavailable' } })
+      else await route.fulfill({ json: { ...updated, requestedRevisionID: initial.diff!.revisionID } })
+    }
+    else await route.fulfill({ json: { ...updated, requestedRevisionID: 'f'.repeat(64) } })
+  })
+  await page.getByRole('button', { name: 'Load pinned source' }).click()
+  await page.getByRole('button', { name: 'Verify pinned cache' }).click()
+  await expect(page.getByRole('alert')).toContainText('exact pinned source is unavailable')
+  await expect(page.getByText(`Pinned revision ${initial.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('missing-pinned-cache.png') })
+  await page.getByRole('button', { name: 'Verify pinned cache' }).click()
+  await expect(page.getByRole('alert')).toHaveText('Source response does not match the requested snapshot.')
+  await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
+  await expect(page.getByRole('alert')).toHaveText('Source response does not match the requested snapshot.')
+  await expect(page.getByText(`Pinned revision ${initial.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
+  expect(calls).toBe(4)
+})
+
+test('metadata failure during refresh keeps the old diff through manual base selection', async ({ page }): Promise<void> => {
+  const pr = await registered(page, 713)
+  const initial = sourceFixture(pr, 1)
+  const updated = sourceFixture(pr, 1, 'd'.repeat(40))
+  updated.diff!.revision.baseSource = 'user-selected'
+  await page.route(`**/api/reviews/${pr.id}/source`, async (route): Promise<void> => {
+    const input = route.request().postDataJSON()
+    if (input.action === 'load') await route.fulfill({ json: initial })
+    else if (input.action === 'refresh') await route.fulfill({ json: { state: 'fallback-required', pr, requestedRevisionID: initial.diff!.revisionID } })
+    else if (input.action === 'git-only') await route.fulfill({ json: { state: 'base-selection-required', pr, candidates: [{ branch: 'release/target', sha: 'd'.repeat(40) }] } })
+    else await route.fulfill({ json: updated })
+  })
+  await page.getByRole('button', { name: 'Load pinned source' }).click()
+  await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'GitHub metadata unavailable' })).toBeVisible()
+  await expect(page.getByText(`Pinned revision ${initial.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Use Git-only fallback' }).click()
+  await expect(page.getByLabel('Fetched base branch')).toHaveValue('')
+  await page.getByLabel('Fetched base branch').selectOption('release/target')
+  await page.getByRole('button', { name: 'Load selected base', exact: true }).click()
+  await expect(page.getByText(`Pinned revision ${updated.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
 })

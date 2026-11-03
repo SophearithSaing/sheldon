@@ -17,9 +17,10 @@ import (
 
 // SourceRequest distinguishes metadata resolution from explicit Git-only consent/selection.
 type SourceRequest struct {
-	Action string `json:"action"`
-	Branch string `json:"branch,omitempty"`
-	SHA    string `json:"sha,omitempty"`
+	Action   string             `json:"action"`
+	Branch   string             `json:"branch,omitempty"`
+	SHA      string             `json:"sha,omitempty"`
+	Revision *githubpr.Revision `json:"revision,omitempty"`
 }
 
 // SourceCandidate is a fetched upstream branch, never an arbitrary remote URL.
@@ -30,10 +31,11 @@ type SourceCandidate struct {
 
 // SourceResult separates unresolved metadata/selection from complete pinned source.
 type SourceResult struct {
-	State      string               `json:"state"`
-	PR         githubpr.PullRequest `json:"pr"`
-	Candidates []SourceCandidate    `json:"candidates,omitempty"`
-	Diff       *git.Diff            `json:"diff,omitempty"`
+	State               string               `json:"state"`
+	PR                  githubpr.PullRequest `json:"pr"`
+	Candidates          []SourceCandidate    `json:"candidates,omitempty"`
+	Diff                *git.Diff            `json:"diff,omitempty"`
+	RequestedRevisionID string               `json:"requestedRevisionID,omitempty"`
 }
 
 // SourceProvider loads one registered PR using the app-owned cache lifetime.
@@ -75,8 +77,7 @@ func (s *Server) source(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	valid := (input.Action == "load" || input.Action == "git-only") && input.Branch == "" && input.SHA == "" || input.Action == "select-base" && githubpr.ValidBranch(input.Branch) && githubpr.ValidCommit(input.SHA)
-	if !valid {
+	if !validSourceRequest(input, id) {
 		writeError(w, http.StatusBadRequest, "invalid source action or base selection")
 		return
 	}
@@ -117,6 +118,13 @@ func (s *Server) source(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "invalid source result")
 		return
 	}
+	if input.Revision != nil {
+		result.RequestedRevisionID, _ = input.Revision.ID()
+		if input.Action == "snapshot" && (result.State != "ready" || result.Diff.RevisionID != result.RequestedRevisionID) {
+			writeError(w, http.StatusInternalServerError, "pinned source result does not match the requested snapshot")
+			return
+		}
+	}
 	data, err := json.Marshal(result)
 	if err != nil || len(data) > 32<<20 {
 		writeSourceError(w, process.ErrOutputLimit)
@@ -126,6 +134,20 @@ func (s *Server) source(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(data)
+}
+
+// validSourceRequest restricts each action to its exact route-bound input shape.
+func validSourceRequest(input SourceRequest, id string) bool {
+	switch input.Action {
+	case "load", "git-only":
+		return input.Revision == nil && input.Branch == "" && input.SHA == ""
+	case "select-base":
+		return input.Revision == nil && githubpr.ValidBranch(input.Branch) && githubpr.ValidCommit(input.SHA)
+	case "refresh", "snapshot":
+		return input.Branch == "" && input.SHA == "" && input.Revision != nil && input.Revision.Validate(id) == nil
+	default:
+		return false
+	}
 }
 
 // validSourceResult rejects partial or mismatched success states before serialization.
@@ -169,6 +191,8 @@ func writeSourceError(w http.ResponseWriter, err error) {
 		code, message, status = "source-too-large", "Source exceeds the complete-view limits; no partial diff is shown.", http.StatusUnprocessableEntity
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		code, message, status = "source-timeout", "Source loading timed out or was cancelled. Retry explicitly.", http.StatusGatewayTimeout
+	case errors.Is(err, git.ErrSnapshotUnavailable):
+		code, message, status = "snapshot-unavailable", "The exact pinned source is unavailable or changed in the cache. No latest-source substitution was made.", http.StatusGone
 	case errors.Is(err, git.ErrHistoryUnavailable), errors.Is(err, git.ErrUnrelatedHistory), errors.Is(err, git.ErrAmbiguousMergeBase):
 		code, message, status = "history-unavailable", "Complete, unambiguous comparison history is unavailable.", http.StatusUnprocessableEntity
 	}

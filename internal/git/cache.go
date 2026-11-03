@@ -130,6 +130,16 @@ func (c *Cache) Close() error {
 
 // repository holds the per-repository gate and prepares a verified bare cache.
 func (c *Cache) repository(ctx context.Context, pr githubpr.PullRequest) (string, func(), error) {
+	return c.openRepository(ctx, pr, true)
+}
+
+// existingRepository acquires verified storage without creating a missing repository.
+func (c *Cache) existingRepository(ctx context.Context, pr githubpr.PullRequest) (string, func(), error) {
+	return c.openRepository(ctx, pr, false)
+}
+
+// openRepository holds the repository gate and creates storage only when explicitly allowed.
+func (c *Cache) openRepository(ctx context.Context, pr githubpr.PullRequest, create bool) (string, func(), error) {
 	if err := pr.Validate(); err != nil {
 		return "", nil, err
 	}
@@ -162,6 +172,10 @@ func (c *Cache) repository(ctx context.Context, pr githubpr.PullRequest) (string
 	}
 	dir := filepath.Join(c.paths.Cache, "repositories", id+".git")
 	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+		if !create {
+			release()
+			return "", nil, ErrSnapshotUnavailable
+		}
 		stage, err := os.MkdirTemp(filepath.Dir(dir), ".repository-")
 		if err != nil {
 			release()

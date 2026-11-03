@@ -319,6 +319,13 @@ test('release source UI distinguishes metadata fallback, explicit selection and 
     const input = route.request().postDataJSON()
     if (input.action === 'load') await route.fulfill({ json: { state: 'fallback-required', pr } })
     else if (input.action === 'git-only') await route.fulfill({ json: { state: 'base-selection-required', pr, candidates: [{ branch: revision.baseBranch, sha: revision.baseSHA }] } })
+    else if (input.action === 'refresh') {
+      expect(input.revision).toEqual(revision)
+      await route.fulfill({ status: 502, json: { error: 'private fixture diagnostic' } })
+    } else if (input.action === 'snapshot') {
+      expect(input.revision).toEqual(revision)
+      await route.fulfill({ json: { state: 'ready', pr, diff: { revision, revisionID, complete: true, files: [] }, requestedRevisionID: revisionID } })
+    }
     else {
       expect(input).toEqual({ action: 'select-base', branch: revision.baseBranch, sha: revision.baseSHA })
       await route.fulfill({ json: { state: 'ready', pr, diff: { revision, revisionID, complete: true, files: [] } } })
@@ -335,6 +342,14 @@ test('release source UI distinguishes metadata fallback, explicit selection and 
   await expect(page.getByRole('heading', { name: 'No changes in this comparison' })).toBeVisible()
   expect(calls).toBe(3)
   await expect(page.getByRole('button', { name: 'Questions — unavailable' })).toBeDisabled()
+  await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Cannot prepare source')
+  await expect(page.getByRole('heading', { name: 'No changes in this comparison' })).toBeVisible()
+  expect(await page.content()).not.toContain('private fixture diagnostic')
+  await page.getByRole('button', { name: 'Verify pinned cache', exact: true }).click()
+  await expect(page.getByText('Exact pinned source verified in the cache; no latest source was fetched.')).toBeVisible()
+  await expect(page.getByText('Stale / refresh needs attention.', { exact: false })).toBeVisible()
+  expect(calls).toBe(5)
   expect(await page.content()).not.toContain(token)
   await page.screenshot({ path: testInfo.outputPath('release-pinned-empty-source.png') })
 })

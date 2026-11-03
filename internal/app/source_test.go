@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -99,6 +100,80 @@ func TestSourceRegistryComposesRealOfflineResolutionFetchWorktreeAndDiff(t *test
 	if strings.Contains(string(data), paths.Cache) || strings.Contains(string(data), "Directory") {
 		t.Fatal("backend source location leaked")
 	}
+	original := ready.Diff.Revision
+	read, err := service.LoadSource(context.Background(), pr, httpapi.SourceRequest{Action: "snapshot", Revision: &original})
+	if err != nil || !reflect.DeepEqual(read.Diff, ready.Diff) {
+		t.Fatalf("original snapshot read: %v", err)
+	}
+	refresh := httpapi.SourceRequest{Action: "refresh", Revision: &original}
+	unchanged, err := service.LoadSource(context.Background(), pr, refresh)
+	if err != nil || unchanged.Diff.RevisionID != ready.Diff.RevisionID {
+		t.Fatalf("unchanged refresh: %v", err)
+	}
+	originalPath := filepath.Join(paths.Cache, "worktrees", pr.ID, head)
+	before, _ := os.Stat(originalPath)
+	newBase := sourceGit(t, realGit, upstream, "advanced base\n", "commit-tree", tree, "-p", base)
+	sourceGit(t, realGit, upstream, "", "update-ref", "refs/heads/feat/go-rewrite", newBase)
+	currentMetadata := strings.ReplaceAll(response, base, newBase)
+	t.Setenv("SHELDON_TEST_GH_RESPONSE", "HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n"+currentMetadata)
+	baseOnly, err := service.LoadSource(context.Background(), pr, refresh)
+	if err != nil || baseOnly.Diff.RevisionID == ready.Diff.RevisionID || baseOnly.Diff.Revision.HeadSHA != head {
+		t.Fatalf("base-only refresh: %v", err)
+	}
+	after, _ := os.Stat(originalPath)
+	if !os.SameFile(before, after) {
+		t.Fatal("base-only refresh replaced the head worktree")
+	}
+	newBlob := sourceGit(t, realGit, upstream, "refreshed source\n", "hash-object", "-w", "--stdin")
+	newTree := sourceGit(t, realGit, upstream, "100644 blob "+newBlob+"\tsource.txt\n", "mktree")
+	newHead := sourceGit(t, realGit, upstream, "force pushed head\n", "commit-tree", newTree, "-p", base)
+	sourceGit(t, realGit, upstream, "", "update-ref", "refs/pull/31/head", newHead)
+	t.Setenv("SHELDON_TEST_GH_RESPONSE", "HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n"+strings.ReplaceAll(currentMetadata, head, newHead))
+	newer, err := service.LoadSource(context.Background(), pr, httpapi.SourceRequest{Action: "refresh", Revision: &baseOnly.Diff.Revision})
+	if err != nil || newer.Diff.Revision.HeadSHA != newHead {
+		t.Fatalf("force-pushed refresh: %v", err)
+	}
+	if sourceGit(t, realGit, originalPath, "", "rev-parse", "HEAD") != head {
+		t.Fatal("refresh moved the original detached HEAD")
+	}
+	if data, err := os.ReadFile(filepath.Join(originalPath, "source.txt")); err != nil || string(data) != "literal source\n" {
+		t.Fatal("refresh changed original source")
+	}
+	t.Setenv("SHELDON_GIT_MODE", "fail")
+	if result, err := service.LoadSource(context.Background(), pr, refresh); err == nil || result.Diff != nil {
+		t.Fatal("failed refresh returned ready source")
+	}
+	read, err = service.LoadSource(context.Background(), pr, httpapi.SourceRequest{Action: "snapshot", Revision: &original})
+	if err != nil || !reflect.DeepEqual(read.Diff, ready.Diff) {
+		t.Fatalf("refresh failure damaged the original comparison: %v", err)
+	}
+	t.Setenv("SHELDON_GIT_MODE", "")
+	if err := os.Rename(originalPath, originalPath+".removed"); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := service.LoadSource(context.Background(), pr, httpapi.SourceRequest{Action: "snapshot", Revision: &original}); !errors.Is(err, git.ErrSnapshotUnavailable) || result.Diff != nil {
+		t.Fatal("missing historical source was recreated or substituted")
+	}
+	if _, err := os.Stat(originalPath); !os.IsNotExist(err) {
+		t.Fatal("historical read recreated missing worktree")
+	}
+	if err := os.Rename(originalPath+".removed", originalPath); err != nil {
+		t.Fatal(err)
+	}
+	repositoryID, _ := pr.RepositoryID()
+	repo := filepath.Join(paths.Cache, "repositories", repositoryID+".git")
+	if err := os.Rename(repo, repo+".removed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.LoadSource(context.Background(), pr, httpapi.SourceRequest{Action: "snapshot", Revision: &original}); !errors.Is(err, git.ErrSnapshotUnavailable) {
+		t.Fatal("missing historical repository accepted")
+	}
+	if _, err := os.Stat(repo); !os.IsNotExist(err) {
+		t.Fatal("historical read initialized a missing repository")
+	}
+	if err := os.Rename(repo+".removed", repo); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("SHELDON_TEST_GH_MODE", "auth")
 	fallback, err := service.LoadSource(context.Background(), pr, httpapi.SourceRequest{Action: "load"})
 	if err != nil || fallback.State != "fallback-required" || fallback.Diff != nil {
@@ -113,6 +188,16 @@ func TestSourceRegistryComposesRealOfflineResolutionFetchWorktreeAndDiff(t *test
 	if err != nil || manual.Diff == nil || manual.Diff.Revision.BaseSource != "user-selected" {
 		t.Fatalf("manual source: %v", err)
 	}
+	manualRefresh, err := service.LoadSource(context.Background(), pr, httpapi.SourceRequest{Action: "refresh", Revision: &manual.Diff.Revision})
+	if err != nil || manualRefresh.Diff.Revision.BaseBranch != manual.Diff.Revision.BaseBranch || manualRefresh.Diff.Revision.BaseSource != "user-selected" {
+		t.Fatalf("manual refresh lost the explicit base choice: %v", err)
+	}
+	sourceGit(t, realGit, upstream, "", "update-ref", "refs/heads/main", newBase)
+	sourceGit(t, realGit, upstream, "", "update-ref", "-d", "refs/heads/feat/go-rewrite")
+	if _, err := service.LoadSource(context.Background(), pr, httpapi.SourceRequest{Action: "refresh", Revision: &manual.Diff.Revision}); !errors.Is(err, git.ErrRefreshRequired) {
+		t.Fatal("manual refresh substituted another branch after target deletion")
+	}
+	sourceGit(t, realGit, upstream, "", "update-ref", "refs/heads/feat/go-rewrite", newBase)
 	sourceGit(t, realGit, upstream, "", "update-ref", "refs/heads/feat/go-rewrite", head)
 	if _, err := service.LoadSource(context.Background(), pr, selected); !errors.Is(err, git.ErrRefreshRequired) {
 		t.Fatalf("moved branch was accepted: %v", err)

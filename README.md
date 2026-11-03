@@ -40,7 +40,9 @@ npm run build
 
 Windows output: `bin/sheldon.exe`. Plain `go run`/`go build` omit the embedded UI; use Vite for development.
 
-`sheldon open <url>` registers/reuses the PR in private `prs.json` under the OS data directory and opens `/reviews/<id>` on the existing backend. Source loads only after **Load pinned source**; registration/reconnection alone never fetches it. Each browser tab owns its routed PR and displayed snapshot. Plain `sheldon` opens the real PR entry page. Reloading requires reconnecting; rerun the command or enter the token from private `instance.lock`. In-page snapshot refresh remains unimplemented.
+`sheldon open <url>` registers/reuses the PR in private `prs.json` under the OS data directory and opens `/reviews/<id>` on the existing backend. Source loads only after **Load pinned source**; registration/reconnection alone never fetches it. Each browser tab owns its routed PR and displayed snapshot. Plain `sheldon` opens the real PR entry page. Reloading requires reconnecting; rerun the command or enter the token from private `instance.lock`.
+
+Choose **Refresh source** to fetch current tips for this tab only. The displayed diff stays readable while loading and on failure; file navigation never refreshes it. Git-only refresh keeps the explicitly selected branch. **Verify pinned cache** checks the exact displayed commits/worktree without fetching latest. After a changed refresh, **Open original snapshot** reopens this page's first pinned comparison if its cached source still exists. Missing/modified historical source is an error, never a latest-source replacement. Reload/disconnect still clears page-memory source and the original-snapshot shortcut.
 
 Source uses OS cache storage (`~/.cache/sheldon` on Linux, `%LOCALAPPDATA%\sheldon\cache` on Windows), not the project directory. Worktrees and diffs are bounded; unsafe cache state, unavailable history or oversized comparisons produce errors rather than partial source. Existing credential helpers/SSH routes remain trusted. A worktree is not an agent sandbox.
 

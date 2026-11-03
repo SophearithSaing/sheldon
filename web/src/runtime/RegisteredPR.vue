@@ -5,14 +5,18 @@ import ChangedFileTree from '../components/ChangedFileTree.vue'
 import SourceDiff from '../components/SourceDiff.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import OpenPR from './OpenPR.vue'
-import { lineCounts, type SourceRequest, type SourceResponse, type SourceFile, type PinnedDiff } from './source'
+import { lineCounts, type SourceRequest, type SourceResponse, type SourceFile, type PinnedDiff, type PinnedRevision } from './source'
 import type { DiffLine } from '../components/diff'
 import type { ReviewState, RuntimeClient, RegisteredPR } from './client'
 
 const props = defineProps<{ reviewId: string; reviewState: ReviewState; client: RuntimeClient | null }>()
 const source = shallowRef<SourceResponse>()
+const displayed = shallowRef<SourceResponse>()
+const original = shallowRef<{ revision: PinnedRevision; revisionID: string; pr: RegisteredPR }>()
 const pending = ref(false)
 const error = ref('')
+const stale = ref(false)
+const notice = ref('')
 const selected = ref('')
 const search = ref('')
 const branch = ref('')
@@ -20,8 +24,8 @@ const sourceHeading = ref<HTMLElement>()
 const sourcePane = ref<HTMLElement>()
 let controller: AbortController | undefined
 let lastAction: SourceRequest = { action: 'load' }
-const pr = computed((): RegisteredPR | undefined => source.value?.pr ?? props.reviewState.pr)
-const diff = computed((): PinnedDiff | undefined => source.value?.state === 'ready' ? source.value.diff : undefined)
+const pr = computed((): RegisteredPR | undefined => displayed.value?.pr ?? source.value?.pr ?? props.reviewState.pr)
+const diff = computed((): PinnedDiff | undefined => displayed.value?.diff)
 const files = computed((): SourceFile[] => diff.value?.files ?? [])
 const treeFiles = computed((): { id: string; path: string }[] => files.value.map((file): { id: string; path: string } => ({ id: file.id, path: file.newPath ?? file.oldPath ?? '' })))
 const active = computed((): SourceFile | undefined => files.value.find((file): boolean => file.id === selected.value))
@@ -33,8 +37,12 @@ const lines = computed(displayLines)
 function reset(): void {
   controller?.abort()
   source.value = undefined
+  displayed.value = undefined
+  original.value = undefined
   pending.value = false
   error.value = ''
+  stale.value = false
+  notice.value = ''
   selected.value = ''
   branch.value = ''
   search.value = ''
@@ -42,7 +50,14 @@ function reset(): void {
 
 /** Cancels only source work and returns keyboard focus to its surviving region. */
 async function cancelSource(): Promise<void> {
-  reset()
+  if (diff.value) {
+    controller?.abort()
+    controller = undefined
+    pending.value = false
+    stale.value = true
+    notice.value = 'Source request cancelled. The displayed pinned revision was not replaced.'
+    source.value = displayed.value
+  } else reset()
   await nextTick()
   sourcePane.value?.focus()
 }
@@ -52,19 +67,35 @@ async function cancelSource(): Promise<void> {
  * @param input Metadata load, fallback consent or exact base selection.
  */
 async function load(input: SourceRequest = { action: 'load' }): Promise<void> {
-  if (!props.client || pending.value || diff.value) return
+  if (!props.client || pending.value) return
   const current = new AbortController()
   const requestedID = props.reviewId
   const client = props.client
+  const requestedSnapshot = diff.value?.revisionID
   controller = current
   pending.value = true
   error.value = ''
+  notice.value = ''
   lastAction = input
   try {
     const response = await client.source(requestedID, input, current.signal)
-    if (current.signal.aborted || requestedID !== props.reviewId || client !== props.client) return
+    if (current.signal.aborted || controller !== current || requestedID !== props.reviewId || client !== props.client || diff.value?.revisionID !== requestedSnapshot) return
     source.value = response
-    selected.value = response.diff?.files[0]?.id ?? ''
+    if (response.state === 'ready' && response.diff) {
+      const path = active.value?.newPath ?? active.value?.oldPath
+      const unchanged = response.diff.revisionID === requestedSnapshot
+      if (!(input.action === 'snapshot' && unchanged)) {
+        displayed.value = input.action === 'snapshot' && original.value?.revisionID === response.diff.revisionID ? { ...response, pr: original.value.pr } : response
+        selected.value = response.diff.files.find((file): boolean => (file.newPath ?? file.oldPath) === path)?.id ?? response.diff.files[0]?.id ?? ''
+      }
+      original.value ??= { revision: response.diff.revision, revisionID: response.diff.revisionID, pr: response.pr }
+      if (input.action !== 'snapshot') stale.value = false
+      else if (!unchanged) stale.value = true
+      notice.value = input.action === 'snapshot' ? 'Exact pinned source verified in the cache; no latest source was fetched.' : requestedSnapshot ? unchanged ? 'Source unchanged. The displayed revision is still pinned.' : 'Refresh complete. Only this tab now displays the new pinned revision.' : ''
+    } else if (requestedSnapshot) {
+      stale.value = true
+      notice.value = 'Refresh needs an explicit base choice. The previous pinned revision remains displayed.'
+    }
     branch.value = ''
     await nextTick()
     if (document.activeElement === document.body || document.activeElement instanceof Node && sourcePane.value?.contains(document.activeElement)) {
@@ -72,11 +103,23 @@ async function load(input: SourceRequest = { action: 'load' }): Promise<void> {
       else sourcePane.value?.focus()
     }
   } catch (failure: unknown) {
-    if (!current.signal.aborted) error.value = failure instanceof Error ? failure.message : 'Source loading failed. Retry explicitly.'
+    if (!current.signal.aborted) {
+      error.value = failure instanceof Error ? failure.message : 'Source loading failed. Retry explicitly.'
+      stale.value = !!requestedSnapshot
+    }
   } finally {
     if (controller === current) pending.value = false
   }
 }
+
+/** Fetches current tips explicitly without moving any other tab's snapshot. */
+function refresh(): void { if (diff.value) void load({ action: 'refresh', revision: diff.value.revision }) }
+
+/** Verifies current historical source without fetching or recreating it. */
+function verifyPinned(): void { if (diff.value) void load({ action: 'snapshot', revision: diff.value.revision }) }
+
+/** Reopens this tab's original comparison only if its exact cached source remains valid. */
+function restoreOriginal(): void { if (original.value) void load({ action: 'snapshot', revision: original.value.revision }) }
 
 /** Repeats the failed action only after an explicit reader request. */
 function retry(): void { void load(lastAction) }
@@ -136,7 +179,28 @@ onUnmounted(reset)
       </template>
       <template #files><ChangedFileTree v-model="search" :files="treeFiles" :current="selected" :counts="{}" :viewed="{}" real @select="selectFile" /></template>
       <template #default>
-        <section id="review-content" ref="sourcePane" class="source-pane" tabindex="-1" :aria-busy="pending" aria-label="Pinned PR source">
+        <section id="review-content" ref="sourcePane" class="source-pane" tabindex="-1" :aria-busy="pending && !diff" aria-label="Pinned PR source">
+          <div v-if="diff" class="refresh-controls">
+            <div class="refresh-actions"><UiButton :disabled="pending || !client" @click="refresh">Refresh source</UiButton><UiButton variant="quiet" :disabled="pending || !client" @click="verifyPinned">Verify pinned cache</UiButton><UiButton v-if="original && original.revisionID !== diff.revisionID" variant="quiet" :disabled="pending || !client" @click="restoreOriginal">Open original snapshot</UiButton><UiButton v-if="pending" variant="quiet" @click="cancelSource">Cancel source request</UiButton></div>
+            <p v-if="pending" role="status">{{ lastAction.action === 'snapshot' ? 'Checking pinned source…' : 'Refreshing source…' }} The displayed revision remains readable until a complete response succeeds.</p>
+            <p v-if="stale" class="stale-notice" role="status">Stale / refresh needs attention. Still displaying pinned revision {{ diff.revisionID.slice(0, 8) }}; no newer snapshot is advertised.</p>
+            <p v-if="notice" role="status">{{ notice }}</p>
+            <p v-if="error" role="alert">{{ error }}</p><UiButton v-if="error" :disabled="pending" @click="retry">Retry source loading</UiButton>
+          </div>
+          <div v-if="!pending && (source?.state === 'fallback-required' || source?.state === 'base-selection-required')" class="source-notice">
+            <template v-if="source.state === 'fallback-required'"><h2>GitHub metadata unavailable</h2><p>The actual target branch is unknown. Retry metadata or explicitly choose Git-only mode to fetch upstream branch candidates. No default base is assumed.</p><UiButton @click="load({ action: 'git-only' })">Use Git-only fallback</UiButton><UiButton variant="quiet" @click="diff ? refresh() : load()">Retry GitHub metadata</UiButton></template>
+            <form v-else @submit.prevent="selectBase">
+              <h2>Choose the comparison base</h2>
+              <p>These branches were fetched from the intended upstream repository. GitHub has not verified this PR's target. Select one explicitly.</p>
+              <label for="source-base">Fetched base branch</label>
+              <select id="source-base" v-model="branch" required>
+                <option value="" disabled>Choose a branch…</option>
+                <template v-for="candidate in source.candidates" :key="candidate.branch"><option :value="candidate.branch">{{ candidate.branch }} · {{ candidate.sha.slice(0, 8) }}</option></template>
+              </select>
+              <UiButton type="submit" :disabled="!branch">Load selected base</UiButton>
+              <UiButton variant="quiet" @click="load({ action: 'git-only' })">Fetch branch candidates again</UiButton>
+            </form>
+          </div>
           <template v-if="diff">
             <div class="revision-bar"><p>{{ files.length }} changed files · +{{ counts.added }} / −{{ counts.removed }} text lines</p><details><summary>Pinned revision {{ diff.revisionID.slice(0, 8) }}</summary><dl><dt>Base branch / tip</dt><dd>{{ diff.revision.baseBranch }} / {{ diff.revision.baseSHA }}</dd><dt>Merge base</dt><dd>{{ diff.revision.mergeBaseSHA }}</dd><dt>Head</dt><dd>{{ diff.revision.headSHA }}</dd><dt>Base selection</dt><dd>{{ diff.revision.baseSource === 'github' ? 'GitHub metadata' : 'Explicit Git-only selection; target unverified by GitHub' }}</dd><dt>Revision</dt><dd>{{ diff.revisionID }}</dd></dl></details></div>
             <template v-if="active">
@@ -150,21 +214,7 @@ onUnmounted(reset)
             <template v-if="pending"><h2>Loading pinned source…</h2><p role="status">Resolving metadata, fetched commits, source and a complete diff. No inference is running.</p><div class="source-skeleton" aria-hidden="true"><span v-for="n in 6" :key="n" /></div><UiButton variant="quiet" @click="cancelSource">Cancel source loading</UiButton></template>
             <template v-else>
               <p v-if="error" role="alert">{{ error }}</p><UiButton v-if="error" @click="retry">Retry source loading</UiButton>
-              <template v-if="source?.state === 'fallback-required'"><h2>GitHub metadata unavailable</h2><p>The actual target branch is unknown. Retry metadata or explicitly choose Git-only mode to fetch upstream branch candidates. No default base is assumed.</p><UiButton @click="load({ action: 'git-only' })">Use Git-only fallback</UiButton><UiButton variant="quiet" @click="load()">Retry GitHub metadata</UiButton></template>
-              <form v-else-if="source?.state === 'base-selection-required'" @submit.prevent="selectBase">
-                <h2>Choose the comparison base</h2>
-                <p>These branches were fetched from the intended upstream repository. GitHub has not verified this PR's target. Select one explicitly.</p>
-                <label for="source-base">Fetched base branch</label>
-                <select id="source-base" v-model="branch" required>
-                  <option value="" disabled>Choose a branch…</option>
-                  <template v-for="candidate in source.candidates" :key="candidate.branch">
-                    <option :value="candidate.branch">{{ candidate.branch }} · {{ candidate.sha.slice(0, 8) }}</option>
-                  </template>
-                </select>
-                <UiButton type="submit" :disabled="!branch">Load selected base</UiButton>
-                <UiButton variant="quiet" @click="load({ action: 'git-only' })">Fetch branch candidates again</UiButton>
-              </form>
-              <template v-else-if="!error"><h2>PR registered. Source not loaded.</h2><p>Registration is saved independently. Load a pinned merge-base → head comparison using your existing GitHub CLI/Git authentication.</p><UiButton :disabled="!client" @click="load()">Load pinned source</UiButton></template>
+              <template v-if="!error && !source"><h2>PR registered. Source not loaded.</h2><p>Registration is saved independently. Load a pinned merge-base → head comparison using your existing GitHub CLI/Git authentication.</p><UiButton :disabled="!client" @click="load()">Load pinned source</UiButton></template>
               <p>{{ pr.url }}</p><p>No agent is connected and no question has been sent.</p>
             </template>
           </div>
@@ -209,6 +259,10 @@ onUnmounted(reset)
 .source-skeleton span { height: 0.75rem; background: var(--color-surface); border-radius: var(--radius-control); }
 .source-skeleton span:nth-child(even) { width: 65%; }
 .real-source { flex-shrink: 0; }
+.refresh-controls { flex-shrink: 0; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); font-size: var(--text-small); overflow-wrap: anywhere; }
+.refresh-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.refresh-controls p { margin-top: var(--space-2); }
+.stale-notice { color: var(--color-warning); }
 @container application (max-width: 56.25rem) {
   :deep(.workspace-container) { flex: 0 0 auto; }
   :deep(.workspace) { height: auto; grid-template-rows: auto auto auto; }

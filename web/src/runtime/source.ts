@@ -1,6 +1,6 @@
 import type { RegisteredPR } from './client'
 
-export interface SourceRequest { action: 'load' | 'git-only' | 'select-base'; branch?: string; sha?: string }
+export interface SourceRequest { action: 'load' | 'git-only' | 'select-base' | 'refresh' | 'snapshot'; branch?: string; sha?: string; revision?: PinnedRevision }
 export interface SourceCandidate { branch: string; sha: string }
 export interface PinnedRevision { prID: string; baseBranch: string; baseSource: 'github' | 'user-selected'; baseSHA: string; headSHA: string; mergeBaseSHA: string }
 export interface SourceLine { id: string; sign: ' ' | '+' | '-'; text: string; oldLine?: number; newLine?: number; noNewline?: boolean }
@@ -8,7 +8,17 @@ export interface SourceRange { id: string; start: number; count: number }
 export interface SourceHunk { id: string; old: SourceRange; new: SourceRange; section: string; lines: SourceLine[] }
 export interface SourceFile { id: string; status: string; oldPath?: string; newPath?: string; oldMode: string; newMode: string; oldObject: string; newObject: string; similarity?: number; kind: string; reason?: string; hunks: SourceHunk[] }
 export interface PinnedDiff { revision: PinnedRevision; revisionID: string; complete: true; files: SourceFile[] }
-export interface SourceResponse { state: 'fallback-required' | 'base-selection-required' | 'ready'; pr: RegisteredPR; candidates?: SourceCandidate[]; diff?: PinnedDiff }
+export interface SourceResponse { state: 'fallback-required' | 'base-selection-required' | 'ready'; pr: RegisteredPR; candidates?: SourceCandidate[]; diff?: PinnedDiff; requestedRevisionID?: string }
+
+/**
+ * Derives the canonical comparison identity without consulting moving refs.
+ * @param revision Pinned comparison descriptors.
+ * @returns Canonical revision digest.
+ */
+export async function pinnedID(revision: PinnedRevision): Promise<string> {
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode([revision.prID, revision.baseSHA, revision.headSHA, revision.mergeBaseSHA].join('\n')))
+  return Array.from(new Uint8Array(bytes), (byte: number): string => byte.toString(16).padStart(2, '0')).join('')
+}
 
 /**
  * Recognizes a plain response object before inspecting its fields.
@@ -110,8 +120,7 @@ export async function parseSourceResponse(value: unknown, id: string): Promise<S
   const revision = diff.revision
   if (revision.prID !== id || typeof revision.baseBranch !== 'string' || !['github', 'user-selected'].includes(String(revision.baseSource)) ||
       ![revision.baseSHA, revision.headSHA, revision.mergeBaseSHA].every((sha: unknown): boolean => typeof sha === 'string' && /^[a-f0-9]{40}$/.test(sha))) throw new Error('Unexpected revision.')
-  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode([id, revision.baseSHA, revision.headSHA, revision.mergeBaseSHA].join('\n')))
-  const digest = Array.from(new Uint8Array(bytes), (byte: number): string => byte.toString(16).padStart(2, '0')).join('')
+  const digest = await pinnedID(revision as unknown as PinnedRevision)
   if (digest !== diff.revisionID) throw new Error('Unexpected revision identity.')
   return value as unknown as SourceResponse
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/SophearithSaing/sheldon/internal/git"
 	"github.com/SophearithSaing/sheldon/internal/github"
 	"github.com/SophearithSaing/sheldon/internal/githubpr"
 	"github.com/SophearithSaing/sheldon/internal/httpapi"
@@ -21,6 +22,45 @@ func (s *sourceRegistry) LoadSource(ctx context.Context, pr githubpr.PullRequest
 	var resolution github.Resolution
 	var err error
 	switch input.Action {
+	case "snapshot":
+		if input.Revision == nil || input.Revision.Validate(pr.ID) != nil {
+			return httpapi.SourceResult{}, errors.New("invalid pinned source request")
+		}
+		cache, err := s.openCache(s.paths)
+		if err != nil {
+			return httpapi.SourceResult{}, errors.Join(git.ErrSnapshotUnavailable, err)
+		}
+		prepared, err := cache.ReadPrepared(ctx, pr, *input.Revision)
+		if err != nil {
+			return httpapi.SourceResult{}, err
+		}
+		diff, err := cache.Diff(ctx, pr, prepared.Revision)
+		if err != nil {
+			return httpapi.SourceResult{}, errors.Join(git.ErrSnapshotUnavailable, err)
+		}
+		return httpapi.SourceResult{State: "ready", PR: pr, Diff: &diff}, nil
+	case "refresh":
+		if input.Revision == nil || input.Revision.Validate(pr.ID) != nil {
+			return httpapi.SourceResult{}, errors.New("invalid refresh context")
+		}
+		if input.Revision.BaseSource == githubpr.UserSelectedBase {
+			cache, err := s.openCache(s.paths)
+			if err != nil {
+				return httpapi.SourceResult{}, err
+			}
+			manual, _ := (github.Resolution{PR: pr, State: github.FallbackRequired, Failure: &github.MetadataError{Code: "explicit-git-only"}}).ChooseGitOnly()
+			candidates, err := cache.FetchBases(ctx, manual)
+			if err != nil {
+				return httpapi.SourceResult{}, err
+			}
+			for _, candidate := range candidates {
+				if candidate.Branch == input.Revision.BaseBranch {
+					return s.LoadSource(ctx, pr, httpapi.SourceRequest{Action: "select-base", Branch: candidate.Branch, SHA: candidate.SHA})
+				}
+			}
+			return httpapi.SourceResult{}, git.ErrRefreshRequired
+		}
+		fallthrough
 	case "load":
 		resolution, err = github.Resolve(ctx, pr)
 		if err != nil {
