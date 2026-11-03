@@ -32,7 +32,7 @@ func audit(value any) {
 func main() {
 	mode := os.Getenv("SHELDON_NATIVE_MODE")
 	dir, _ := os.Getwd()
-	audit(map[string]any{"args": os.Args[1:], "directory": dir, "restricted": os.Getenv("OPENCODE_CONFIG_PROJECT_DISABLE") == "1" && os.Getenv("OPENCODE_DISABLE_CLAUDE_CODE") == "1" && os.Getenv("OPENCODE_DISABLE_AUTOUPDATE") == "1", "passwordLength": len(os.Getenv("OPENCODE_PASSWORD")), "config": json.RawMessage(os.Getenv("OPENCODE_CONFIG_CONTENT")), "authPreserved": os.Getenv("SHELDON_SYNTHETIC_AUTH") == "fixture-route"})
+	audit(map[string]any{"args": os.Args[1:], "directory": dir, "pid": os.Getpid(), "restricted": os.Getenv("OPENCODE_CONFIG_PROJECT_DISABLE") == "1" && os.Getenv("OPENCODE_DISABLE_CLAUDE_CODE") == "1" && os.Getenv("OPENCODE_DISABLE_AUTOUPDATE") == "1", "passwordLength": len(os.Getenv("OPENCODE_PASSWORD")), "config": json.RawMessage(os.Getenv("OPENCODE_CONFIG_CONTENT")), "authPreserved": os.Getenv("SHELDON_SYNTHETIC_AUTH") == "fixture-route"})
 	if reflect.DeepEqual(os.Args[1:], []string{"--version"}) {
 		switch mode {
 		case "version-wrong":

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -128,6 +129,16 @@ func (f *executionFixture) answer(session, user, assistant string, stop <-chan s
 	for i, chunk := range chunks {
 		partial += chunk
 		f.event(fmt.Sprintf("evt_text_%d_%d", n, i), "session.text.delta", session, assistant, chunk)
+		if i == 0 && f.mode == "answer-browser" {
+			outcome := f.browserOutcome(stop, n)
+			if outcome == "" {
+				return
+			}
+			if outcome != "succeeded" {
+				f.terminal(session, user, assistant, partial, outcome, n)
+				return
+			}
+		}
 		if f.mode == "answer-duplicate" {
 			f.event(fmt.Sprintf("evt_text_%d_%d", n, i), "session.text.delta", session, assistant, chunk)
 		}
@@ -160,6 +171,29 @@ func (f *executionFixture) answer(session, user, assistant string, stop <-chan s
 		outcome = "failed"
 	}
 	f.terminal(session, user, assistant, text, outcome, n)
+}
+
+// browserOutcome waits for explicit test-owned release, targeted Stop or owned-service shutdown.
+func (f *executionFixture) browserOutcome(stop <-chan struct{}, input int) string {
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-stop:
+			return "interrupted"
+		case <-f.done:
+			return ""
+		case <-tick.C:
+			data, err := os.ReadFile(os.Getenv("SHELDON_NATIVE_CONTROL"))
+			var control struct {
+				Input   int    `json:"input"`
+				Outcome string `json:"outcome"`
+			}
+			if err == nil && json.Unmarshal(data, &control) == nil && control.Input == input && (control.Outcome == "succeeded" || control.Outcome == "failed") {
+				return control.Outcome
+			}
+		}
+	}
 }
 
 // terminal stores visible text separately from synthetic reasoning/tool/provider secret canaries.

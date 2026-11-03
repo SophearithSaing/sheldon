@@ -1,17 +1,19 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
 import { constants } from 'node:fs'
-import { access, copyFile, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { access, copyFile, cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect } from '@playwright/test'
+import { createServer } from 'node:net'
 
 const execute = promisify(execFile)
 const repository = fileURLToPath(new URL('../../../', import.meta.url))
 
 export interface Discovery { url: string; token: string }
 export interface GitAudit { Operation: string; Directory: string; Safe: boolean; PID: number }
+export interface NativeAudit { args?: string[]; directory?: string; pid?: number; restricted?: boolean; method?: string; path?: string; body?: string }
 export interface OfflineCLI {
   directory: string
   cache: string
@@ -29,6 +31,33 @@ export interface OfflineCLI {
   git(dir: string, input: string, ...args: string[]): Promise<string>
   head(number: number, text: string): Promise<string>
   audit(): Promise<GitAudit[]>
+  /**
+   * Reads synthetic native protocol activity without transport passwords.
+   * @returns Completed native fixture audit records.
+   */
+  nativeAudit(): Promise<NativeAudit[]>
+  /**
+   * Releases only a numbered synthetic native input; no real model is called.
+   * @param input Native fixture prompt ordinal.
+   * @param outcome Explicit synthetic terminal outcome.
+   */
+  answer(input: number, outcome: 'succeeded' | 'failed'): Promise<void>
+}
+
+/**
+ * Chooses an unused explicit loopback port for a disposable development frontend.
+ * @returns Canonical frontend origin.
+ */
+async function developmentOrigin(): Promise<string> {
+  const listener = createServer()
+  return new Promise<string>((resolve, reject): void => {
+    listener.once('error', reject)
+    listener.listen(0, '127.0.0.1', (): void => {
+      const address = listener.address()
+      if (!address || typeof address === 'string') { listener.close(); reject(new Error('Development frontend port unavailable.')); return }
+      listener.close((): void => resolve(`http://127.0.0.1:${address.port}`))
+    })
+  })
 }
 
 /**
@@ -57,9 +86,10 @@ async function events<T>(path: string): Promise<T[]> {
 
 /**
  * Creates native offline objects and tools for an unmodified standalone release binary.
+ * @param options Optional real development CLI/Vite and synthetic native-answer tools.
  * @returns Isolated CLI controller with deterministic native PR source and explicit cleanup.
  */
-export async function offlineCLI(): Promise<OfflineCLI> {
+export async function offlineCLI(options: { development?: boolean; questions?: boolean } = {}): Promise<OfflineCLI> {
   const realGit = await executable('git')
   const directory = await mkdtemp(join(tmpdir(), 'sheldon-source-cli-'))
   const tools = join(directory, 'tools')
@@ -69,10 +99,14 @@ export async function offlineCLI(): Promise<OfflineCLI> {
   const metadata = join(directory, 'metadata.json')
   const launches = join(directory, 'launches.jsonl')
   const auditPath = join(directory, 'git-audit.jsonl')
+  const nativeAuditPath = join(directory, 'native-audit.jsonl')
+  const nativeControl = join(directory, 'native-control.json')
+  const frontend = options.development ? await developmentOrigin() : ''
+  const webRoot = join(directory, 'web')
   const data = process.platform === 'darwin' ? join(home, 'Library/Application Support/sheldon') : join(directory, 'data/sheldon')
   const cache = process.platform === 'darwin' ? join(home, 'Library/Caches/sheldon') : join(directory, 'cache/sheldon')
   const stateFile = join(data, 'instance.lock')
-  const binary = process.env.SHELDON_RELEASE_BINARY!
+  const binary = options.development ? join(directory, 'sheldon-development') : process.env.SHELDON_RELEASE_BINARY!
   const nativeEnv = {
     PATH: process.env.PATH, HOME: home, TMPDIR: directory,
     GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
@@ -86,8 +120,11 @@ export async function offlineCLI(): Promise<OfflineCLI> {
     GIT_SSH_COMMAND: 'preserved-fixture-ssh-route',
     SHELDON_GIT_REAL: realGit, SHELDON_GIT_UPSTREAM: upstream, SHELDON_GIT_AUDIT: auditPath, SHELDON_GIT_MODE: '',
     SHELDON_SOURCE_METADATA: metadata, SHELDON_SOURCE_LAUNCHES: launches, SHELDON_SOURCE_GH_AUDIT: join(directory, 'gh-audit.jsonl'),
+    SHELDON_NATIVE_MODE: 'answer-browser', SHELDON_NATIVE_AUDIT: nativeAuditPath, SHELDON_NATIVE_CONTROL: nativeControl,
+    ...(frontend ? { SHELDON_DEV_ORIGIN: frontend, SHELDON_DEV_LISTEN: '127.0.0.1:0' } : {}),
   }
   let child: ChildProcess | undefined
+  let vite: ChildProcess | undefined
   let output = ''
   let current: Discovery | undefined
   const payload: { prs: Record<string, unknown>; fallback: Record<string, boolean> } = { prs: {}, fallback: { '32': true } }
@@ -107,6 +144,7 @@ export async function offlineCLI(): Promise<OfflineCLI> {
       command.stderr.resume()
       command.once('error', (): void => reject(new Error('Native Git fixture setup failed.')))
       command.once('exit', (code: number | null): void => { if (code === 0) resolve(stdout.trim()); else reject(new Error('Native Git fixture command failed.')) })
+      command.stdin.on('error', (failure: NodeJS.ErrnoException): void => { if (failure.code !== 'EPIPE' || input) reject(new Error('Native Git fixture stdin failed.')) })
       command.stdin.end(input)
     })
   }
@@ -167,6 +205,23 @@ export async function offlineCLI(): Promise<OfflineCLI> {
     })
     current = await discovery()
     if (output.includes(current.token)) throw new Error('CLI output exposed its launch credential.')
+    if (frontend) {
+      await expect.poll((): boolean => output.includes('The backend remains running.')).toBe(true)
+      vite = spawn(process.execPath, [join(repository, 'web/tests/development/vite-server.mjs')], {
+        cwd: directory, stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, SHELDON_DEV_ORIGIN: frontend, SHELDON_BACKEND_URL: current.url, SHELDON_TEST_WEB_ROOT: webRoot, SHELDON_TEST_VITE_CACHE: join(directory, 'vite-cache') },
+      })
+      const server = vite
+      server.stderr!.resume()
+      await new Promise<void>((resolve, reject): void => {
+        const timer = setTimeout((): void => reject(new Error('Native question development frontend timed out.')), 15000)
+        server.once('error', (): void => { clearTimeout(timer); reject(new Error('Development frontend failed to start.')) })
+        server.once('exit', (): void => { clearTimeout(timer); reject(new Error('Development frontend exited during startup.')) })
+        server.stdout!.on('data', (chunk: Buffer): void => { if (chunk.toString().includes('vite-ready')) { clearTimeout(timer); resolve() } })
+      })
+      const forwarded = await execute(binary, ['open', url], { cwd, env, timeout: 10000 })
+      if ((forwarded.stdout + forwarded.stderr).includes(current.token)) throw new Error('Development forwarding exposed its credential.')
+    }
     return launch(before)
   }
 
@@ -184,6 +239,15 @@ export async function offlineCLI(): Promise<OfflineCLI> {
 
   /** Stops the actual writer and verifies process, credential and listener cleanup. */
   async function stop(): Promise<void> {
+    if (vite?.pid && vite.exitCode === null && vite.signalCode === null) {
+      const server = vite
+      const done = new Promise<void>((resolve): void => { server.once('exit', (): void => resolve()) })
+      const timer = setTimeout((): void => { server.kill('SIGKILL') }, 5000)
+      server.kill('SIGTERM')
+      await done
+      clearTimeout(timer)
+    }
+    vite = undefined
     const active = child
     if (!active) return
     if (active.pid && active.exitCode === null && active.signalCode === null) {
@@ -209,12 +273,19 @@ export async function offlineCLI(): Promise<OfflineCLI> {
     for (const name of [tools, home, cwd]) await mkdir(name, { mode: 0o700 })
     await execute('go', ['build', '-o', join(tools, 'git'), './internal/git/testdata/git'], { cwd: repository, timeout: 60000 })
     await execute('go', ['build', '-o', join(tools, 'gh'), './internal/httpapi/testdata/sourcecli'], { cwd: repository, timeout: 60000 })
+    if (options.questions) await execute('go', ['build', '-o', join(tools, 'opencode'), './internal/opencode/testdata/opencode'], { cwd: repository, timeout: 60000 })
+    if (frontend) {
+      await execute('go', ['build', '-o', binary, './cmd/sheldon'], { cwd: repository, timeout: 60000 })
+      await cp(join(repository, 'web'), webRoot, { recursive: true, filter: (path: string): boolean => !/(?:^|[/\\])(?:node_modules|dist|test-results|playwright-report)(?:[/\\]|$)/.test(path) })
+      await symlink(join(repository, 'node_modules'), join(webRoot, 'node_modules'), 'dir')
+    }
     await copyFile(join(tools, 'gh'), join(tools, process.platform === 'darwin' ? 'open' : 'xdg-open'))
     await git(directory, '', 'init', '--bare', upstream)
     const baseTree = await tree({ 'shared.txt': 'before\n', 'remove.txt': 'delete me\n' })
     const mergeBase = await git(upstream, 'fork point\n', 'commit-tree', baseTree)
     const baseTip = await git(upstream, 'base branch advanced\n', 'commit-tree', await tree({ 'shared.txt': 'before\n', 'remove.txt': 'delete me\n', 'base-only.txt': 'not a PR change\n' }), '-p', mergeBase)
-    const firstHead = await git(upstream, 'first PR\n', 'commit-tree', await tree({ 'shared.txt': 'after PR31 <script>literal</script>\n' }), '-p', mergeBase)
+    const firstText = options.questions ? 'after PR31 <script>literal</script> ' + 'long literal source '.repeat(60) + '\n' + Array.from({ length: 80 }, (_, index: number): string => `fixture source line ${index + 2}`).join('\n') + '\n' : 'after PR31 <script>literal</script>\n'
+    const firstHead = await git(upstream, 'first PR\n', 'commit-tree', await tree({ 'shared.txt': firstText }), '-p', mergeBase)
     const secondHead = await git(upstream, 'second PR\n', 'commit-tree', await tree({ 'shared.txt': 'before\n', 'remove.txt': 'delete me\n', 'notes.txt': 'only PR32\n' }), '-p', mergeBase)
     const wrongBase = await git(upstream, 'unrelated default\n', 'commit-tree', await tree({ 'wrong.txt': 'must not be selected automatically\n' }))
     for (const [ref, sha] of Object.entries({ 'refs/heads/release/target': baseTip, 'refs/heads/main': wrongBase, 'refs/pull/31/head': firstHead, 'refs/pull/32/head': secondHead })) await git(upstream, '', 'update-ref', ref, sha)
@@ -242,7 +313,20 @@ export async function offlineCLI(): Promise<OfflineCLI> {
      * @returns Fixture command audit records.
      */
     async function audit(): Promise<GitAudit[]> { return events<GitAudit>(auditPath) }
-    return { directory, cache, stateFile, upstream, mergeBase, baseTip, firstHead, secondHead, start, open, stop, close, discovery, git, head, audit }
+    /** Reads completed synthetic native records without credentials.
+     * @returns Native protocol audit records.
+     */
+    async function nativeAudit(): Promise<NativeAudit[]> { return events<NativeAudit>(nativeAuditPath) }
+    /**
+     * Atomically releases one synthetic answer without issuing any real inference request.
+     * @param input Native prompt ordinal to release.
+     * @param outcome Synthetic terminal outcome.
+     */
+    async function answer(input: number, outcome: 'succeeded' | 'failed'): Promise<void> {
+      await writeFile(nativeControl + '.next', JSON.stringify({ input, outcome }), { mode: 0o600 })
+      await rename(nativeControl + '.next', nativeControl)
+    }
+    return { directory, cache, stateFile, upstream, mergeBase, baseTip, firstHead, secondHead, start, open, stop, close, discovery, git, head, audit, nativeAudit, answer }
   } catch (failure: unknown) {
     await close()
     throw failure

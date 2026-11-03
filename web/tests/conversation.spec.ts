@@ -218,6 +218,7 @@ test('lost observation reconnects read-only and Stop requires a terminal snapsho
   await page.screenshot({ path: testInfo.outputPath('real-conversation-stopping.png') })
   await snapshot(page, answer, { state: 'interrupted', text: 'Synthetic partial.', stopRequested: true }, true)
   await expect(page.getByText('Interrupted — confirmed', { exact: true })).toBeVisible()
+  await expect(page.getByText('Stop requested. Termination is not yet confirmed.', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Send follow-up', exact: true })).toBeEnabled()
   expect(f.answers).toHaveLength(1)
 })

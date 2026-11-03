@@ -85,6 +85,7 @@ export function useConversations(client: () => RuntimeClient | null): Conversati
         if (!activeAnswer(turn.answer) && !turn.answer.executionUnknown) return
         turn.answer = { ...snapshot, stopRequested: turn.answer.stopRequested || snapshot.stopRequested }
         turn.observation = activeAnswer(snapshot) ? 'watching' : 'done'
+        if (!activeAnswer(snapshot)) turn.stopNotice = ''
       })
       if (!controller.signal.aborted && epoch === generation && client() === connection) turn.observation = 'done'
     } catch {

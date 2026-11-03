@@ -8,7 +8,7 @@ A local pull-request explainer. **Real pinned Files changed + streamed questions
 
 Go **1.26.5** · Node **26.5.0** · npm **11.17.0**
 
-Browser checks also need Playwright Chromium and its system libraries. Tests use offline fixtures, not provider logins or paid requests. Real source loading needs native Git and existing repository access; optional authenticated `gh` resolves the actual PR target. No harness is needed for source browsing.
+Browser checks also need Playwright Chromium and its system libraries. Tests use offline fixtures, not provider logins or paid requests. Real source loading needs native Git and existing repository access; optional authenticated `gh` resolves the actual PR target. No harness is needed for source browsing. Real questions require an already-installed **OpenCode 2.1.4** with existing provider/default-model configuration; Sheldon does not install or configure it. Current question integration evidence is offline, not a live-provider compatibility claim.
 
 ## Develop
 
@@ -75,6 +75,8 @@ npm exec --workspace=@sheldon/web -- playwright install chromium # first run
 npm run test:web
 npm run test:release # clean source build + isolated binary/browser checks (Linux/macOS)
 npm run test --workspace=@sheldon/web -- --config playwright.release.config.ts release-source.spec.ts # native offline PR flow only
+npm run test --workspace=@sheldon/web -- development-question.spec.ts # actual Go/Vite/Git + synthetic native answers
+npm run test --workspace=@sheldon/web -- --config playwright.release.config.ts release-question.spec.ts # same flow through clean embedded release
 ```
 
 Run the frontend and release browser suites separately; they share Playwright's output directory.
@@ -84,6 +86,8 @@ Run the frontend and release browser suites separately; they share Playwright's 
 Release browser checks build a disposable application-source copy without `refs/` or existing bundles, using installed dependencies. They remove the copy before running only the binary with private temporary storage and no Node on its PATH. This does not regenerate the repository's embedded assets; run `npm run build` before release-tag Go checks.
 
 The native-source release test needs Go and Git to build disposable tools and local PR objects. It exercises two PRs, explicit Git-only base selection, refresh/retry, restart/cache reuse and active-fetch shutdown through the standalone CLI. Test-only `gh`, Git transport and desktop-opener fixtures stay offline; source HTTP responses are not mocked. No GitHub login, provider setup or live requests are needed.
+
+The question integration tests use actual browser actions, managed native Git source and production HTTP/SSE handlers, without browser HTTP mocks. A disposable Go executable simulates only the native OpenCode protocol/inference. Both development and clean-source release flows cover source-bound prompts, streaming, shared-session follow-ups, cross-tab busy rejection, separate PRs, targeted Stop, failure/recovery and shutdown/restart. Release application processes have no Node on PATH. Saved conversations/restart recovery remain future work; these tests explicitly prove runtime question state is lost while the Git cache is reused.
 
 ## Layout
 
