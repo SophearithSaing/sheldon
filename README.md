@@ -86,7 +86,8 @@ internal/app/        Writer lifecycle, PR index and source orchestration
 internal/githubpr/   Canonical PR/revision contracts (no fetching)
 internal/github/     Optional gh target-branch resolution
 internal/git/        Managed fetch, pinned worktrees and unified diffs
-internal/opencode/   Restricted native service/session adapter (not connected to PRs yet)
+internal/question/   Runtime-only PR-revision sessions, admission and pinned question context
+internal/opencode/   Restricted native service/session adapter (no prompt dispatch yet)
 internal/ui/         Embedded release shell / asset-free development fallback
 scripts/build.js     Frontend → embed copy → Go build
 web/                 Vue + Slate shell/fixtures + browser tests

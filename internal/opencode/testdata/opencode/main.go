@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -73,7 +74,7 @@ func main() {
 	done := make(chan struct{})
 	trigger := make(chan struct{}, 1)
 	var mu sync.Mutex
-	var session map[string]any
+	sessions := make(map[string]map[string]any)
 	defaultReads := 0
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		username, password, ok := r.BasicAuth()
@@ -144,10 +145,20 @@ func main() {
 				}
 			}
 		case r.Method == "POST" && r.URL.Path == "/api/session":
+			if mode == "create-hang" {
+				os.WriteFile(os.Getenv("SHELDON_NATIVE_CONTROL")+".started", []byte("started"), 0600)
+				<-r.Context().Done()
+				return
+			}
 			var input map[string]any
 			json.Unmarshal(body, &input)
 			mu.Lock()
-			session = map[string]any{"id": "ses_fixture", "location": input["location"], "permissions": input["permissions"], "model": input["model"]}
+			id := "ses_fixture"
+			if len(sessions) > 0 && mode != "duplicate-session" {
+				id += "_" + strconv.Itoa(len(sessions)+1)
+			}
+			session := map[string]any{"id": id, "location": input["location"], "permissions": input["permissions"], "model": input["model"]}
+			sessions[id] = session
 			switch mode {
 			case "session-model":
 				session["model"] = map[string]string{"providerID": "other", "id": "fallback"}
@@ -160,14 +171,21 @@ func main() {
 			}
 			json.NewEncoder(w).Encode(map[string]any{"data": session})
 			mu.Unlock()
-		case r.Method == "GET" && r.URL.Path == "/api/session/ses_fixture":
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/session/"):
 			mu.Lock()
-			if mode == "get-mismatch" {
+			session := sessions[strings.TrimPrefix(r.URL.Path, "/api/session/")]
+			control, _ := os.ReadFile(os.Getenv("SHELDON_NATIVE_CONTROL"))
+			if string(control) == "missing-session" || session == nil {
+				mu.Unlock()
+				w.WriteHeader(404)
+				return
+			}
+			if mode == "get-mismatch" || string(control) == "changed-session" {
 				session["model"] = map[string]string{"providerID": "other", "id": "changed"}
 			}
 			json.NewEncoder(w).Encode(map[string]any{"data": session})
 			mu.Unlock()
-		case r.URL.Path == "/api/session/ses_fixture/permission":
+		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/api/session/") && strings.HasSuffix(r.URL.Path, "/permission"):
 			var input struct {
 				Action    string   `json:"action"`
 				Resources []string `json:"resources"`

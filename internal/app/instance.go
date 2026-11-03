@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/SophearithSaing/sheldon/internal/git"
+	"github.com/SophearithSaing/sheldon/internal/question"
 )
 
 // instance holds one stable OS-locked discovery file per data root.
@@ -18,6 +19,10 @@ type instance struct {
 	owned     bool
 	cache     *git.Cache
 	cacheRoot string
+	questions *question.Runtime
+	closing   bool
+	closeOnce sync.Once
+	closeErr  error
 }
 
 type record struct {
@@ -45,6 +50,9 @@ func openInstance(dataDir string) (*instance, error) {
 func (i *instance) acquire() (bool, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	if i.closing {
+		return false, errors.New("instance is closing")
+	}
 	if i.owned {
 		return true, nil
 	}
@@ -57,7 +65,7 @@ func (i *instance) acquire() (bool, error) {
 func (i *instance) publish(r record) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if !i.owned {
+	if !i.owned || i.closing {
 		return errors.New("writer lock required")
 	}
 	data, err := json.Marshal(r)
@@ -85,17 +93,26 @@ func (i *instance) read() (record, error) {
 	return r, nil
 }
 
-// close releases the OS lock and clears an owned record.
+// close drains owned questions/cache before clearing discovery and releasing the OS lock.
 func (i *instance) close() error {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	var err error
-	if i.cache != nil {
-		err = i.cache.Close()
-	}
-	if i.owned {
-		err = errors.Join(err, i.file.Truncate(0))
-	}
-	i.owned = false
-	return errors.Join(err, i.file.Close())
+	i.closeOnce.Do(func() {
+		i.mu.Lock()
+		i.closing = true
+		questions := i.questions
+		i.mu.Unlock()
+		if questions != nil {
+			i.closeErr = questions.Close()
+		}
+		i.mu.Lock()
+		defer i.mu.Unlock()
+		if i.cache != nil {
+			i.closeErr = errors.Join(i.closeErr, i.cache.Close())
+		}
+		if i.owned {
+			i.closeErr = errors.Join(i.closeErr, i.file.Truncate(0))
+		}
+		i.owned = false
+		i.closeErr = errors.Join(i.closeErr, i.file.Close())
+	})
+	return i.closeErr
 }

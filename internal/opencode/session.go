@@ -93,6 +93,17 @@ func (s *Service) CreateSession(ctx context.Context, directory string) (*Session
 		s.cancel(ErrRestricted)
 		return nil, ErrRestricted
 	}
+	s.sessionMu.Lock()
+	if s.sessionIDs == nil {
+		s.sessionIDs = make(map[string]bool)
+	}
+	duplicate := s.sessionIDs[result.Data.ID]
+	s.sessionIDs[result.Data.ID] = true
+	s.sessionMu.Unlock()
+	if duplicate {
+		s.cancel(ErrRestricted)
+		return nil, ErrRestricted
+	}
 	session := &Session{service: s, info: result.Data}
 	if err := s.ValidateSession(ctx, session); err != nil {
 		return nil, err

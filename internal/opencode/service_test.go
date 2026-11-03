@@ -310,3 +310,19 @@ func TestSessionKeepsEffectiveModelAndRejectsForeignBindings(t *testing.T) {
 		t.Fatal("invalid binding/directory made a native request")
 	}
 }
+
+func TestNativeCreationCannotAliasAnExistingSession(t *testing.T) {
+	fixture(t, "duplicate-session")
+	s, err := Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	directory := t.TempDir()
+	if _, err := s.CreateSession(context.Background(), directory); err != nil {
+		t.Fatal(err)
+	}
+	if session, err := s.CreateSession(context.Background(), directory); !errors.Is(err, ErrRestricted) || session != nil {
+		t.Fatal("native create aliased an existing session")
+	}
+}

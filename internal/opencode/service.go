@@ -34,18 +34,20 @@ var (
 
 // Service owns only its private child, local transport and temporary startup directory.
 type Service struct {
-	ctx       context.Context
-	cancel    context.CancelCauseFunc
-	child     *process.Process
-	transport *http.Transport
-	client    *http.Client
-	base      string
-	password  string
-	directory string
-	closed    sync.Once
-	readDone  chan struct{}
-	guardDone chan struct{}
-	closeErr  error
+	ctx        context.Context
+	cancel     context.CancelCauseFunc
+	child      *process.Process
+	transport  *http.Transport
+	client     *http.Client
+	base       string
+	password   string
+	directory  string
+	closed     sync.Once
+	readDone   chan struct{}
+	guardDone  chan struct{}
+	closeErr   error
+	sessionMu  sync.Mutex
+	sessionIDs map[string]bool
 }
 
 // Start verifies and starts the installed native executable without contacting a shared service.
