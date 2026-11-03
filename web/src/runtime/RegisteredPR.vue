@@ -2,12 +2,13 @@
 import { computed, nextTick, onUnmounted, ref, shallowRef, watch } from 'vue'
 import WorkspaceShell from '../components/WorkspaceShell.vue'
 import ChangedFileTree from '../components/ChangedFileTree.vue'
-import SourceDiff from '../components/SourceDiff.vue'
+import SourceQuestions from './SourceQuestions.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import OpenPR from './OpenPR.vue'
 import { lineCounts, type SourceRequest, type SourceResponse, type SourceFile, type PinnedDiff } from './source'
 import type { DiffLine } from '../components/diff'
 import type { ReviewState, RuntimeClient, RegisteredPR } from './client'
+import type { InitialQuestion, QuestionAnswer } from './questions'
 
 const props = defineProps<{ reviewId: string; reviewState: ReviewState; client: RuntimeClient | null }>()
 const source = shallowRef<SourceResponse>()
@@ -21,6 +22,19 @@ const search = ref('')
 const branch = ref('')
 const sourceHeading = ref<HTMLElement>()
 const sourcePane = ref<HTMLElement>()
+const workspace = ref<InstanceType<typeof WorkspaceShell>>()
+const drafting = ref(false)
+const conversationOpen = ref(false)
+const admissions = ref<{ answer: QuestionAnswer; input: InitialQuestion }[]>([])
+const currentAnswer = ref<QuestionAnswer>()
+const stopPending = ref(false)
+const stopNotice = ref('')
+const activeMarkers = computed((): { answer: QuestionAnswer; anchor: InitialQuestion['anchor'] }[] => admissions.value.filter((item): boolean => item.answer.revisionID === diff.value?.revisionID && item.input.anchor.fileID === active.value?.id).map((item): { answer: QuestionAnswer; anchor: InitialQuestion['anchor'] } => ({ answer: item.answer, anchor: item.input.anchor })))
+const questionCounts = computed((): Record<string, number> => {
+  const result: Record<string, number> = {}
+  for (const item of admissions.value) if (item.answer.revisionID === diff.value?.revisionID) result[item.input.anchor.fileID] = (result[item.input.anchor.fileID] ?? 0) + 1
+  return result
+})
 let controller: AbortController | undefined
 let lastAction: SourceRequest = { action: 'load' }
 const pr = computed((): RegisteredPR | undefined => displayed.value?.pr ?? source.value?.pr ?? props.reviewState.pr)
@@ -44,6 +58,11 @@ function reset(): void {
   selected.value = ''
   branch.value = ''
   search.value = ''
+  drafting.value = false
+  admissions.value = []
+  currentAnswer.value = undefined
+  conversationOpen.value = false
+  stopNotice.value = ''
 }
 
 /** Cancels only source work and returns keyboard focus to its surviving region. */
@@ -66,6 +85,7 @@ async function cancelSource(): Promise<void> {
  */
 async function load(input: SourceRequest = { action: 'load' }): Promise<void> {
   if (!props.client || pending.value) return
+  if (drafting.value) { notice.value = 'Finish or discard the pinned question draft before replacing source.'; return }
   const current = new AbortController()
   const requestedID = props.reviewId
   const client = props.client
@@ -123,6 +143,7 @@ function selectBase(): void {
  * @param id Revision-scoped changed file reference.
  */
 async function selectFile(id: string): Promise<void> {
+  if (drafting.value && id !== selected.value) { notice.value = 'Finish or discard the pinned question draft before changing files.'; return }
   selected.value = id
   await nextTick()
   sourceHeading.value?.focus()
@@ -136,12 +157,58 @@ function displayLines(): DiffLine[] {
   const result: DiffLine[] = []
   for (const hunk of active.value?.hunks ?? []) {
     for (const [index, line] of hunk.lines.entries()) result.push({
-      id: line.id, base: line.oldLine ?? null, head: line.newLine ?? null,
+      id: line.id, hunkID: hunk.id, base: line.oldLine ?? null, head: line.newLine ?? null,
       kind: line.sign === '+' ? 'added' : line.sign === '-' ? 'removed' : 'context', text: line.text, noNewline: line.noNewline,
       hunkHeader: index === 0 ? `@@ -${hunk.old.start},${hunk.old.count} +${hunk.new.start},${hunk.new.count} @@${hunk.section}` : undefined,
     })
   }
   return result
+}
+
+/**
+ * Adds one validated admission and hands it to the runtime-only panel without claiming completion.
+ * @param answer Exact submitted answer identity.
+ * @param input Original question and pinned selection.
+ */
+function admitted(answer: QuestionAnswer, input: InitialQuestion): void {
+  if (!admissions.value.some((item): boolean => item.answer.answerID === answer.answerID)) admissions.value.push({ answer, input })
+  currentAnswer.value = answer
+  conversationOpen.value = true
+  stopNotice.value = ''
+}
+
+/**
+ * Guards draft navigation and removes only feedback belonging to a resolved draft guard.
+ * @param active Whether a pinned draft still needs an explicit decision.
+ */
+function guardDraft(active: boolean): void {
+  drafting.value = active
+  if (!active && notice.value.startsWith('Finish or discard the pinned question draft')) notice.value = ''
+}
+
+/**
+ * Opens a marker's own admission without changing source selection or its bound revision.
+ * @param answer The marker's original answer.
+ * @param trigger Marker control used for focus restoration.
+ */
+function openAnswer(answer: QuestionAnswer, trigger: HTMLElement): void {
+  currentAnswer.value = answer
+  stopNotice.value = ''
+  void workspace.value?.openConversation(trigger)
+}
+
+/** Requests Stop only for the displayed admission and never treats acknowledgement as termination. */
+async function stopAnswer(): Promise<void> {
+  const answer = currentAnswer.value
+  const client = props.client
+  if (!answer || !client || stopPending.value) return
+  stopPending.value = true
+  try {
+    await client.stopAnswer(answer, AbortSignal.timeout(10000))
+    if (currentAnswer.value?.answerID === answer.answerID && props.client === client) stopNotice.value = 'Stop requested for this answer. Termination is not yet confirmed; a completed answer is unaffected.'
+  } catch {
+    if (currentAnswer.value?.answerID === answer.answerID && props.client === client) stopNotice.value = 'Cannot confirm the Stop request. Execution may still be active.'
+  } finally { stopPending.value = false }
 }
 watch((): RuntimeClient | null => props.client, reset)
 watch((): string => props.reviewId, reset)
@@ -156,7 +223,7 @@ onUnmounted(reset)
       <span>Registered PR</span><OpenPR :client="client" /><slot name="runtime-trigger" />
     </header>
     <slot name="runtime-panel" />
-    <WorkspaceShell v-if="reviewState.status === 'registered' && pr" :has-file-rail="!!diff && files.length > 0" conversation-title="Unavailable">
+    <WorkspaceShell v-if="reviewState.status === 'registered' && pr" ref="workspace" v-model:conversation-open="conversationOpen" :has-file-rail="!!diff && files.length > 0" conversation-title="Question admission">
       <template #summary>
         <h1 class="pr-title">{{ pr.title ?? `Pull request #${pr.number}` }}</h1>
         <p class="fixture-meta"><span>{{ pr.owner }}/{{ pr.repository }} #{{ pr.number }}</span> · <span>{{ pr.author ? `Author: ${pr.author}` : 'Author unavailable' }}</span><span v-if="diff"> · {{ diff.revision.baseBranch }} · {{ diff.revision.mergeBaseSHA.slice(0, 8) }} → {{ diff.revision.headSHA.slice(0, 8) }}</span></p>
@@ -165,7 +232,17 @@ onUnmounted(reset)
       <template #tabs>
         <nav class="real-tabs" aria-label="PR views"><UiButton variant="quiet" aria-current="page">Files changed<span v-if="diff"> ({{ files.length }})</span></UiButton><UiButton v-for="label in ['Questions', 'Quiz', 'Semantic review']" :key="label" variant="quiet" disabled title="Not implemented for real PRs">{{ label }} — unavailable</UiButton></nav>
       </template>
-      <template #files><ChangedFileTree v-model="search" :files="treeFiles" :current="selected" :counts="{}" :viewed="{}" real @select="selectFile" /></template>
+      <template #files><ChangedFileTree v-model="search" :files="treeFiles" :current="selected" :counts="questionCounts" :viewed="{}" real @select="selectFile" /></template>
+      <template #conversation>
+        <section v-if="currentAnswer" class="admission-panel" aria-label="Submitted question">
+          <h3>{{ currentAnswer.question }}</h3>
+          <p>Admitted to the backend; this is not completion proof. Live answer display and follow-ups are not connected yet.</p>
+          <p>Revision {{ currentAnswer.revisionID.slice(0, 8) }} · Shared PR-revision context.</p>
+          <p>Runtime only; lost on restart. Disconnecting does not stop execution. The backend bounds execution to five minutes including recovery.</p>
+          <UiButton :busy="stopPending" :disabled="stopPending || !client" @click="stopAnswer">Stop this answer</UiButton>
+          <p v-if="stopNotice" role="status">{{ stopNotice }}</p>
+        </section>
+      </template>
       <template #default>
         <section id="review-content" ref="sourcePane" class="source-pane" tabindex="-1" :aria-busy="pending && !diff" aria-label="Pinned PR source">
           <div v-if="diff" class="refresh-controls">
@@ -192,9 +269,9 @@ onUnmounted(reset)
           <template v-if="diff">
             <div class="revision-bar"><p>{{ files.length }} changed files · +{{ counts.added }} / −{{ counts.removed }} text lines</p><details><summary>Pinned revision {{ diff.revisionID.slice(0, 8) }}</summary><dl><dt>Base branch / tip</dt><dd>{{ diff.revision.baseBranch }} / {{ diff.revision.baseSHA }}</dd><dt>Merge base</dt><dd>{{ diff.revision.mergeBaseSHA }}</dd><dt>Head</dt><dd>{{ diff.revision.headSHA }}</dd><dt>Base selection</dt><dd>{{ diff.revision.baseSource === 'github' ? 'GitHub metadata' : 'Explicit Git-only selection; target unverified by GitHub' }}</dd><dt>Revision</dt><dd>{{ diff.revisionID }}</dd></dl></details></div>
             <template v-if="active">
-              <header class="file-header"><h2 ref="sourceHeading" tabindex="-1">{{ active.newPath ?? active.oldPath }}</h2><div class="file-tools"><span>{{ active.status }} · {{ active.kind }} · +{{ currentCounts.added }} / −{{ currentCounts.removed }}</span><span>Unified</span><UiButton variant="quiet" disabled title="Split diff is not implemented">Split — unavailable</UiButton><UiButton disabled title="No agent or question backend is connected">Ask — unavailable</UiButton></div><p v-if="active.oldPath && active.newPath && active.oldPath !== active.newPath">Renamed from {{ active.oldPath }}</p><p v-if="active.oldMode !== active.newMode">Mode {{ active.oldMode }} → {{ active.newMode }}</p></header>
-              <SourceDiff v-if="active.kind === 'text'" class="real-source" :lines="lines" :label="`Unified diff for ${active.newPath ?? active.oldPath}`" :selection="null" :selectable="false" :highlight="false" real />
-              <div v-else class="source-notice" role="status"><h3>{{ active.kind }} change</h3><p>{{ active.reason ?? 'This change has no unified text lines. No source lines are invented.' }}</p><p v-if="active.kind === 'submodule'">Submodules are not initialized.</p><p>Old object: {{ active.oldObject }}</p><p>New object: {{ active.newObject }}</p></div>
+              <header class="file-header"><h2 ref="sourceHeading" tabindex="-1">{{ active.newPath ?? active.oldPath }}</h2><div class="file-tools"><span>{{ active.status }} · {{ active.kind }} · +{{ currentCounts.added }} / −{{ currentCounts.removed }}</span><span>Unified</span><UiButton variant="quiet" disabled title="Split diff is not implemented">Split — unavailable</UiButton></div><p v-if="active.oldPath && active.newPath && active.oldPath !== active.newPath">Renamed from {{ active.oldPath }}</p><p v-if="active.oldMode !== active.newMode">Mode {{ active.oldMode }} → {{ active.newMode }}</p></header>
+              <SourceQuestions v-if="active.kind === 'text' && client" :key="diff.revisionID" :diff="diff" :file="active" :lines="lines" :client="client" :source-pending="pending" :markers="activeMarkers" @guard="guardDraft" @admitted="admitted" @open="openAnswer" />
+              <div v-else class="source-notice" role="status"><h3>{{ active.kind }} change</h3><p>{{ active.reason ?? 'This change has no unified text lines. No source lines are invented.' }}</p><p>Line questions are unavailable for non-text changes.</p><p v-if="active.kind === 'submodule'">Submodules are not initialized.</p><p>Old object: {{ active.oldObject }}</p><p>New object: {{ active.newObject }}</p></div>
             </template>
             <div v-else class="source-notice" role="status"><h2>No changes in this comparison</h2><p>The pinned merge base and head have an empty diff.</p></div>
           </template>
@@ -247,6 +324,7 @@ onUnmounted(reset)
 .source-skeleton span { height: 0.75rem; background: var(--color-surface); border-radius: var(--radius-control); }
 .source-skeleton span:nth-child(even) { width: 65%; }
 .real-source { flex-shrink: 0; }
+.admission-panel { display: grid; align-content: start; gap: var(--space-4); padding: var(--space-4); overflow-wrap: anywhere; font-size: var(--text-small); }
 .refresh-controls { flex-shrink: 0; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); font-size: var(--text-small); overflow-wrap: anywhere; }
 .refresh-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .refresh-controls p { margin-top: var(--space-2); }

@@ -1,4 +1,5 @@
 import { parseSourceResponse, pinnedID, type SourceRequest, type SourceResponse } from './source'
+import { parseQuestionAnswer, questionError, QuestionAdmissionError, type InitialQuestion, type QuestionAnswer } from './questions'
 
 let launchToken = ''
 
@@ -17,6 +18,20 @@ export interface RuntimeClient {
    * @returns Validated source result.
    */
   source(id: string, input: SourceRequest, signal: AbortSignal): Promise<SourceResponse>
+  /**
+   * Admits one explicit question without retrying uncertain delivery.
+   * @param id Registered PR identifier.
+   * @param input Exact pinned source and literal question.
+   * @param signal Admission observation cancellation signal.
+   * @returns Validated admission snapshot, not completion proof.
+   */
+  askQuestion(id: string, input: InitialQuestion, signal: AbortSignal): Promise<QuestionAnswer>
+  /**
+   * Requests interruption of one exact admitted answer.
+   * @param answer Original routed answer snapshot.
+   * @param signal Request cancellation signal.
+   */
+  stopAnswer(answer: QuestionAnswer, signal: AbortSignal): Promise<void>
 }
 
 export interface RegisteredPR {
@@ -243,5 +258,48 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
     }
     return result
   }
-  return { openPR, source }
+  /**
+   * Sends explicit pinned input once and accepts only a scoped admission result.
+   * @param id Routed PR identifier.
+   * @param input Immutable question request.
+   * @param signal Admission request cancellation signal.
+   * @returns Public admission snapshot.
+   */
+  async function askQuestion(id: string, input: InitialQuestion, signal: AbortSignal): Promise<QuestionAnswer> {
+    if (!id || reviewID(`/reviews/${id}`) !== id || input.revision.prID !== id || questionError(input.question)) throw new QuestionAdmissionError('Invalid question or PR context.', false)
+    if (new TextEncoder().encode(JSON.stringify(input)).length > 24 * 1024) throw new QuestionAdmissionError('The encoded question exceeds the request size limit. Shorten it; your draft was retained.', false)
+    const revisionID = await pinnedID(input.revision)
+    try {
+      const response = await post(`/api/reviews/${id}/questions`, input, signal)
+      if (response.status !== 202) {
+        const messages: Record<number, string> = {
+          400: 'The selection or question is invalid. Your draft was retained.',
+          409: 'This shared revision session is busy or unavailable. Your draft was retained; retry only when it is safe.',
+          410: 'The original pinned source is unavailable. No newer source was substituted.',
+          422: 'The question or source exceeds backend limits. Your draft was retained.',
+          503: 'The original question runtime is unavailable. Your draft was retained.',
+        }
+        const message = messages[response.status]
+        throw new QuestionAdmissionError(message ?? 'Question delivery may be uncertain. Your draft was retained; do not resend automatically.', !message)
+      }
+      const text = await response.text()
+      if (text.length > 2 * 1024 * 1024) throw new Error('Oversized admission')
+      const answer = parseQuestionAnswer(JSON.parse(text), id, revisionID, input)
+      if (answer.state !== 'pending' || answer.text !== '' || answer.stopRequested || answer.executionUnknown) throw new Error('Unexpected admission state')
+      return answer
+    } catch (failure: unknown) {
+      if (failure instanceof QuestionAdmissionError) throw failure
+      throw new QuestionAdmissionError('Question delivery may be uncertain. Your draft was retained; do not resend automatically.', true)
+    }
+  }
+  /**
+   * Requests exact-answer Stop without interpreting its acknowledgement as completion.
+   * @param answer Admitted answer identity.
+   * @param signal Stop request cancellation signal.
+   */
+  async function stopAnswer(answer: QuestionAnswer, signal: AbortSignal): Promise<void> {
+    const response = await post(`/api/reviews/${answer.prID}/threads/${answer.threadID}/answers/${answer.answerID}/stop`, { revisionID: answer.revisionID }, signal)
+    if (!response.ok) throw new Error('Cannot confirm the Stop request. Execution may still be active.')
+  }
+  return { openPR, source, askQuestion, stopAnswer }
 }

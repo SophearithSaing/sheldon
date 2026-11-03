@@ -8,6 +8,9 @@ const props = withDefaults(defineProps<{
   highlight?: boolean
   selectable?: boolean
   real?: boolean
+  insertAfter?: string
+  markedLines?: readonly string[]
+  selectedHunk?: string
 }>(), { selectable: true })
 const emit = defineEmits<{ select: [side: 'base' | 'head', line: number, extend: boolean] }>()
 
@@ -17,6 +20,7 @@ const emit = defineEmits<{ select: [side: 'base' | 'head', line: number, extend:
  * @returns Whether the line belongs to the selected range.
  */
 function selected(line: DiffLine): boolean {
+  if (props.selectedHunk && line.hunkID === props.selectedHunk) return true
   const range = props.selection
   if (!range) return false
   const number = line[range.side]
@@ -78,6 +82,7 @@ function tokens(text: string): { text: string; tone: string }[] {
             </td>
           </tr>
           <tr v-if="line.noNewline" class="diff-omission"><td colspan="4">\ No newline at end of file</td></tr>
+          <tr v-if="line.id && (line.id === insertAfter || markedLines?.includes(line.id))" class="diff-insertion"><td colspan="4"><div class="diff-inline"><slot name="inline" :line-id="line.id" /></div></td></tr>
         </template>
       </tbody>
     </table>
@@ -86,6 +91,7 @@ function tokens(text: string): { text: string; tone: string }[] {
 
 <style scoped>
 .sample-source {
+  container-type: inline-size;
   position: relative;
   min-width: 0;
   overflow-x: auto;
@@ -132,6 +138,7 @@ function tokens(text: string): { text: string; tone: string }[] {
 .syntax-function { color: var(--color-code-function); }
 .syntax-comment { color: var(--color-code-comment); }
 .diff-table tr.is-selected { background: var(--color-accent-soft); outline: 1px solid var(--color-accent-border); outline-offset: -1px; }
+.diff-inline { position: sticky; left: 0; width: calc(100cqw - 2px); white-space: normal; font-family: var(--font-ui); }
 .is-selected .line-number { color: var(--color-accent); }
 .line-sign {
   width: 3ch;

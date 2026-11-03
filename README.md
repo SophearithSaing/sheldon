@@ -2,7 +2,7 @@
 
 **Don't just merge it. Understand it.**
 
-A local pull-request explainer. **Real pinned Files changed + separate Slate UI previews**—the question backend supports execution/streaming/Stop; real question UI and durable review saving remain unimplemented.
+A local pull-request explainer. **Real pinned Files changed + inline question admission + separate Slate UI previews**—streamed conversation display, follow-ups and durable review saving remain unimplemented.
 
 ## Toolchains
 
@@ -23,7 +23,11 @@ SHELDON_DEV_ORIGIN=http://127.0.0.1:5173 go run ./cmd/sheldon # terminal 2: Go
 
 UI: <http://127.0.0.1:5173> · backend: `127.0.0.1:7331`. Stop any existing standalone instance first. The CLI opens the authenticated UI; after reloading, rerun the CLI in another terminal to reconnect.
 
-Connect the runtime, choose **Open a PR**, then **Register and open PR**. Opening from an existing PR uses a separate browser tab; allow that tab to preserve the current pinned view. On the registered page choose **Load pinned source**. If GitHub metadata is unavailable, explicitly choose **Use Git-only fallback**, select a fetched upstream branch, then **Load selected base**. No default target is assumed. Registration and source errors are separate; retry is explicit. Real PR pages offer file filtering and a pinned unified diff, not Ask, Split, Questions, Quiz or Semantic review.
+Connect the runtime, choose **Open a PR**, then **Register and open PR**. Opening from an existing PR uses a separate browser tab; allow that tab to preserve the current pinned view. On the registered page choose **Load pinned source**. If GitHub metadata is unavailable, explicitly choose **Use Git-only fallback**, select a fetched upstream branch, then **Load selected base**. No default target is assumed. Registration and source errors are separate; retry is explicit. Real PR pages offer file filtering and a pinned unified diff. Split, Questions, Quiz and Semantic review remain unavailable.
+
+For a text diff, choose gutter line numbers (Shift extends on one side within one hunk) or **Select hunk**, then **Ask about selection**. The inline composer is pinned to that file/side/range/revision. **Send question** or Ctrl/Cmd+Enter explicitly starts backend work; Enter inserts a newline. Cancel retains the draft; resume or explicitly discard it before changing files/selection or refreshing. Native text selection/copy never submits. Non-text changes have no line questions.
+
+Successful admission adds one marker and opens a runtime-only admission panel with **Stop this answer**. **Live answers and follow-ups are not displayed yet**; admission and Stop acknowledgements are not completion proof. Rejected requests retain drafts without creating markers. Uncertain delivery disables resending rather than automatically retrying. Reload/disconnect clears page-memory drafts and markers, not accepted backend execution.
 
 **Sample UI previews** opens the separate `/?preview=library` entry. Its Files changed, Questions, Quiz, Semantic review, All PRs and Configuration use fictional data and page-memory simulations, never real PR source or inference.
 
@@ -46,7 +50,7 @@ Choose **Refresh source** to fetch current tips for this tab only. The displayed
 
 Source uses OS cache storage (`~/.cache/sheldon` on Linux, `%LOCALAPPDATA%\sheldon\cache` on Windows), not the project directory. Worktrees and diffs are bounded; unsafe cache state, unavailable history or oversized comparisons produce errors rather than partial source. Existing credential helpers/SSH routes remain trusted. A worktree is not an agent sandbox.
 
-Question backend operations are explicit, authenticated and runtime-only; browsing never starts inference. Execution uses the pinned OpenCode 2.1.4 adapter and existing provider setup, without installing or configuring either. Browser disconnect stops observation, not execution. A worker has a 4m50s deadline plus up to 10s of reconciliation; Stop targets its active answer/session and is not completion proof. Native stream loss permits bounded history checks, never prompt replay. An unknown outcome blocks that shared revision session; shutdown cancels owned activity. Restart loses question state. Real Ask controls remain disabled pending UI integration.
+Question backend operations are explicit, authenticated and runtime-only; browsing never starts inference. Execution uses the pinned OpenCode 2.1.4 adapter and existing provider setup, without installing or configuring either. Browser disconnect stops observation, not execution. A worker has a 4m50s deadline plus up to 10s of reconciliation; Stop targets its active answer/session and is not completion proof. Native stream loss permits bounded history checks, never prompt replay. An unknown outcome blocks that shared revision session; shutdown cancels owned activity. Restart loses question state.
 
 ## Check & build
 
