@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/SophearithSaing/sheldon/internal/githubpr"
 )
 
 // Client contacts a verified loopback Sheldon instance.
@@ -98,41 +100,54 @@ func (c *Client) verifyAt(ctx context.Context, target string) error {
 	return nil
 }
 
-// Open forwards a PR-open intent to a verified instance.
-func (c *Client) Open(ctx context.Context, prURL string) error {
+// Open registers a PR with a verified instance and validates the returned route.
+func (c *Client) Open(ctx context.Context, prURL string) (OpenResult, error) {
 	if !c.verified {
-		return errors.New("local instance has not been verified")
+		return OpenResult{}, errors.New("local instance has not been verified")
+	}
+	pr, err := githubpr.ParseURL(prURL)
+	if err != nil {
+		return OpenResult{}, err
 	}
 	data, _ := json.Marshal(map[string]string{"url": prURL})
 	r, err := http.NewRequestWithContext(ctx, "POST", c.origin+"/api/open", bytes.NewReader(data))
 	if err != nil {
-		return errors.New("cannot prepare open request")
+		return OpenResult{}, errors.New("cannot prepare open request")
 	}
 	r.Header.Set("Authorization", "Bearer "+c.token)
 	r.Header.Set("Content-Type", "application/json")
 	response, err := c.http.Do(r)
 	if err != nil {
-		return errors.New("open request failed; delivery may be unknown")
+		return OpenResult{}, errors.New("open request failed; registration may have succeeded; rerun sheldon open to reopen the same PR")
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusAccepted {
-		return errors.New("local instance rejected open request")
+		return OpenResult{}, errors.New("local instance rejected PR registration; check its private prs.json index")
 	}
-	return nil
+	data, err = io.ReadAll(io.LimitReader(response.Body, 4097))
+	var result OpenResult
+	route, _ := githubpr.ReviewPath(pr.ID)
+	if err != nil || len(data) > 4096 || json.Unmarshal(data, &result) != nil || result.PRID != pr.ID || result.Route != route {
+		return OpenResult{}, errors.New("invalid registered PR response; reopen the PR explicitly")
+	}
+	return result, nil
 }
 
 // BrowserURL returns a launch URL with a transient token fragment.
-func (c *Client) BrowserURL() (string, error) {
+func (c *Client) BrowserURL(route string) (string, error) {
 	if !c.verified {
 		return "", errors.New("local instance has not been verified")
 	}
-	return c.origin + "/#token=" + c.token, nil
+	if _, ok := githubpr.ReviewID(route); route != "/" && !ok {
+		return "", errors.New("invalid browser route")
+	}
+	return c.origin + route + "#token=" + c.token, nil
 }
 
 // DevelopmentURL returns a verified development-mode launch URL.
-func (c *Client) DevelopmentURL(ctx context.Context, origin string) (string, error) {
-	if !c.verified {
-		return "", errors.New("local instance has not been verified")
+func (c *Client) DevelopmentURL(ctx context.Context, origin, route string) (string, error) {
+	if _, err := c.BrowserURL(route); err != nil {
+		return "", err
 	}
 	if err := ValidateOrigin(origin); err != nil {
 		return "", err
@@ -140,7 +155,7 @@ func (c *Client) DevelopmentURL(ctx context.Context, origin string) (string, err
 	if err := c.verifyAt(ctx, origin); err != nil {
 		return "", err
 	}
-	return origin + "/#token=" + c.token, nil
+	return origin + route + "#token=" + c.token, nil
 }
 
 // String returns a credential-safe client description.

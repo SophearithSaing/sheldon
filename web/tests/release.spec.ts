@@ -3,7 +3,8 @@ import { readFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import http from 'node:http'
-import { dirname } from 'node:path'
+import { createHash } from 'node:crypto'
+import { dirname, join } from 'node:path'
 
 /**
  * Reads the release binary state written by the release test setup.
@@ -29,9 +30,9 @@ test('isolated release binary serves the authenticated shell, fonts and complete
   page.on('console', (message): void => {
     if (message.type() === 'error') errors.push(message.text())
   })
-  const response = await page.goto(`${url}/#token=${token}`)
+  const response = await page.goto(`${url}/?preview=sample#token=${token}`)
   expect(response?.headers()['content-security-policy']).not.toContain('unsafe-inline')
-  await expect(page).toHaveURL(url + '/')
+  await expect(page).toHaveURL(url + '/?preview=sample')
   await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
   await page.getByRole('button', { name: 'UI preview', exact: true }).click()
   await expect(page.getByText('No PR loaded. No agent connected.', { exact: false })).toBeVisible()
@@ -87,13 +88,15 @@ test('isolated release binary serves the authenticated shell, fonts and complete
     },
   )
   expect(result.stdout + result.stderr).not.toContain(token)
+  const registered = JSON.parse(await readFile(join(dirname(process.env.SHELDON_RELEASE_STATE!), 'prs.json'), 'utf8'))
+  const pr = registered.prs.find((item: { number: string }): boolean => item.number === '8')
+  expect(pr).toBeTruthy()
   await page.goto('about:blank')
-  await page.goto(`${url}/#token=${token}`)
+  await page.goto(`${url}/reviews/${pr.id}#token=${token}`)
   await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
-  await page.getByRole('button', { name: 'Local runtime — Backend connected', exact: true }).click()
-  await expect(page.getByText('Pending open request:', { exact: false })).toContainText(
-    'https://github.com/owner/repo/pull/8',
-  )
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Pull request #8')
+  await expect(page.getByText('https://github.com/owner/repo/pull/8', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'PR registered. Source not loaded.' })).toBeVisible()
 })
 
 /**
@@ -104,7 +107,7 @@ test('release cannot enable the fixture-only control gallery', async ({ page }):
   const { url } = await state()
   await page.goto(`${url}/?fixture=controls`)
   await expect(page.getByRole('heading', { name: 'Slate control fixtures' })).toHaveCount(0)
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Deduplicate concurrent session refreshes')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Open a pull request')
   await expect(page.getByRole('button', { name: 'Connect backend' })).toBeVisible()
 })
 
@@ -137,6 +140,11 @@ test('release paths retain Host/Origin protection, bearer auth and no source or 
     '/assets/missing.js',
     '/route',
     '/assets/',
+    '/prs.json',
+    '/reviews/invalid',
+    '/reviews/' + '0'.repeat(64),
+    '/reviews/' + 'a'.repeat(64) + '/extra',
+    '/reviews/' + 'A'.repeat(64),
   ]) {
     const response = await request.get(url + path, {
       headers: { Authorization: `Bearer ${token}` },
@@ -191,7 +199,7 @@ test('release reload requires explicit reconnecting and wrong proof never receiv
  */
 test('release reconnects manually and disconnects without rebinding sample workspaces', async ({ page }, testInfo): Promise<void> => {
   const { url, token } = await state()
-  await page.goto(`${url}/#token=${token}`)
+  await page.goto(`${url}/?preview=sample#token=${token}`)
   await expect(page.getByRole('status').filter({ hasText: 'Backend connected' })).toBeVisible()
   await page.reload()
   await expect(page.getByLabel('API token', { exact: true })).toHaveValue('')
@@ -218,4 +226,131 @@ test('release reconnects manually and disconnects without rebinding sample works
   expect(await page.evaluate((): number => localStorage.length + sessionStorage.length)).toBe(0)
   expect(await page.content()).not.toContain(token)
   await page.screenshot({ path: testInfo.outputPath('release-disconnected-draft.png') })
+})
+
+/**
+ * Opens registered PRs independently and distinguishes missing PRs from source readiness.
+ * @param fixtures Browser pages and request client.
+ * @param testInfo Screenshot output location.
+ */
+test('registered release routes isolate PRs, reuse aliases and require reconnecting', async ({ page, context, request }, testInfo): Promise<void> => {
+  const { url, token } = await state()
+  const headers = { Authorization: `Bearer ${token}` }
+  const first = await request.post(url + '/api/open', { headers, data: { url: 'https://github.com/route/repo/pull/101' } })
+  expect(first.status()).toBe(202)
+  const a: { prID: string; route: string } = await first.json()
+  const alias = await request.post(url + '/api/open', { headers, data: { url: 'https://github.com/ROUTE/REPO/pull/101/?tab=files#discussion' } })
+  expect(await alias.json()).toEqual(a)
+  await page.goto(url + a.route + '#token=' + token)
+  await expect(page).toHaveURL(url + a.route)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Pull request #101')
+  const second = await request.post(url + '/api/open', { headers, data: { url: 'https://github.com/route/repo/pull/102' } })
+  const b: { prID: string; route: string } = await second.json()
+  expect(a.prID).not.toBe(b.prID)
+  const other = await context.newPage()
+  await other.goto(url + b.route + '#token=' + token)
+  await expect(other.getByRole('heading', { level: 1 })).toHaveText('Pull request #102')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Pull request #101')
+  await expect(page).toHaveURL(url + a.route)
+  expect(await page.content()).not.toContain('Deduplicate concurrent session refreshes')
+  expect(await page.content()).not.toContain(token)
+  expect((await request.get(url + '/api/open', { headers })).status()).toBe(404)
+  await page.screenshot({ path: testInfo.outputPath('registered-review-1440.png'), fullPage: true })
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Connect backend' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Pull request #101' })).toHaveCount(0)
+  await page.getByLabel('API token', { exact: true }).fill(token)
+  await page.getByRole('button', { name: 'Connect backend' }).click()
+  await expect(page.getByRole('heading', { name: 'Pull request #101' })).toBeVisible()
+  expect(await page.evaluate((): number => localStorage.length + sessionStorage.length)).toBe(0)
+  await page.setViewportSize({ width: 700, height: 900 })
+  await page.screenshot({ path: testInfo.outputPath('registered-review-700.png'), fullPage: true })
+  await page.evaluate((): void => { document.documentElement.style.fontSize = '200%' })
+  expect(await page.evaluate((): boolean => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('registered-review-text-scale-200.png'), fullPage: true })
+  await other.goto(url + '/reviews/' + 'e'.repeat(64) + '#token=' + token)
+  await expect(other.getByRole('heading', { name: 'PR not found' })).toBeVisible()
+  await other.screenshot({ path: testInfo.outputPath('registered-review-not-found.png'), fullPage: true })
+  await other.close()
+})
+
+/**
+ * Keeps lookup failures and proof rejection honest on registered routes.
+ * @param fixtures Browser page and request client.
+ * @param testInfo Screenshot output location.
+ */
+test('registered release route errors hide raw details and verify before lookup', async ({ page, request }, testInfo): Promise<void> => {
+  const { url, token } = await state()
+  const response = await request.post(url + '/api/open', { headers: { Authorization: `Bearer ${token}` }, data: { url: 'https://github.com/error/route/pull/303' } })
+  const opened: { prID: string; route: string } = await response.json()
+  await page.route(`**/api/reviews/${opened.prID}`, (route): Promise<void> => route.fulfill({ status: 500, json: { error: 'raw private fixture details' } }))
+  await page.goto(url + opened.route + '#token=' + token)
+  await expect(page.getByText('Cannot read this PR.', { exact: false })).toBeVisible()
+  expect(await page.content()).not.toContain('raw private fixture details')
+  expect(await page.content()).not.toContain(token)
+  await page.screenshot({ path: testInfo.outputPath('registered-review-error.png'), fullPage: true })
+  await page.unrouteAll()
+  await page.reload()
+  let bearerSent = false
+  page.on('request', (request): void => { if (request.headers().authorization) bearerSent = true })
+  await page.route('**/instance-proof', (route): Promise<void> => route.fulfill({ json: { origin: url, proof: 'A'.repeat(43) } }))
+  await page.getByLabel('API token', { exact: true }).fill(token)
+  await page.getByRole('button', { name: 'Connect backend' }).click()
+  await expect(page.getByText('Cannot read this PR.', { exact: false })).toBeVisible()
+  expect(bearerSent).toBe(false)
+  await expect(page.getByRole('heading', { name: 'Pull request #303' })).toHaveCount(0)
+})
+
+/**
+ * Exercises embedded source controls using explicit offline HTTP response fixtures.
+ * @param fixtures Browser page and protected API client.
+ * @param testInfo Screenshot output location.
+ */
+test('release source UI distinguishes metadata fallback, explicit selection and pinned empty source', async ({ page, request }, testInfo): Promise<void> => {
+  const { url, token } = await state()
+  const headers = { Authorization: `Bearer ${token}` }
+  const opened: { prID: string; route: string } = await (await request.post(url + '/api/open', { headers, data: { url: 'https://github.com/release/fixture/pull/801' } })).json()
+  const pr = await (await request.get(url + '/api/reviews/' + opened.prID, { headers })).json()
+  const revision = { prID: opened.prID, baseBranch: 'release/target', baseSource: 'user-selected', baseSHA: 'a'.repeat(40), headSHA: 'c'.repeat(40), mergeBaseSHA: 'b'.repeat(40) }
+  const revisionID = createHash('sha256').update([opened.prID, revision.baseSHA, revision.headSHA, revision.mergeBaseSHA].join('\n')).digest('hex')
+  let calls = 0
+  await page.route(`**/api/reviews/${opened.prID}/source`, async (route): Promise<void> => {
+    calls++
+    const input = route.request().postDataJSON()
+    if (input.action === 'load') await route.fulfill({ json: { state: 'fallback-required', pr } })
+    else if (input.action === 'git-only') await route.fulfill({ json: { state: 'base-selection-required', pr, candidates: [{ branch: revision.baseBranch, sha: revision.baseSHA }] } })
+    else if (input.action === 'refresh') {
+      expect(input.revision).toEqual(revision)
+      if (calls === 4) await route.fulfill({ status: 502, json: { error: 'private fixture diagnostic' } })
+      else await route.fulfill({ json: { state: 'ready', pr, diff: { revision, revisionID, complete: true, files: [] }, requestedRevisionID: revisionID } })
+    }
+    else {
+      expect(input).toEqual({ action: 'select-base', branch: revision.baseBranch, sha: revision.baseSHA })
+      await route.fulfill({ json: { state: 'ready', pr, diff: { revision, revisionID, complete: true, files: [] } } })
+    }
+  })
+  await page.goto(url + opened.route + '#token=' + token)
+  await expect(page.getByRole('heading', { name: 'PR registered. Source not loaded.' })).toBeVisible()
+  expect(calls).toBe(0)
+  await page.getByRole('button', { name: 'Load pinned source' }).click()
+  await page.getByRole('button', { name: 'Use Git-only fallback' }).click()
+  await expect(page.getByLabel('Fetched base branch')).toHaveValue('')
+  await page.getByLabel('Fetched base branch').selectOption(revision.baseBranch)
+  await page.getByRole('button', { name: 'Load selected base', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'No changes in this comparison' })).toBeVisible()
+  expect(calls).toBe(3)
+  await expect(page.getByRole('button', { name: 'Questions — unavailable' })).toBeDisabled()
+  await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Cannot prepare source')
+  await expect(page.getByRole('heading', { name: 'No changes in this comparison' })).toBeVisible()
+  expect(await page.content()).not.toContain('private fixture diagnostic')
+  await expect(page.getByRole('button', { name: 'Verify pinned cache', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Open original snapshot', exact: true })).toHaveCount(0)
+  await expect(page.getByText('Stale / refresh needs attention.', { exact: false })).toBeVisible()
+  await page.getByRole('button', { name: 'Retry source loading', exact: true }).click()
+  await expect(page.getByText('Source unchanged. The displayed revision is still pinned.')).toBeVisible()
+  await expect(page.getByText('Stale / refresh needs attention.', { exact: false })).toHaveCount(0)
+  expect(calls).toBe(5)
+  expect(await page.content()).not.toContain(token)
+  await page.screenshot({ path: testInfo.outputPath('release-pinned-empty-source.png') })
 })

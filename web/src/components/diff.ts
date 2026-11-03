@@ -1,4 +1,6 @@
 export interface DiffLine {
+  id?: string
+  noNewline?: boolean
   hunkHeader?: string
   base: number | null
   head: number | null

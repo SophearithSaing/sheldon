@@ -11,7 +11,7 @@ import (
 
 func TestDevelopmentOriginIsExplicitAndExact(t *testing.T) {
 	const development = "http://127.0.0.1:5173"
-	s, err := Listen("", development)
+	s, err := Listen("", development, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestDevelopmentOriginIsExplicitAndExact(t *testing.T) {
 
 func TestDevelopmentOriginRejectsUnsafeConfiguration(t *testing.T) {
 	for _, origin := range []string{"http://localhost:5173", "http://0.0.0.0:5173", "https://127.0.0.1:5173", "http://127.0.0.1:5173/", "http://127.0.0.1:5173?token=x", "http://user@127.0.0.1:5173", "http://192.0.2.1:5173"} {
-		if s, err := Listen("", origin); err == nil {
+		if s, err := Listen("", origin, nil); err == nil {
 			s.Shutdown(context.Background())
 			t.Fatalf("unsafe origin accepted: %s", origin)
 		}
@@ -68,13 +68,13 @@ func TestDevelopmentURLVerifiesTheProxyBeforeExposingToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.DevelopmentURL(context.Background(), frontend.URL); err == nil {
+	if _, err := c.DevelopmentURL(context.Background(), frontend.URL, "/"); err == nil {
 		t.Fatal("unverified backend exposed token")
 	}
 	if err := c.Verify(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	u, err := c.DevelopmentURL(context.Background(), frontend.URL)
+	u, err := c.DevelopmentURL(context.Background(), frontend.URL, "/")
 	if err != nil || u != frontend.URL+"/#token="+s.APIToken() {
 		t.Fatal("verified proxy did not produce a development URL")
 	}
@@ -85,10 +85,10 @@ func TestDevelopmentURLVerifiesTheProxyBeforeExposingToken(t *testing.T) {
 		writeJSON(w, http.StatusOK, map[string]string{"proof": "wrong"})
 	}))
 	defer unrelated.Close()
-	if _, err := c.DevelopmentURL(context.Background(), unrelated.URL); err == nil {
+	if _, err := c.DevelopmentURL(context.Background(), unrelated.URL, "/"); err == nil {
 		t.Fatal("unrelated listener received launch credential")
 	}
-	if _, err := c.DevelopmentURL(context.Background(), "https://attacker.example"); err == nil {
+	if _, err := c.DevelopmentURL(context.Background(), "https://attacker.example", "/"); err == nil {
 		t.Fatal("external development URL accepted")
 	}
 }

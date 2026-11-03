@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/SophearithSaing/sheldon/internal/githubpr"
 	"github.com/SophearithSaing/sheldon/internal/httpapi"
 	"github.com/SophearithSaing/sheldon/internal/platform"
 )
@@ -18,6 +19,11 @@ import (
 func Run(ctx context.Context, prURL string, stdout, stderr io.Writer) (result error) {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if prURL != "" {
+		if _, err := githubpr.ParseURL(prURL); err != nil {
+			return err
+		}
 	}
 	paths, err := platform.Resolve()
 	if err != nil {
@@ -72,18 +78,29 @@ func Run(ctx context.Context, prURL string, stdout, stderr io.Writer) (result er
 			return errors.New("the running instance uses a different UI origin; stop it before starting development mode")
 		}
 
+		route := "/"
 		if prURL != "" {
 			// Never retry an open with unknown delivery after a network error.
-			if err := client.Open(startup, prURL); err != nil {
+			opened, err := client.Open(startup, prURL)
+			if err != nil {
 				return err
 			}
+			route = opened.Route
 		}
-		return launch(ctx, paths, client, record.URL, record.DevOrigin, stdout, stderr)
+		return launch(ctx, paths, client, record.URL, record.DevOrigin, route, stdout, stderr)
 	}
 }
 
 // serve starts the HTTP server and publishes instance discovery.
 func serve(ctx context.Context, paths platform.Paths, i *instance, prURL, devOrigin string, stdout, stderr io.Writer) (result error) {
+	route := "/"
+	if prURL != "" {
+		pr, err := i.RegisterPR(prURL)
+		if err != nil {
+			return err
+		}
+		route, _ = githubpr.ReviewPath(pr.ID)
+	}
 	address := ""
 	if devOrigin != "" {
 		address = os.Getenv("SHELDON_DEV_LISTEN")
@@ -91,7 +108,7 @@ func serve(ctx context.Context, paths platform.Paths, i *instance, prURL, devOri
 			address = "127.0.0.1:7331"
 		}
 	}
-	s, err := httpapi.Listen(address, devOrigin)
+	s, err := httpapi.Listen(address, devOrigin, &sourceRegistry{instance: i, paths: paths})
 	if err != nil {
 		return err
 	}
@@ -107,11 +124,6 @@ func serve(ctx context.Context, paths platform.Paths, i *instance, prURL, devOri
 		result = errors.Join(result, s.Shutdown(shutdown))
 		<-done
 	}()
-	if prURL != "" {
-		if err := s.SetOpenURL(prURL); err != nil {
-			return err
-		}
-	}
 	if err := i.publish(record{URL: s.URL(), Token: s.APIToken(), DevOrigin: devOrigin}); err != nil {
 		return err
 	}
@@ -125,7 +137,7 @@ func serve(ctx context.Context, paths platform.Paths, i *instance, prURL, devOri
 	if err != nil {
 		return err
 	}
-	if err := launch(ctx, paths, client, s.URL(), devOrigin, stdout, stderr); err != nil {
+	if err := launch(ctx, paths, client, s.URL(), devOrigin, route, stdout, stderr); err != nil {
 		return err
 	}
 	select {
@@ -140,8 +152,8 @@ func serve(ctx context.Context, paths platform.Paths, i *instance, prURL, devOri
 }
 
 // launch opens the browser with a token-bearing launch URL.
-func launch(ctx context.Context, paths platform.Paths, client *httpapi.Client, origin, devOrigin string, stdout, stderr io.Writer) error {
-	target, err := client.BrowserURL()
+func launch(ctx context.Context, paths platform.Paths, client *httpapi.Client, origin, devOrigin, route string, stdout, stderr io.Writer) error {
+	target, err := client.BrowserURL(route)
 	if err != nil {
 		return err
 	}
@@ -149,9 +161,9 @@ func launch(ctx context.Context, paths platform.Paths, client *httpapi.Client, o
 	browserCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if devOrigin != "" {
-		target, err = client.DevelopmentURL(browserCtx, devOrigin)
+		target, err = client.DevelopmentURL(browserCtx, devOrigin, route)
 		if err != nil {
-			fmt.Fprintln(stderr, "Development UI is unavailable or unverified. Start Vite at the configured development origin, then run sheldon again. The backend remains running.")
+			fmt.Fprintln(stderr, "Development UI is unavailable or unverified. Start Vite at the configured development origin, then rerun the original sheldon command. The backend remains running.")
 			return nil
 		}
 		origin = devOrigin
@@ -160,7 +172,7 @@ func launch(ctx context.Context, paths platform.Paths, client *httpapi.Client, o
 	err = openBrowser(browserCtx, target)
 	if err != nil {
 		// Browser/OS errors may include the launch URL, so do not print them.
-		fmt.Fprintf(stderr, "Browser launch failed. Open %s and enter the token field from %s, or run sheldon again to retry.\n", origin, filepath.Join(paths.Data, "instance.lock"))
+		fmt.Fprintf(stderr, "Browser launch failed. Open %s%s and enter the token field from %s, or rerun the original sheldon command.\n", origin, route, filepath.Join(paths.Data, "instance.lock"))
 	}
 	return nil
 }

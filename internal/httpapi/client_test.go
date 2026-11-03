@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/SophearithSaing/sheldon/internal/githubpr"
 )
 
 func TestClientVerifiesThenForwards(t *testing.T) {
@@ -17,19 +19,20 @@ func TestClientVerifiesThenForwards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Open(context.Background(), "https://github.com/owner/repo/pull/1") == nil {
+	if _, err := c.Open(context.Background(), "https://github.com/owner/repo/pull/1"); err == nil {
 		t.Fatal("unverified client forwarded a token")
 	}
-	if _, err := c.BrowserURL(); err == nil {
+	if _, err := c.BrowserURL("/"); err == nil {
 		t.Fatal("unverified client exposed a token")
 	}
 	if err := c.Verify(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Open(context.Background(), "https://github.com/owner/repo/pull/1"); err != nil {
+	opened, err := c.Open(context.Background(), "https://github.com/owner/repo/pull/1")
+	if err != nil {
 		t.Fatal(err)
 	}
-	r := request(t, s, httpClient, "GET", "/api/open", "", map[string]string{"Authorization": "Bearer " + s.APIToken()})
+	r := request(t, s, httpClient, "GET", "/api/reviews/"+opened.PRID, "", map[string]string{"Authorization": "Bearer " + s.APIToken()})
 	var state map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&state); err != nil {
 		t.Fatal(err)
@@ -37,8 +40,8 @@ func TestClientVerifiesThenForwards(t *testing.T) {
 	if state["url"] != "https://github.com/owner/repo/pull/1" {
 		t.Fatal("open intent was not forwarded")
 	}
-	u, err := c.BrowserURL()
-	if err != nil || u != s.URL()+"/#token="+s.APIToken() {
+	u, err := c.BrowserURL(opened.Route)
+	if err != nil || u != s.URL()+opened.Route+"#token="+s.APIToken() {
 		t.Fatal("incorrect launch URL")
 	}
 	for _, text := range []string{fmt.Sprint(c), fmt.Sprintf("%#v", c)} {
@@ -96,7 +99,7 @@ func TestVerificationNeverSendsBearerToUnrelatedServer(t *testing.T) {
 			if c.Verify(context.Background()) == nil {
 				t.Fatal("unrelated listener verified")
 			}
-			if c.Open(context.Background(), "https://github.com/owner/repo/pull/1") == nil {
+			if _, err := c.Open(context.Background(), "https://github.com/owner/repo/pull/1"); err == nil {
 				t.Fatal("unverified open accepted")
 			}
 		})
@@ -123,7 +126,7 @@ func TestVerificationProofCannotBeReplayed(t *testing.T) {
 	if c.Verify(context.Background()) == nil {
 		t.Fatal("stale proof verified")
 	}
-	if _, err := c.BrowserURL(); err == nil {
+	if _, err := c.BrowserURL("/"); err == nil {
 		t.Fatal("failed reverification left client trusted")
 	}
 }
@@ -140,5 +143,41 @@ func TestShellWithholdsToken(t *testing.T) {
 	}
 	if !strings.Contains(r.Header.Get("Content-Security-Policy"), "script-src 'self'") {
 		t.Fatal("runtime page lacks CSP")
+	}
+}
+
+func TestClientRejectsWrongRegistrationRoutes(t *testing.T) {
+	pr, _ := githubpr.ParseURL("https://github.com/owner/repo/pull/1")
+	route, _ := githubpr.ReviewPath(pr.ID)
+	for _, body := range []string{
+		`{}`, `{"prID":"` + pr.ID + `","route":"https://attacker.example"}`,
+		`{"prID":"` + strings.Repeat("a", 64) + `","route":"` + route + `"}`,
+		`{"prID":"` + pr.ID + `","route":"` + route + `#token=secret"}`,
+		strings.Repeat("x", 4097),
+	} {
+		t.Run(body[:min(len(body), 24)], func(t *testing.T) {
+			token, _ := newSecret()
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/instance-proof" {
+					writeJSON(w, 200, map[string]string{"proof": instanceProof(token, "http://"+r.Host, r.Header.Get("X-Sheldon-Challenge"))})
+					return
+				}
+				w.WriteHeader(202)
+				io.WriteString(w, body)
+			}))
+			defer target.Close()
+			c, _ := NewClient(target.URL, token)
+			if err := c.Verify(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if result, err := c.Open(context.Background(), pr.URL); err == nil || result != (OpenResult{}) {
+				t.Fatal("accepted invalid registration response")
+			}
+			for _, invalid := range []string{"//attacker.example", route + "?token=x", route + "#token=x", "/reviews/invalid"} {
+				if _, err := c.BrowserURL(invalid); err == nil {
+					t.Fatal("accepted unsafe browser route")
+				}
+			}
+		})
 	}
 }

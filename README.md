@@ -2,13 +2,13 @@
 
 **Don't just merge it. Understand it.**
 
-A local pull-request explainer. **Runtime + Slate UI previews only**—PR fetching, agent integration and durable saving are not implemented yet.
+A local pull-request explainer. **Real pinned Files changed + separate Slate UI previews**—agent integration, questions and durable review saving remain unimplemented.
 
 ## Toolchains
 
 Go **1.26.5** · Node **26.5.0** · npm **11.17.0**
 
-Browser checks also need Playwright Chromium and its system libraries. Agent/GitHub checks use offline fixtures, not provider logins or paid requests. The planned review flow needs Git and a compatible externally installed/authenticated harness; `gh` is optional.
+Browser checks also need Playwright Chromium and its system libraries. Tests use offline fixtures, not provider logins or paid requests. Real source loading needs native Git and existing repository access; optional authenticated `gh` resolves the actual PR target. No harness is needed for source browsing.
 
 ## Develop
 
@@ -23,7 +23,9 @@ SHELDON_DEV_ORIGIN=http://127.0.0.1:5173 go run ./cmd/sheldon # terminal 2: Go
 
 UI: <http://127.0.0.1:5173> · backend: `127.0.0.1:7331`. Stop any existing standalone instance first. The CLI opens the authenticated UI; after reloading, rerun the CLI in another terminal to reconnect.
 
-The UI uses fictional sample data. Files changed, Questions, Quiz, Semantic review, All PRs and Configuration keep state only in page memory. Generation/creation controls are explicitly labeled local simulations; real Send, Save, discovery and PR import remain unavailable. Semantic review never starts work on entry.
+Connect the runtime, choose **Open a PR**, then **Register and open PR**. Opening from an existing PR uses a separate browser tab; allow that tab to preserve the current pinned view. On the registered page choose **Load pinned source**. If GitHub metadata is unavailable, explicitly choose **Use Git-only fallback**, select a fetched upstream branch, then **Load selected base**. No default target is assumed. Registration and source errors are separate; retry is explicit. Real PR pages offer file filtering and a pinned unified diff, not Ask, Split, Questions, Quiz or Semantic review.
+
+**Sample UI previews** opens the separate `/?preview=library` entry. Its Files changed, Questions, Quiz, Semantic review, All PRs and Configuration use fictional data and page-memory simulations, never real PR source or inference.
 
 ## Release
 
@@ -37,6 +39,12 @@ npm run build
 ```
 
 Windows output: `bin/sheldon.exe`. Plain `go run`/`go build` omit the embedded UI; use Vite for development.
+
+`sheldon open <url>` registers/reuses the PR in private `prs.json` under the OS data directory and opens `/reviews/<id>` on the existing backend. Source loads only after **Load pinned source**; registration/reconnection alone never fetches it. Each browser tab owns its routed PR and displayed revision. Plain `sheldon` opens the real PR entry page. Reloading requires reconnecting; rerun the command or enter the token from private `instance.lock`.
+
+Choose **Refresh source** to fetch current tips for this tab only. The displayed diff stays readable while loading and on failure; file navigation never refreshes it. Git-only refresh keeps the explicitly selected branch. Commit pinning remains internal—there is no snapshot-history UI or historical-read API. Reload/disconnect clears page-memory source.
+
+Source uses OS cache storage (`~/.cache/sheldon` on Linux, `%LOCALAPPDATA%\sheldon\cache` on Windows), not the project directory. Worktrees and diffs are bounded; unsafe cache state, unavailable history or oversized comparisons produce errors rather than partial source. Existing credential helpers/SSH routes remain trusted. A worktree is not an agent sandbox.
 
 ## Check & build
 
@@ -58,11 +66,14 @@ Browser tests:
 npm exec --workspace=@sheldon/web -- playwright install chromium # first run
 npm run test:web
 npm run test:release # clean source build + isolated binary/browser checks (Linux/macOS)
+npm run test --workspace=@sheldon/web -- --config playwright.release.config.ts release-source.spec.ts # native offline PR flow only
 ```
 
 [Foundation CI](.github/workflows/ci.yml) runs these checks on Ubuntu 24.04, starting without generated assets. It also compiles Windows/amd64 and macOS/arm64 tests; that is **not native platform validation**. CI never runs live agent experiments and does not upload private test artifacts.
 
 Release browser checks build a disposable application-source copy without `refs/` or existing bundles, using installed dependencies. They remove the copy before running only the binary with private temporary storage and no Node on its PATH. This does not regenerate the repository's embedded assets; run `npm run build` before release-tag Go checks.
+
+The native-source release test needs Go and Git to build disposable tools and local PR objects. It exercises two PRs, explicit Git-only base selection, refresh/retry, restart/cache reuse and active-fetch shutdown through the standalone CLI. Test-only `gh`, Git transport and desktop-opener fixtures stay offline; source HTTP responses are not mocked. No GitHub login, provider setup or live requests are needed.
 
 ## Layout
 
@@ -70,9 +81,11 @@ Release browser checks build a disposable application-source copy without `refs/
 cmd/sheldon/          Go CLI + tests
 internal/platform/   OS storage paths
 internal/process/    Owned command execution + cancellation
-internal/httpapi/    Protected loopback REST/SSE foundation
-internal/app/        Launch, browser handoff + single-writer lifecycle
-internal/githubpr/   GitHub PR URL validation (no fetching)
+internal/httpapi/    Protected loopback registration, lookup and source API
+internal/app/        Writer lifecycle, PR index and source orchestration
+internal/githubpr/   Canonical PR/revision contracts (no fetching)
+internal/github/     Optional gh target-branch resolution
+internal/git/        Managed fetch, pinned worktrees and unified diffs
 internal/ui/         Embedded release shell / asset-free development fallback
 scripts/build.js     Frontend → embed copy → Go build
 web/                 Vue + Slate shell/fixtures + browser tests

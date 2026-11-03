@@ -80,6 +80,25 @@ func TestFailureDoesNotExposeDiagnostics(t *testing.T) {
 	}
 }
 
+func TestUnsetEnvironmentBeforeExplicitOverrides(t *testing.T) {
+	t.Setenv("SHELDON_PROCESS_TEST_VALUE", "inherited")
+	spec := helper(t, "echo")
+	spec.UnsetEnv = []string{"SHELDON_PROCESS_TEST_VALUE"}
+	r, err := Run(context.Background(), spec)
+	var output struct{ Value string }
+	if err != nil || json.Unmarshal(r.Stdout, &output) != nil || output.Value != "" {
+		t.Fatal("inherited environment was not removed")
+	}
+	spec.Env = append(spec.Env, "SHELDON_PROCESS_TEST_VALUE=explicit")
+	r, err = Run(context.Background(), spec)
+	if err != nil || json.Unmarshal(r.Stdout, &output) != nil || output.Value != "explicit" {
+		t.Fatal("explicit override did not follow removal")
+	}
+	if os.Getenv("SHELDON_PROCESS_TEST_VALUE") != "inherited" {
+		t.Fatal("parent environment changed")
+	}
+}
+
 func TestStartStreamsBeforeExitAndAcceptsInput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

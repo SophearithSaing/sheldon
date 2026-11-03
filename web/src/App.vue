@@ -1,8 +1,15 @@
 <script setup lang="ts">
-import { defineAsyncComponent, ref } from 'vue'
+import { defineAsyncComponent, ref, shallowRef } from 'vue'
 import FixtureApplication from './fixtures/FixtureApplication.vue'
 import UiButton from './components/ui/UiButton.vue'
+import RegisteredPR from './runtime/RegisteredPR.vue'
+import PRLanding from './runtime/PRLanding.vue'
+import { reviewID as parseReviewID, type ReviewState, type RuntimeClient } from './runtime/client'
 
+const reviewID = parseReviewID(location.pathname)
+const reviewState = ref<ReviewState>({ status: 'disconnected' })
+const client = shallowRef<RuntimeClient | null>(null)
+const samples = import.meta.env.MODE === 'fixture' || new URLSearchParams(location.search).has('preview')
 const runtimeExpanded = ref(true)
 const runtimeState = ref('Disconnected')
 const runtimeLabel = import.meta.env.DEV ? 'Development backend' : 'Local runtime'
@@ -22,7 +29,7 @@ const RuntimeConnection =
 <template>
   <div class="application">
     <ControlsFixture v-if="ControlsFixture" />
-    <FixtureApplication v-else>
+    <component v-else :is="reviewID ? RegisteredPR : samples ? FixtureApplication : PRLanding" v-bind="reviewID ? { reviewId: reviewID, reviewState, client } : samples ? {} : { client }">
       <template v-if="RuntimeConnection" #runtime-trigger>
         <UiButton
           class="runtime-trigger"
@@ -39,9 +46,9 @@ const RuntimeConnection =
         </UiButton>
       </template>
       <template v-if="RuntimeConnection" #runtime-panel>
-        <RuntimeConnection v-model:expanded="runtimeExpanded" @state="runtimeState = $event" />
+        <RuntimeConnection v-model:expanded="runtimeExpanded" :review-id="reviewID || undefined" @state="runtimeState = $event" @review="reviewState = $event" @connection="client = $event" />
       </template>
-    </FixtureApplication>
+    </component>
   </div>
 </template>
 

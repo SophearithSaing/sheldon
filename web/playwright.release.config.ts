@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: 'release.spec.ts',
+  testMatch: ['release.spec.ts', 'release-source.spec.ts'],
   workers: 1,
   reporter: 'list',
   globalSetup: './tests/release/setup.ts',

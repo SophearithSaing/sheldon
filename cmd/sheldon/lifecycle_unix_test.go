@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/SophearithSaing/sheldon/internal/githubpr"
 )
 
 func TestCLIProcessHelper(t *testing.T) {
@@ -86,6 +88,18 @@ func TestCLILaunchForwardAndSignalShutdown(t *testing.T) {
 	}
 	if !strings.Contains(string(forwardOutput), origin) || strings.Contains(string(forwardOutput), state.Token) {
 		t.Fatal("forwarding output is unsafe or points at another server")
+	}
+	pr, _ := githubpr.ParseURL("https://github.com/owner/repo/pull/7")
+	route, _ := githubpr.ReviewPath(pr.ID)
+	if !strings.Contains(string(forwardOutput), origin+route) {
+		t.Fatal("forwarded browser-failure guidance omitted the registered route")
+	}
+	indexData, err := os.ReadFile(filepath.Join(dataDir, "prs.json"))
+	var index struct {
+		PRs []githubpr.PullRequest `json:"prs"`
+	}
+	if err != nil || json.Unmarshal(indexData, &index) != nil || len(index.PRs) != 1 || index.PRs[0].ID != pr.ID {
+		t.Fatal("forwarded CLI did not persist the registered PR")
 	}
 	if err := owner.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)

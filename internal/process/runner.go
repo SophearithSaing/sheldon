@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -23,6 +24,7 @@ type Command struct {
 	Args        []string
 	Dir         string
 	Env         []string
+	UnsetEnv    []string
 	OutputLimit int
 	GracePeriod time.Duration
 }
@@ -80,7 +82,19 @@ func Start(ctx context.Context, spec Command) (*Process, error) {
 	runCtx, cancel := context.WithCancelCause(ctx)
 	cmd := exec.Command(spec.Name, spec.Args...)
 	cmd.Dir = spec.Dir
-	cmd.Env = append(cmd.Environ(), spec.Env...)
+	unset := make(map[string]bool, len(spec.UnsetEnv))
+	for _, name := range spec.UnsetEnv {
+		unset[strings.ToUpper(name)] = true
+	}
+	inherited := cmd.Environ()
+	cmd.Env = []string{}
+	for _, variable := range inherited {
+		name, _, _ := strings.Cut(variable, "=")
+		if !unset[strings.ToUpper(name)] {
+			cmd.Env = append(cmd.Env, variable)
+		}
+	}
+	cmd.Env = append(cmd.Env, spec.Env...)
 	cmd.WaitDelay = spec.GracePeriod
 	// Own this pipe rather than StdoutPipe: cmd.Wait must not close the reader
 	// before an adapter has consumed the final protocol bytes.
