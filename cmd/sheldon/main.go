@@ -23,7 +23,7 @@ Usage:
   sheldon --help
   sheldon --version
 
-Starts the local runtime; Ctrl+C stops it. Open registers PRs locally; source fetching and agent integration are not implemented yet.
+Starts the local runtime; Ctrl+C stops it. Open registers PRs locally. Load pinned source and explicitly ask questions in the UI; conversations are runtime-only.
 `
 
 // main is the CLI entry point.

@@ -41,7 +41,7 @@ const visibleGroups = computed(groups)
       <p class="folder">⌄ <span>{{ group.path.replaceAll('/', ' / ') || 'Repository root' }}</span></p>
       <button v-for="file in group.files" :key="file.id" type="button" :aria-label="file.path" :aria-current="current === file.id ? 'true' : undefined" @click="emit('select', file.id)">
         <span aria-hidden="true">▱</span><span class="file-name">{{ file.path.slice(file.path.lastIndexOf('/') + 1) }}</span>
-        <span v-if="!real && counts[file.id]" class="file-count" :aria-label="`${counts[file.id]} sample questions`">{{ counts[file.id] }}</span>
+        <span v-if="counts[file.id]" class="file-count" :aria-label="`${counts[file.id]} ${real ? 'runtime' : 'sample'} questions`">{{ counts[file.id] }}</span>
         <span v-else-if="viewed[file.id]" class="viewed-icon" aria-label="Viewed">✓</span>
       </button>
     </div>

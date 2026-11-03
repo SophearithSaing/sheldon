@@ -65,7 +65,7 @@ func (i *instance) ReadPR(id string) (githubpr.PullRequest, error) {
 
 // readPRIndex reads the bounded registry under the instance mutex and writer lock.
 func (i *instance) readPRIndex() (prIndex, error) {
-	if !i.owned {
+	if !i.owned || i.closing {
 		return prIndex{}, errors.New("PR index requires app writer ownership")
 	}
 	f, err := openPrivateFile(filepath.Join(filepath.Dir(i.file.Name()), "prs.json"), false)

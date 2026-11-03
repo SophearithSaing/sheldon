@@ -15,7 +15,7 @@ func (i *instance) openCache(paths platform.Paths) (*git.Cache, error) {
 	if err := paths.Validate(); err != nil {
 		return nil, err
 	}
-	if !i.owned || filepath.Dir(i.file.Name()) != paths.Data {
+	if !i.owned || i.closing || filepath.Dir(i.file.Name()) != paths.Data {
 		return nil, errors.New("matching app writer ownership is required for Git cache access")
 	}
 	if i.cache != nil && i.cacheRoot != paths.Cache {

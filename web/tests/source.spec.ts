@@ -1,62 +1,165 @@
-import { expect, test, type Page } from '@playwright/test'
-import { readFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
-import type { RegisteredPR } from '../src/runtime/client'
-import type { SourceResponse, SourceFile, SourceLine } from '../src/runtime/source'
+import { expect, test } from '@playwright/test'
+import { digest, token, registered, sourceFixture } from './runtime-fixture'
 
 const frontend = 'http://127.0.0.1:5175'
 test.use({ baseURL: frontend })
 
-/**
- * Hashes explicit browser fixture references, never a real source claim.
- * @param value Fixture identity.
- * @returns Full digest.
- */
-function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
 
-/**
- * Reads only the isolated development fixture's credential.
- * @returns Fixture backend credential.
- */
-async function token(): Promise<string> { return JSON.parse(await readFile(process.env.SHELDON_TEST_STATE!, 'utf8')).token }
+test('real inline questions keep pinned drafts, keyboard semantics and exactly one admitted marker', async ({ page }, testInfo): Promise<void> => {
+  const pr = await registered(page, 711)
+  const fixture = sourceFixture(pr, 2)
+  let sourceCalls = 0
+  await page.route(`**/api/reviews/${pr.id}/source`, async (route): Promise<void> => { sourceCalls++; await route.fulfill({ json: fixture }) })
+  let calls = 0
+  let release: (() => void) | undefined
+  await page.route(`**/api/reviews/${pr.id}/questions`, async (route): Promise<void> => {
+    calls++
+    const input = route.request().postDataJSON()
+    expect(input).toEqual({ revision: fixture.diff!.revision, anchor: { kind: 'lines', fileID: fixture.diff!.files[0]!.id, hunkID: fixture.diff!.files[0]!.hunks[0]!.id, side: 'new', start: 2, end: 5 }, question: 'Explain this\nselection.' })
+    expect(route.request().headers()['authorization']).toBe(`Bearer ${await token()}`)
+    if (calls === 1) {
+      await new Promise<void>((resolve): void => { release = resolve })
+      await route.fulfill({ status: 409, json: { error: 'RAW NATIVE SECRET' } })
+    } else await route.fulfill({ status: 202, json: { answerID: digest('answer711'), threadID: digest('thread711'), prID: pr.id, revisionID: fixture.diff!.revisionID, question: input.question, text: '', state: 'pending', stopRequested: false, executionUnknown: false, reference: { revisionID: fixture.diff!.revisionID, anchor: input.anchor } } })
+  })
+  await page.getByRole('button', { name: 'Load pinned source', exact: true }).click()
+  await page.getByRole('button', { name: 'Select head line 2', exact: true }).press('Enter')
+  await page.getByRole('button', { name: 'Select head line 5', exact: true }).press('Shift+Enter')
+  expect(calls).toBe(0)
+  await expect(page.getByRole('form', { name: 'New question', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Ask about selection', exact: true }).click()
+  const input = page.getByRole('textbox', { name: 'Your question', exact: true })
+  const form = page.getByRole('form', { name: 'New question', exact: true })
+  await expect(input).toBeFocused()
+  await expect(form).toContainText(`src/file0000.ts · head L2–5 · revision ${fixture.diff!.revisionID.slice(0, 8)}`)
+  await input.fill('  ')
+  await input.press('Control+Enter')
+  await expect(form).toContainText('Enter a question before sending.')
+  await input.fill('é'.repeat(9000))
+  await input.press('Meta+Enter')
+  await expect(form).toContainText('16,384 UTF-8 bytes')
+  expect(calls).toBe(0)
+  await input.fill('Explain this')
+  await input.press('End')
+  await input.press('Enter')
+  await expect(input).toHaveValue('Explain this\n')
+  await input.fill('Explain this\nselection.')
+  await input.dispatchEvent('keydown', { key: 'Enter', ctrlKey: true, isComposing: true })
+  expect(calls).toBe(0)
+  await page.getByRole('button', { name: 'src/file0001.ts', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'src/file0000.ts', exact: true })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'before changing files' })).toBeVisible()
+  await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
+  expect(sourceCalls).toBe(1)
+  await page.getByRole('button', { name: 'Select base line 1', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Your draft is pinned' })).toBeVisible()
+  await input.press('Control+Enter')
+  await expect(page.getByRole('button', { name: 'Sending question…', exact: true })).toBeDisabled()
+  await expect(input).toHaveAttribute('readonly', '')
+  await expect(form.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled()
+  await form.dispatchEvent('submit')
+  await input.press('Control+Enter')
+  expect(calls).toBe(1)
+  expect(await page.locator('[data-answer]').count()).toBe(0)
+  await page.screenshot({ path: testInfo.outputPath('real-question-pending.png'), fullPage: true })
+  release!()
+  await expect(form).toContainText('shared revision session is busy')
+  await expect(input).toHaveValue('Explain this\nselection.')
+  expect(await page.content()).not.toContain('RAW NATIVE SECRET')
+  await form.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Resume draft', exact: true })).toBeFocused()
+  await page.getByRole('button', { name: 'Resume draft', exact: true }).click()
+  await expect(input).toHaveValue('Explain this\nselection.')
+  await page.screenshot({ path: testInfo.outputPath('real-question-error.png'), fullPage: true })
+  await page.setViewportSize({ width: 700, height: 900 })
+  await input.scrollIntoViewIfNeeded()
+  expect(await page.evaluate((): boolean => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  expect((await input.boundingBox())!.width).toBeLessThan(700)
+  await page.screenshot({ path: testInfo.outputPath('real-question-700.png'), fullPage: true })
+  await input.press('Meta+Enter')
+  await expect(form).toHaveCount(0)
+  await expect(page.locator('[data-answer]')).toHaveCount(1)
+  await expect(page.locator('[data-answer]')).toBeFocused()
+  await expect(page.getByLabel('1 runtime questions', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Question conversation', exact: true })).toContainText('Runtime only')
+  expect(calls).toBe(2)
+  expect(await page.content()).not.toContain(await token())
+  await page.screenshot({ path: testInfo.outputPath('real-question-admitted.png'), fullPage: true })
+  await page.getByRole('button', { name: 'src/file0001.ts', exact: true }).click()
+  await expect(page.locator('[data-answer]')).toHaveCount(0)
+  await page.getByRole('button', { name: 'src/file0000.ts', exact: true }).click()
+  await expect(page.locator('[data-answer]')).toHaveCount(1)
+  await page.setViewportSize({ width: 1440, height: 1080 })
+  await page.locator('[data-answer]').click()
+  await page.route(`**/api/reviews/${pr.id}/threads/*/answers/*/stop`, async (route): Promise<void> => {
+    expect(route.request().postDataJSON()).toEqual({ revisionID: fixture.diff!.revisionID })
+    expect(route.request().url()).toContain(`/threads/${digest('thread711')}/answers/${digest('answer711')}/stop`)
+    await route.fulfill({ status: 202, json: { answerID: digest('answer711'), threadID: digest('thread711'), prID: pr.id, revisionID: fixture.diff!.revisionID, question: 'Explain this\nselection.', text: '', state: 'pending', stopRequested: true, executionUnknown: false, reference: { revisionID: fixture.diff!.revisionID, anchor: { kind: 'lines', fileID: fixture.diff!.files[0]!.id, hunkID: fixture.diff!.files[0]!.hunks[0]!.id, side: 'new', start: 2, end: 5 } } } })
+  })
+  await page.getByRole('button', { name: 'Stop this answer', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Termination is not yet confirmed' })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('real-question-panel-1440.png'), fullPage: true })
+})
 
-/**
- * Registers an offline browser fixture and connects its routed page.
- * @param page Browser page.
- * @param number Distinct fixture PR number.
- * @returns Registered fixture identity.
- */
-async function registered(page: Page, number: number): Promise<RegisteredPR> {
-  const credential = await token()
-  const response = await page.request.post(frontend + '/api/open', { headers: { Authorization: `Bearer ${credential}` }, data: { url: `https://github.com/ui/fixture/pull/${number}` } })
-  const opened: { prID: string; route: string } = await response.json()
-  const metadata = await page.request.get(frontend + '/api/reviews/' + opened.prID, { headers: { Authorization: `Bearer ${credential}` } })
-  const pr: RegisteredPR = await metadata.json()
-  await page.goto(`${opened.route}#token=${credential}`)
-  await expect(page.getByRole('heading', { name: `Pull request #${number}`, exact: true })).toBeVisible()
-  return pr
-}
+test('real hunk questions refuse cross-hunk ranges and preserve cancel/discard focus', async ({ page }): Promise<void> => {
+  const pr = await registered(page, 712)
+  const fixture = sourceFixture(pr, 2)
+  const first = fixture.diff!.files[0]!.hunks[0]!
+  fixture.diff!.files[0]!.hunks = [{ ...first, lines: first.lines.slice(0, 3) }, { ...first, id: digest('hunk2'), lines: first.lines.slice(3, 6) }]
+  fixture.diff!.files[1]!.kind = 'binary'
+  fixture.diff!.files[1]!.hunks = []
+  await page.route(`**/api/reviews/${pr.id}/source`, async (route): Promise<void> => { await route.fulfill({ json: fixture }) })
+  let calls = 0
+  await page.route(`**/api/reviews/${pr.id}/questions`, async (route): Promise<void> => {
+    calls++
+    expect(route.request().postDataJSON().anchor).toEqual({ kind: 'hunk', fileID: fixture.diff!.files[0]!.id, hunkID: first.id })
+    await route.fulfill({ status: 503, json: { error: 'fixture unavailable' } })
+  })
+  await page.getByRole('button', { name: 'Load pinned source', exact: true }).click()
+  await page.getByRole('button', { name: 'Select head line 2', exact: true }).click()
+  await page.getByRole('button', { name: 'Select head line 5', exact: true }).press('Shift+Enter')
+  await expect(page.getByRole('status').filter({ hasText: 'within one hunk' })).toBeVisible()
+  await page.getByRole('button', { name: 'Select hunk 1', exact: true }).click()
+  await page.getByRole('button', { name: 'Ask about selection', exact: true }).click()
+  const input = page.getByRole('textbox', { name: 'Your question', exact: true })
+  await input.fill('Whole hunk question.')
+  await page.getByRole('button', { name: 'Send question', exact: true }).click()
+  await expect(page.getByText('The original question runtime is unavailable.', { exact: false })).toBeVisible()
+  expect(calls).toBe(1)
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Resume draft', exact: true })).toBeFocused()
+  await page.getByRole('button', { name: 'Discard draft', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Ask about selection', exact: true })).toBeFocused()
+  await page.getByRole('button', { name: 'src/file0001.ts', exact: true }).click()
+  await expect(page.getByText('Line questions are unavailable for non-text changes.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Ask about selection', exact: true })).toHaveCount(0)
+})
 
-/**
- * Builds explicit source-UI fixture data, not a native Git result.
- * @param pr Registered browser fixture PR.
- * @param count Number of fixture changed files.
- * @param baseSHA Fixture base tip.
- * @param headSHA Fixture head commit.
- * @returns Pinned-looking fixture response for renderer testing only.
- */
-function sourceFixture(pr: RegisteredPR, count = 40, baseSHA = 'a'.repeat(40), headSHA = 'c'.repeat(40)): SourceResponse {
-  const revision = { prID: pr.id, baseBranch: 'release/target', baseSource: 'github' as const, baseSHA, headSHA, mergeBaseSHA: 'b'.repeat(40) }
-  const revisionID = digest([pr.id, revision.baseSHA, revision.headSHA, revision.mergeBaseSHA].join('\n'))
-  const files: SourceFile[] = []
-  for (let index = 0; index < count; index++) {
-    const id = digest(`${revisionID}/file/${index}`)
-    const lines: SourceLine[] = []
-    for (let n = 1; n <= 120; n++) lines.push({ id: digest(`${id}/line/${n}`), sign: n === 1 ? '+' : ' ', text: n === 1 ? '<script>literal source, never HTML</script> ' + 'long source '.repeat(40) : `const fixtureLine${n} = ${n}`, oldLine: n === 1 ? undefined : n - 1, newLine: n, noNewline: n === 120 })
-    files.push({ id, status: 'modified', oldPath: `src/file${String(index).padStart(4, '0')}.ts`, newPath: `src/file${String(index).padStart(4, '0')}.ts`, oldMode: '100644', newMode: '100644', oldObject: 'd'.repeat(40), newObject: 'e'.repeat(40), kind: 'text', hunks: [{ id: digest(id + '/hunk'), old: { id: digest(id + '/old'), start: 1, count: 119 }, new: { id: digest(id + '/new'), start: 1, count: 120 }, section: '', lines }] })
-  }
-  return { state: 'ready', pr: { ...pr, title: `Offline source fixture #${pr.number}`, author: 'fixture-author' }, diff: { revision, revisionID, complete: true, files } }
-}
+for (const fault of ['lost', 'mismatched']) test(`${fault} admission never invents a thread or automatically retries`, async ({ page }): Promise<void> => {
+  const pr = await registered(page, fault === 'lost' ? 713 : 714)
+  const fixture = sourceFixture(pr, 1)
+  await page.route(`**/api/reviews/${pr.id}/source`, async (route): Promise<void> => { await route.fulfill({ json: fixture }) })
+  let calls = 0
+  await page.route(`**/api/reviews/${pr.id}/questions`, async (route): Promise<void> => {
+    calls++
+    expect(route.request().postDataJSON().anchor).toEqual({ kind: 'lines', fileID: fixture.diff!.files[0]!.id, hunkID: fixture.diff!.files[0]!.hunks[0]!.id, side: 'old', start: 2, end: 2 })
+    if (fault === 'lost') await route.abort('failed')
+    else await route.fulfill({ status: 202, json: { answerID: digest('wrong-answer'), threadID: digest('wrong-thread'), prID: pr.id, revisionID: digest('wrong-revision'), question: route.request().postDataJSON().question, text: '', state: 'pending', stopRequested: false, executionUnknown: false, reference: { revisionID: fixture.diff!.revisionID, anchor: route.request().postDataJSON().anchor } } })
+  })
+  await page.getByRole('button', { name: 'Load pinned source', exact: true }).click()
+  await page.getByRole('button', { name: 'Select base line 2', exact: true }).click()
+  await page.getByRole('button', { name: 'Ask about selection', exact: true }).click()
+  const input = page.getByRole('textbox', { name: 'Your question', exact: true })
+  await input.fill('Retain this exact draft.')
+  await input.press('Control+Enter')
+  await expect(page.getByRole('button', { name: 'Send question', exact: true })).toBeDisabled()
+  await expect(input).toHaveValue('Retain this exact draft.')
+  await expect(page.getByText('Admission is uncertain.', { exact: false })).toBeVisible()
+  await input.press('Control+Enter')
+  expect(calls).toBe(1)
+  await expect(page.locator('[data-answer]')).toHaveCount(0)
+  await expect(page.getByRole('form', { name: 'New question', exact: true })).toBeVisible()
+})
 
 test('real PR registration retains input on failure and prevents duplicate submits', async ({ page }): Promise<void> => {
   const credential = await token()
@@ -122,7 +225,7 @@ test('pinned source loads without replacing chrome, navigates files and supports
   expect(panes!.y).toBe(160)
   const rail = page.locator('.workspace-files')
   expect((await rail.boundingBox())!.width).toBe(240)
-  await expect(page.getByRole('button', { name: 'Ask — unavailable' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Ask about selection' })).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Split — unavailable' })).toBeDisabled()
   const source = page.getByRole('region', { name: 'Unified diff for src/file0000.ts' })
   await expect(source.locator('code').first()).toContainText('<script>literal source, never HTML</script>')

@@ -2,6 +2,7 @@ export interface DiffLine {
   id?: string
   noNewline?: boolean
   hunkHeader?: string
+  hunkID?: string
   base: number | null
   head: number | null
   kind: 'context' | 'added' | 'removed'

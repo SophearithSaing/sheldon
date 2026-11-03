@@ -3,6 +3,7 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { offlineCLI } from './release/offline'
 import type { SourceResponse } from '../src/runtime/source'
+import { preserveResponseBodies } from './response-bodies'
 
 /**
  * Waits for an actual authenticated source response; no source HTTP route is mocked.
@@ -41,6 +42,7 @@ test('standalone CLI opens two native offline PRs, refreshes independently and r
   const fixture = await offlineCLI()
   const traffic: string[] = []
   const messages: string[] = []
+  await preserveResponseBodies(page)
   page.on('request', (request): void => { traffic.push(request.url()) })
   page.on('pageerror', (failure: Error): void => { messages.push(failure.message) })
   try {
@@ -77,6 +79,7 @@ test('standalone CLI opens two native offline PRs, refreshes independently and r
 
     const secondLaunch = await fixture.open('https://github.com/fixture/repo/pull/32')
     const second = await context.newPage()
+    await preserveResponseBodies(second)
     await second.goto(secondLaunch)
     const unresolved = await source(second, 'Load pinned source')
     expect(unresolved.state).toBe('fallback-required')
