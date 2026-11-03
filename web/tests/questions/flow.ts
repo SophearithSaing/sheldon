@@ -22,11 +22,12 @@ function response(page: Page, suffix: string): Promise<Response> {
  * @returns Unmodified managed-source response.
  */
 async function source(page: Page, label: string): Promise<SourceResponse> {
-  const received = response(page, '/source')
+  const received = response(page, '/source').then(async (result: Response): Promise<SourceResponse> => {
+    if (!result.ok()) throw new Error('Native question integration source action failed.')
+    return await result.json() as SourceResponse
+  })
   await page.getByRole('button', { name: label, exact: true }).click()
-  const result = await received
-  if (!result.ok()) throw new Error('Native question integration source action failed.')
-  return await result.json() as SourceResponse
+  return received
 }
 
 /**
