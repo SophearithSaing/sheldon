@@ -23,6 +23,14 @@ SHELDON_DEV_ORIGIN=http://127.0.0.1:5173 go run ./cmd/sheldon # terminal 2: Go
 
 UI: <http://127.0.0.1:5173> · backend: `127.0.0.1:7331`. Stop any existing standalone instance first. The CLI opens the authenticated UI; after reloading, rerun the CLI in another terminal to reconnect.
 
+For UI-only work without the Go backend, run the fixture preview server:
+
+```sh
+npm run dev:web
+```
+
+Open <http://127.0.0.1:5173/?preview=library> to browse sample PR previews using fictional data. No backend, Git access, or agent setup is required.
+
 Connect the runtime, choose **Open a PR**, then **Register and open PR**. Opening from an existing PR uses a separate browser tab; allow that tab to preserve the current pinned view. On the registered page choose **Load pinned source**. If GitHub metadata is unavailable, explicitly choose **Use Git-only fallback**, select a fetched upstream branch, then **Load selected base**. No default target is assumed. Registration and source errors are separate; retry is explicit. Real PR pages offer file filtering and a pinned unified diff. Split, Questions, Quiz and Semantic review remain unavailable.
 
 For a text diff, choose gutter line numbers (Shift extends on one side within one hunk) or **Select hunk**, then **Ask about selection**. The inline composer is pinned to that file/side/range/revision. **Send question** or Ctrl/Cmd+Enter explicitly starts backend work; Enter inserts a newline. Cancel retains the draft; resume or explicitly discard it before changing files/selection or refreshing. Native text selection/copy never submits. Non-text changes have no line questions.
