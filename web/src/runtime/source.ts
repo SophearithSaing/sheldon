@@ -1,6 +1,6 @@
 import type { RegisteredPR } from './client'
 
-export interface SourceRequest { action: 'load' | 'git-only' | 'select-base' | 'refresh' | 'snapshot'; branch?: string; sha?: string; revision?: PinnedRevision }
+export interface SourceRequest { action: 'load' | 'git-only' | 'select-base' | 'refresh'; branch?: string; sha?: string; revision?: PinnedRevision }
 export interface SourceCandidate { branch: string; sha: string }
 export interface PinnedRevision { prID: string; baseBranch: string; baseSource: 'github' | 'user-selected'; baseSHA: string; headSHA: string; mergeBaseSHA: string }
 export interface SourceLine { id: string; sign: ' ' | '+' | '-'; text: string; oldLine?: number; newLine?: number; noNewline?: boolean }

@@ -261,7 +261,7 @@ test('opening another PR from pinned source preserves the original tab', async (
   await other.close()
 })
 
-test('refresh isolates two tabs, preserves file navigation and reopens exact original source', async ({ page, context }, testInfo): Promise<void> => {
+test('refresh isolates two tabs and preserves file navigation without snapshot management', async ({ page, context }, testInfo): Promise<void> => {
   const pr = await registered(page, 710)
   const initial = sourceFixture(pr, 2)
   const baseOnly = sourceFixture(pr, 2, 'd'.repeat(40))
@@ -272,10 +272,7 @@ test('refresh isolates two tabs, preserves file navigation and reopens exact ori
     const input = route.request().postDataJSON()
     requests.push(input.action)
     if (input.action === 'load') await route.fulfill({ json: initial })
-    else if (input.action === 'snapshot') {
-      expect(input.revision).toEqual(initial.diff!.revision)
-      await route.fulfill({ json: { ...initial, requestedRevisionID: initial.diff!.revisionID } })
-    } else {
+    else {
       const expected = refreshed === 0 ? initial : baseOnly
       expect(input.revision).toEqual(expected.diff!.revision)
       const next = ++refreshed === 1 ? baseOnly : headOnly
@@ -299,11 +296,10 @@ test('refresh isolates two tabs, preserves file navigation and reopens exact ori
   await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
   await expect(page.getByText(`Pinned revision ${headOnly.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('refreshed-pinned-source.png') })
-  await page.getByRole('button', { name: 'Open original snapshot', exact: true }).click()
-  await expect(page.getByText(`Pinned revision ${initial.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
-  await expect(page.getByText('Exact pinned source verified in the cache; no latest source was fetched.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Open original snapshot', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Verify pinned cache', exact: true })).toHaveCount(0)
   await expect(other.getByText(`Pinned revision ${initial.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
-  expect(requests).toEqual(['load', 'refresh', 'refresh', 'snapshot'])
+  expect(requests).toEqual(['load', 'refresh', 'refresh'])
   await other.close()
 })
 
@@ -343,33 +339,22 @@ test('failed and cancelled refreshes retain readable source and ignore stale res
   await expect(page.getByText(`Pinned revision ${updated.diff!.revisionID.slice(0, 8)}`, { exact: true })).toHaveCount(0)
 })
 
-test('historical cache loss and mismatched snapshot replies never substitute latest source', async ({ page }, testInfo): Promise<void> => {
+test('mismatched refresh replies leave the displayed revision unchanged', async ({ page }): Promise<void> => {
   const pr = await registered(page, 712)
   const initial = sourceFixture(pr, 1)
   const updated = sourceFixture(pr, 1, 'd'.repeat(40))
   let calls = 0
-  let checks = 0
   await page.route(`**/api/reviews/${pr.id}/source`, async (route): Promise<void> => {
     const input = route.request().postDataJSON()
     calls++
     if (input.action === 'load') await route.fulfill({ json: initial })
-    else if (input.action === 'snapshot') {
-      if (++checks === 1) await route.fulfill({ status: 410, json: { code: 'snapshot-unavailable' } })
-      else await route.fulfill({ json: { ...updated, requestedRevisionID: initial.diff!.revisionID } })
-    }
     else await route.fulfill({ json: { ...updated, requestedRevisionID: 'f'.repeat(64) } })
   })
   await page.getByRole('button', { name: 'Load pinned source' }).click()
-  await page.getByRole('button', { name: 'Verify pinned cache' }).click()
-  await expect(page.getByRole('alert')).toContainText('exact pinned source is unavailable')
-  await expect(page.getByText(`Pinned revision ${initial.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
-  await page.screenshot({ path: testInfo.outputPath('missing-pinned-cache.png') })
-  await page.getByRole('button', { name: 'Verify pinned cache' }).click()
-  await expect(page.getByRole('alert')).toHaveText('Source response does not match the requested snapshot.')
   await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
-  await expect(page.getByRole('alert')).toHaveText('Source response does not match the requested snapshot.')
+  await expect(page.getByRole('alert')).toHaveText('Source response does not match the requested revision.')
   await expect(page.getByText(`Pinned revision ${initial.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
-  expect(calls).toBe(4)
+  expect(calls).toBe(2)
 })
 
 test('metadata failure during refresh keeps the old diff through manual base selection', async ({ page }): Promise<void> => {

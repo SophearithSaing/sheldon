@@ -22,23 +22,6 @@ func (s *sourceRegistry) LoadSource(ctx context.Context, pr githubpr.PullRequest
 	var resolution github.Resolution
 	var err error
 	switch input.Action {
-	case "snapshot":
-		if input.Revision == nil || input.Revision.Validate(pr.ID) != nil {
-			return httpapi.SourceResult{}, errors.New("invalid pinned source request")
-		}
-		cache, err := s.openCache(s.paths)
-		if err != nil {
-			return httpapi.SourceResult{}, errors.Join(git.ErrSnapshotUnavailable, err)
-		}
-		prepared, err := cache.ReadPrepared(ctx, pr, *input.Revision)
-		if err != nil {
-			return httpapi.SourceResult{}, err
-		}
-		diff, err := cache.Diff(ctx, pr, prepared.Revision)
-		if err != nil {
-			return httpapi.SourceResult{}, errors.Join(git.ErrSnapshotUnavailable, err)
-		}
-		return httpapi.SourceResult{State: "ready", PR: pr, Diff: &diff}, nil
 	case "refresh":
 		if input.Revision == nil || input.Revision.Validate(pr.ID) != nil {
 			return httpapi.SourceResult{}, errors.New("invalid refresh context")

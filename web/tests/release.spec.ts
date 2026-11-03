@@ -321,10 +321,8 @@ test('release source UI distinguishes metadata fallback, explicit selection and 
     else if (input.action === 'git-only') await route.fulfill({ json: { state: 'base-selection-required', pr, candidates: [{ branch: revision.baseBranch, sha: revision.baseSHA }] } })
     else if (input.action === 'refresh') {
       expect(input.revision).toEqual(revision)
-      await route.fulfill({ status: 502, json: { error: 'private fixture diagnostic' } })
-    } else if (input.action === 'snapshot') {
-      expect(input.revision).toEqual(revision)
-      await route.fulfill({ json: { state: 'ready', pr, diff: { revision, revisionID, complete: true, files: [] }, requestedRevisionID: revisionID } })
+      if (calls === 4) await route.fulfill({ status: 502, json: { error: 'private fixture diagnostic' } })
+      else await route.fulfill({ json: { state: 'ready', pr, diff: { revision, revisionID, complete: true, files: [] }, requestedRevisionID: revisionID } })
     }
     else {
       expect(input).toEqual({ action: 'select-base', branch: revision.baseBranch, sha: revision.baseSHA })
@@ -346,9 +344,12 @@ test('release source UI distinguishes metadata fallback, explicit selection and 
   await expect(page.getByRole('alert')).toContainText('Cannot prepare source')
   await expect(page.getByRole('heading', { name: 'No changes in this comparison' })).toBeVisible()
   expect(await page.content()).not.toContain('private fixture diagnostic')
-  await page.getByRole('button', { name: 'Verify pinned cache', exact: true }).click()
-  await expect(page.getByText('Exact pinned source verified in the cache; no latest source was fetched.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Verify pinned cache', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Open original snapshot', exact: true })).toHaveCount(0)
   await expect(page.getByText('Stale / refresh needs attention.', { exact: false })).toBeVisible()
+  await page.getByRole('button', { name: 'Retry source loading', exact: true }).click()
+  await expect(page.getByText('Source unchanged. The displayed revision is still pinned.')).toBeVisible()
+  await expect(page.getByText('Stale / refresh needs attention.', { exact: false })).toHaveCount(0)
   expect(calls).toBe(5)
   expect(await page.content()).not.toContain(token)
   await page.screenshot({ path: testInfo.outputPath('release-pinned-empty-source.png') })

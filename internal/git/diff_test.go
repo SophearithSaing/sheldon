@@ -19,6 +19,27 @@ import (
 
 type diffSource struct{ mode, data, object string }
 
+func TestDiffDoesNotInitializeMissingRepository(t *testing.T) {
+	f, c, revision := diffFixture(t, nil, map[string]diffSource{"source": {data: "literal\n"}})
+	id, _ := f.resolution.PR.RepositoryID()
+	repo := filepath.Join(f.paths.Cache, "repositories", id+".git")
+	if err := os.Rename(repo, repo+".saved"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Rename(repo+".saved", repo); err != nil {
+			t.Error(err)
+		}
+	}()
+	got, err := c.Diff(context.Background(), f.resolution.PR, revision)
+	if !errors.Is(err, ErrIncompleteDiff) || got.Complete {
+		t.Fatal("missing repository returned a complete diff")
+	}
+	if _, err := os.Stat(repo); !os.IsNotExist(err) {
+		t.Fatal("diff initialized an empty replacement repository")
+	}
+}
+
 // diffTree builds a native tree with literal top-level names, including unusual bytes.
 func diffTree(t *testing.T, f fixture, files map[string]diffSource) string {
 	t.Helper()

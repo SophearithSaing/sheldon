@@ -120,10 +120,6 @@ func (s *Server) source(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.Revision != nil {
 		result.RequestedRevisionID, _ = input.Revision.ID()
-		if input.Action == "snapshot" && (result.State != "ready" || result.Diff.RevisionID != result.RequestedRevisionID) {
-			writeError(w, http.StatusInternalServerError, "pinned source result does not match the requested snapshot")
-			return
-		}
 	}
 	data, err := json.Marshal(result)
 	if err != nil || len(data) > 32<<20 {
@@ -143,7 +139,7 @@ func validSourceRequest(input SourceRequest, id string) bool {
 		return input.Revision == nil && input.Branch == "" && input.SHA == ""
 	case "select-base":
 		return input.Revision == nil && githubpr.ValidBranch(input.Branch) && githubpr.ValidCommit(input.SHA)
-	case "refresh", "snapshot":
+	case "refresh":
 		return input.Branch == "" && input.SHA == "" && input.Revision != nil && input.Revision.Validate(id) == nil
 	default:
 		return false
@@ -191,8 +187,6 @@ func writeSourceError(w http.ResponseWriter, err error) {
 		code, message, status = "source-too-large", "Source exceeds the complete-view limits; no partial diff is shown.", http.StatusUnprocessableEntity
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		code, message, status = "source-timeout", "Source loading timed out or was cancelled. Retry explicitly.", http.StatusGatewayTimeout
-	case errors.Is(err, git.ErrSnapshotUnavailable):
-		code, message, status = "snapshot-unavailable", "The exact pinned source is unavailable or changed in the cache. No latest-source substitution was made.", http.StatusGone
 	case errors.Is(err, git.ErrHistoryUnavailable), errors.Is(err, git.ErrUnrelatedHistory), errors.Is(err, git.ErrAmbiguousMergeBase):
 		code, message, status = "history-unavailable", "Complete, unambiguous comparison history is unavailable.", http.StatusUnprocessableEntity
 	}

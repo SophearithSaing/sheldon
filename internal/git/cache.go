@@ -174,7 +174,7 @@ func (c *Cache) openRepository(ctx context.Context, pr githubpr.PullRequest, cre
 	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
 		if !create {
 			release()
-			return "", nil, ErrSnapshotUnavailable
+			return "", nil, errors.New("managed repository is unavailable; load source explicitly")
 		}
 		stage, err := os.MkdirTemp(filepath.Dir(dir), ".repository-")
 		if err != nil {

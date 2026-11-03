@@ -101,10 +101,6 @@ func TestSourceRegistryComposesRealOfflineResolutionFetchWorktreeAndDiff(t *test
 		t.Fatal("backend source location leaked")
 	}
 	original := ready.Diff.Revision
-	read, err := service.LoadSource(context.Background(), pr, httpapi.SourceRequest{Action: "snapshot", Revision: &original})
-	if err != nil || !reflect.DeepEqual(read.Diff, ready.Diff) {
-		t.Fatalf("original snapshot read: %v", err)
-	}
 	refresh := httpapi.SourceRequest{Action: "refresh", Revision: &original}
 	unchanged, err := service.LoadSource(context.Background(), pr, refresh)
 	if err != nil || unchanged.Diff.RevisionID != ready.Diff.RevisionID {
@@ -143,37 +139,11 @@ func TestSourceRegistryComposesRealOfflineResolutionFetchWorktreeAndDiff(t *test
 	if result, err := service.LoadSource(context.Background(), pr, refresh); err == nil || result.Diff != nil {
 		t.Fatal("failed refresh returned ready source")
 	}
-	read, err = service.LoadSource(context.Background(), pr, httpapi.SourceRequest{Action: "snapshot", Revision: &original})
-	if err != nil || !reflect.DeepEqual(read.Diff, ready.Diff) {
+	read, err := i.cache.Diff(context.Background(), pr, original)
+	if err != nil || !reflect.DeepEqual(read, *ready.Diff) {
 		t.Fatalf("refresh failure damaged the original comparison: %v", err)
 	}
 	t.Setenv("SHELDON_GIT_MODE", "")
-	if err := os.Rename(originalPath, originalPath+".removed"); err != nil {
-		t.Fatal(err)
-	}
-	if result, err := service.LoadSource(context.Background(), pr, httpapi.SourceRequest{Action: "snapshot", Revision: &original}); !errors.Is(err, git.ErrSnapshotUnavailable) || result.Diff != nil {
-		t.Fatal("missing historical source was recreated or substituted")
-	}
-	if _, err := os.Stat(originalPath); !os.IsNotExist(err) {
-		t.Fatal("historical read recreated missing worktree")
-	}
-	if err := os.Rename(originalPath+".removed", originalPath); err != nil {
-		t.Fatal(err)
-	}
-	repositoryID, _ := pr.RepositoryID()
-	repo := filepath.Join(paths.Cache, "repositories", repositoryID+".git")
-	if err := os.Rename(repo, repo+".removed"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.LoadSource(context.Background(), pr, httpapi.SourceRequest{Action: "snapshot", Revision: &original}); !errors.Is(err, git.ErrSnapshotUnavailable) {
-		t.Fatal("missing historical repository accepted")
-	}
-	if _, err := os.Stat(repo); !os.IsNotExist(err) {
-		t.Fatal("historical read initialized a missing repository")
-	}
-	if err := os.Rename(repo+".removed", repo); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("SHELDON_TEST_GH_MODE", "auth")
 	fallback, err := service.LoadSource(context.Background(), pr, httpapi.SourceRequest{Action: "load"})
 	if err != nil || fallback.State != "fallback-required" || fallback.Diff != nil {

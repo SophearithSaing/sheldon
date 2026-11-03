@@ -5,14 +5,13 @@ import ChangedFileTree from '../components/ChangedFileTree.vue'
 import SourceDiff from '../components/SourceDiff.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import OpenPR from './OpenPR.vue'
-import { lineCounts, type SourceRequest, type SourceResponse, type SourceFile, type PinnedDiff, type PinnedRevision } from './source'
+import { lineCounts, type SourceRequest, type SourceResponse, type SourceFile, type PinnedDiff } from './source'
 import type { DiffLine } from '../components/diff'
 import type { ReviewState, RuntimeClient, RegisteredPR } from './client'
 
 const props = defineProps<{ reviewId: string; reviewState: ReviewState; client: RuntimeClient | null }>()
 const source = shallowRef<SourceResponse>()
 const displayed = shallowRef<SourceResponse>()
-const original = shallowRef<{ revision: PinnedRevision; revisionID: string; pr: RegisteredPR }>()
 const pending = ref(false)
 const error = ref('')
 const stale = ref(false)
@@ -38,7 +37,6 @@ function reset(): void {
   controller?.abort()
   source.value = undefined
   displayed.value = undefined
-  original.value = undefined
   pending.value = false
   error.value = ''
   stale.value = false
@@ -84,14 +82,10 @@ async function load(input: SourceRequest = { action: 'load' }): Promise<void> {
     if (response.state === 'ready' && response.diff) {
       const path = active.value?.newPath ?? active.value?.oldPath
       const unchanged = response.diff.revisionID === requestedSnapshot
-      if (!(input.action === 'snapshot' && unchanged)) {
-        displayed.value = input.action === 'snapshot' && original.value?.revisionID === response.diff.revisionID ? { ...response, pr: original.value.pr } : response
-        selected.value = response.diff.files.find((file): boolean => (file.newPath ?? file.oldPath) === path)?.id ?? response.diff.files[0]?.id ?? ''
-      }
-      original.value ??= { revision: response.diff.revision, revisionID: response.diff.revisionID, pr: response.pr }
-      if (input.action !== 'snapshot') stale.value = false
-      else if (!unchanged) stale.value = true
-      notice.value = input.action === 'snapshot' ? 'Exact pinned source verified in the cache; no latest source was fetched.' : requestedSnapshot ? unchanged ? 'Source unchanged. The displayed revision is still pinned.' : 'Refresh complete. Only this tab now displays the new pinned revision.' : ''
+      displayed.value = response
+      selected.value = response.diff.files.find((file): boolean => (file.newPath ?? file.oldPath) === path)?.id ?? response.diff.files[0]?.id ?? ''
+      stale.value = false
+      notice.value = requestedSnapshot ? unchanged ? 'Source unchanged. The displayed revision is still pinned.' : 'Refresh complete. Only this tab now displays the new pinned revision.' : ''
     } else if (requestedSnapshot) {
       stale.value = true
       notice.value = 'Refresh needs an explicit base choice. The previous pinned revision remains displayed.'
@@ -114,12 +108,6 @@ async function load(input: SourceRequest = { action: 'load' }): Promise<void> {
 
 /** Fetches current tips explicitly without moving any other tab's snapshot. */
 function refresh(): void { if (diff.value) void load({ action: 'refresh', revision: diff.value.revision }) }
-
-/** Verifies current historical source without fetching or recreating it. */
-function verifyPinned(): void { if (diff.value) void load({ action: 'snapshot', revision: diff.value.revision }) }
-
-/** Reopens this tab's original comparison only if its exact cached source remains valid. */
-function restoreOriginal(): void { if (original.value) void load({ action: 'snapshot', revision: original.value.revision }) }
 
 /** Repeats the failed action only after an explicit reader request. */
 function retry(): void { void load(lastAction) }
@@ -181,9 +169,9 @@ onUnmounted(reset)
       <template #default>
         <section id="review-content" ref="sourcePane" class="source-pane" tabindex="-1" :aria-busy="pending && !diff" aria-label="Pinned PR source">
           <div v-if="diff" class="refresh-controls">
-            <div class="refresh-actions"><UiButton :disabled="pending || !client" @click="refresh">Refresh source</UiButton><UiButton variant="quiet" :disabled="pending || !client" @click="verifyPinned">Verify pinned cache</UiButton><UiButton v-if="original && original.revisionID !== diff.revisionID" variant="quiet" :disabled="pending || !client" @click="restoreOriginal">Open original snapshot</UiButton><UiButton v-if="pending" variant="quiet" @click="cancelSource">Cancel source request</UiButton></div>
-            <p v-if="pending" role="status">{{ lastAction.action === 'snapshot' ? 'Checking pinned source…' : 'Refreshing source…' }} The displayed revision remains readable until a complete response succeeds.</p>
-            <p v-if="stale" class="stale-notice" role="status">Stale / refresh needs attention. Still displaying pinned revision {{ diff.revisionID.slice(0, 8) }}; no newer snapshot is advertised.</p>
+            <div class="refresh-actions"><UiButton :disabled="pending || !client" @click="refresh">Refresh source</UiButton><UiButton v-if="pending" variant="quiet" @click="cancelSource">Cancel source request</UiButton></div>
+            <p v-if="pending" role="status">Refreshing source… The displayed revision remains readable until a complete response succeeds.</p>
+            <p v-if="stale" class="stale-notice" role="status">Stale / refresh needs attention. Still displaying pinned revision {{ diff.revisionID.slice(0, 8) }}; no newer revision has been loaded.</p>
             <p v-if="notice" role="status">{{ notice }}</p>
             <p v-if="error" role="alert">{{ error }}</p><UiButton v-if="error" :disabled="pending" @click="retry">Retry source loading</UiButton>
           </div>
