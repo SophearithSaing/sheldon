@@ -35,33 +35,40 @@ const visibleGroups = computed(groups)
 </script>
 
 <template>
-  <UiField v-model="search" :label="real ? 'Find a changed file' : 'Find a sample file'" type="search" placeholder="Find a file…" />
-  <nav class="changed-file-tree" :aria-label="real ? 'Changed file selection' : 'Sample file selection'">
-    <div v-for="group in visibleGroups" :key="group.path" class="file-group">
-      <p class="folder">⌄ <span>{{ group.path.replaceAll('/', ' / ') || 'Repository root' }}</span></p>
-      <button v-for="file in group.files" :key="file.id" type="button" :aria-label="file.path" :aria-current="current === file.id ? 'true' : undefined" @click="emit('select', file.id)">
-        <span aria-hidden="true">▱</span><span class="file-name">{{ file.path.slice(file.path.lastIndexOf('/') + 1) }}</span>
-        <span v-if="counts[file.id]" class="file-count" :aria-label="`${counts[file.id]} ${real ? 'runtime' : 'sample'} questions`">{{ counts[file.id] }}</span>
-        <span v-else-if="viewed[file.id]" class="viewed-icon" aria-label="Viewed">✓</span>
-      </button>
+  <div class="changed-file-explorer" :class="{ 'is-preview': !real }">
+    <UiField v-model="search" :label="real ? 'Find a changed file' : 'Find a sample file'" type="search" placeholder="Find a file…" />
+    <nav class="changed-file-tree" :aria-label="real ? 'Changed file selection' : 'Sample file selection'">
+      <div v-for="group in visibleGroups" :key="group.path" class="file-group">
+        <p class="folder">⌄ <span>{{ group.path.replaceAll('/', ' / ') || 'Repository root' }}</span></p>
+        <button v-for="file in group.files" :key="file.id" type="button" :aria-label="file.path" :aria-current="current === file.id ? 'true' : undefined" @click="emit('select', file.id)">
+          <svg v-if="!real" class="file-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5L9 1.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" /><path d="M9 1.5v4h4" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" /></svg><span v-else aria-hidden="true">▱</span>
+          <span class="file-name">{{ file.path.slice(file.path.lastIndexOf('/') + 1) }}</span>
+          <span v-if="counts[file.id]" class="file-count" :aria-label="`${counts[file.id]} ${real ? 'runtime' : 'sample'} questions`">{{ counts[file.id] }}</span>
+          <span v-else-if="viewed[file.id]" class="viewed-icon" aria-label="Viewed">✓</span>
+        </button>
+      </div>
+      <p v-if="visibleGroups.length === 0" role="status">{{ real ? 'No changed paths match.' : 'No sample paths match.' }}</p>
+    </nav>
+    <div v-if="!real" class="viewed-summary">
+      <p>Files viewed <strong>{{ files.filter((file) => viewed[file.id]).length }} / {{ files.length }}</strong></p>
+      <div class="viewed-segments" aria-hidden="true"><span v-for="file in files" :key="file.id" :class="{ done: viewed[file.id] }" /></div>
+      <p>At your own pace.</p>
+      <p class="tree-note">Questions share agent context for this PR revision. Sample data only.</p>
     </div>
-    <p v-if="visibleGroups.length === 0" role="status">{{ real ? 'No changed paths match.' : 'No sample paths match.' }}</p>
-  </nav>
-  <div v-if="!real" class="viewed-summary">
-    <p>Files viewed <strong>{{ files.filter((file) => viewed[file.id]).length }} / {{ files.length }}</strong></p>
-    <div class="viewed-segments" aria-hidden="true"><span v-for="file in files" :key="file.id" :class="{ done: viewed[file.id] }" /></div>
-    <p>At your own pace.</p>
-    <p class="tree-note">Click or drag line numbers to ask. Questions share agent context for this PR revision. Sample data only.</p>
   </div>
 </template>
 
 <style scoped>
+.changed-file-explorer.is-preview { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.changed-file-explorer.is-preview > :first-child, .changed-file-explorer.is-preview > .viewed-summary { flex-shrink: 0; }
 .changed-file-tree { margin-top: var(--space-4); }
+.is-preview .changed-file-tree { flex: 1; min-height: 0; overflow-y: auto; }
 .file-group + .file-group { margin-top: var(--space-3); }
 .folder { display: flex; align-items: center; gap: var(--space-2); min-height: 2.125rem; padding-inline: var(--space-2); color: var(--color-muted); font-size: var(--text-small); }
 .changed-file-tree button { display: flex; align-items: center; gap: 0.4375rem; width: 100%; min-height: var(--target-control); padding: var(--space-2); border: 0; border-left: 2px solid transparent; border-radius: var(--radius-control); background: transparent; text-align: left; font-size: var(--text-small); }
 .changed-file-tree button:hover { background: var(--color-surface); }
 .changed-file-tree button[aria-current] { border-left-color: var(--color-accent); background: var(--color-accent-soft); }
+.file-icon { flex: 0 0 auto; width: 1rem; height: 1rem; color: var(--color-muted); }
 .file-name { min-width: 0; overflow-wrap: anywhere; }
 .file-count { margin-left: auto; padding-inline: 0.3125rem; background: var(--color-panel); color: var(--color-accent); border-radius: 0.25rem; font-size: 0.625rem; }
 .viewed-icon { margin-left: auto; color: var(--color-success); }

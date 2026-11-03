@@ -336,6 +336,8 @@ function selectFile(id: string): void {
   min-height: 0;
   min-width: 0;
 }
+.sample-workspace :deep(.file-disclosure) { position: relative; }
+.sample-workspace :deep(.files-body) { position: absolute; inset: var(--target-control) 0 0; height: auto; min-height: 0; }
 @container workspace (max-width: 56.25rem) {
   .is-full-page :deep(.workspace-content) { flex: 1; min-height: 0; }
 }

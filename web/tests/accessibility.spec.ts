@@ -61,10 +61,11 @@ test('a narrow container inside a desktop viewport keeps source files and conver
   expect((await source.boundingBox())!.y).toBeGreaterThan((await files.boundingBox())!.y)
   expect((await panel.boundingBox())!.y).toBeGreaterThan((await source.boundingBox())!.y)
   const fileList = files.getByRole('region', { name: 'Changed file list', exact: true })
+  const fileTree = files.getByRole('navigation', { name: 'Sample file selection', exact: true })
   const fileBounds = (await files.boundingBox())!
   const listBounds = (await fileList.boundingBox())!
   expect(listBounds.y + listBounds.height).toBeLessThanOrEqual(fileBounds.y + fileBounds.height)
-  expect(await fileList.evaluate((element): boolean => element.scrollHeight > element.clientHeight)).toBe(true)
+  expect(await fileTree.evaluate((element): boolean => element.scrollHeight > element.clientHeight)).toBe(true)
   const panes = page.getByRole('region', { name: 'Review panes', exact: true })
   await page.keyboard.press('Tab')
   await panes.focus()

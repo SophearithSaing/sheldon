@@ -156,6 +156,31 @@ test('file disclosure stays available at 1180px and preserves state on collapse'
   ).toHaveAttribute('aria-current', 'true')
 })
 
+/**
+ * Keeps the desktop review within the viewport while only the file tree scrolls.
+ * @param fixtures Playwright page fixture.
+ * @param testInfo Screenshot output location.
+ */
+test('desktop review keeps a full-height diff and a bounded scrolling file tree', async ({ page }, testInfo): Promise<void> => {
+  await page.setViewportSize({ width: 1440, height: 640 })
+  const application = page.locator('.fixture-application')
+  await expect(application).toHaveCSS('height', '640px')
+  const files = page.getByRole('complementary', { name: 'Changed files', exact: true })
+  const source = page.getByRole('main')
+  const fileList = files.getByRole('region', { name: 'Changed file list', exact: true })
+  const fileTree = files.getByRole('navigation', { name: 'Sample file selection', exact: true })
+  expect((await files.boundingBox())!.height).toBeCloseTo((await source.boundingBox())!.height, 0)
+  expect(await fileTree.evaluate((element): boolean => element.scrollHeight > element.clientHeight)).toBe(true)
+  expect(await fileList.evaluate((element): number => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1)
+  expect(await page.evaluate((): boolean => document.documentElement.scrollHeight <= window.innerHeight)).toBe(true)
+  await expect(files.locator('.viewed-summary')).toBeInViewport()
+  await expect(files.locator('.file-icon')).toHaveCount(5)
+  await expect(page.getByText('Click or drag line numbers to ask.', { exact: false })).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('fullscreen-file-tree.png'), fullPage: true })
+  await fileTree.evaluate((element): void => { element.scrollTop = element.scrollHeight })
+  await expect(files.getByRole('button', { name: 'docs/sessions.md', exact: true })).toBeInViewport()
+})
+
 for (const width of [900, 899]) {
   test(`conversation stacks with source and files at ${width}px without losing state`, async ({
     page,
