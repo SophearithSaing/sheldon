@@ -152,6 +152,8 @@ func main() {
 				trigger <- struct{}{}
 			}
 			switch mode {
+			case "model-default-variant":
+				fmt.Fprint(w, `{"data":{"providerID":"fixture","id":"chat","variant":"default"}}`)
 			case "model-missing":
 				fmt.Fprint(w, `{"data":null}`)
 			case "model-unavailable":
@@ -184,6 +186,10 @@ func main() {
 			session := map[string]any{"id": id, "location": input["location"], "permissions": input["permissions"], "model": input["model"]}
 			sessions[id] = session
 			switch mode {
+			case "session-default-variant", "model-default-variant":
+				session["model"] = map[string]string{"providerID": "fixture", "id": "chat", "variant": "default"}
+			case "session-unsupported-variant":
+				session["model"] = map[string]string{"providerID": "fixture", "id": "chat", "variant": "other"}
 			case "session-model":
 				session["model"] = map[string]string{"providerID": "other", "id": "fallback"}
 			case "session-location":

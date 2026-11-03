@@ -203,7 +203,7 @@ func TestExplicitConfigurationAndInvalidExecutableFailBeforeLaunch(t *testing.T)
 }
 
 func TestNativeModelAndSessionMismatchNeverFallback(t *testing.T) {
-	for _, mode := range []string{"model-missing", "model-unavailable", "model-overflow", "model-trailing", "session-model", "session-location", "session-permissions", "session-id", "get-mismatch", "permission-mismatch"} {
+	for _, mode := range []string{"model-missing", "model-unavailable", "model-overflow", "model-trailing", "session-model", "session-unsupported-variant", "session-location", "session-permissions", "session-id", "get-mismatch", "permission-mismatch"} {
 		t.Run(mode, func(t *testing.T) {
 			audit := fixture(t, mode)
 			s, err := Start(context.Background())
@@ -223,6 +223,29 @@ func TestNativeModelAndSessionMismatchNeverFallback(t *testing.T) {
 			}
 			if creates > 1 || strings.HasPrefix(mode, "model-") && creates != 0 {
 				t.Fatal("model failure silently retried or created a replacement")
+			}
+		})
+	}
+}
+
+func TestNativeDefaultVariantIsPinned(t *testing.T) {
+	for _, mode := range []string{"session-default-variant", "model-default-variant"} {
+		t.Run(mode, func(t *testing.T) {
+			fixture(t, mode)
+			s, err := Start(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			session, err := s.CreateSession(context.Background(), t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if session.Model() != (Model{ProviderID: "fixture", ID: "chat", Variant: "default"}) {
+				t.Fatal("effective default variant was not pinned")
+			}
+			if err := s.ValidateSession(context.Background(), session); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

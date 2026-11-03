@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { offlineCLI, type NativeAudit, type OfflineCLI } from '../release/offline'
 import type { SourceResponse } from '../../src/runtime/source'
 import type { QuestionAnswer } from '../../src/runtime/questions'
+import { preserveResponseBodies } from '../response-bodies'
 
 /**
  * Waits for an unmodified application POST response, never a browser-intercepted fixture reply.
@@ -91,14 +92,15 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
   const traffic: string[] = []
   const errors: string[] = []
   /**
-   * Tracks only public request URLs and uncaught browser failures, never bearer headers.
+   * Preserves Chromium response bodies for assertions and tracks public URLs/browser failures.
    * @param target Application page to observe.
    */
-  function track(target: Page): void {
+  async function track(target: Page): Promise<void> {
+    await preserveResponseBodies(target)
     target.on('request', (request): void => { traffic.push(request.url()) })
     target.on('pageerror', (error: Error): void => { errors.push(error.message) })
   }
-  track(page)
+  await track(page)
   try {
     const launch = await fixture.start('https://github.com/fixture/repo/pull/31')
     const initialDiscovery = await fixture.discovery()
@@ -124,7 +126,7 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
     await page.screenshot({ path: info.outputPath('native-question-streaming.png') })
 
     const tab = await context.newPage()
-    track(tab)
+    await track(tab)
     await tab.goto(await fixture.open('https://github.com/fixture/repo/pull/31'))
     await source(tab, 'Load pinned source')
     await tab.getByRole('button', { name: 'shared.txt', exact: true }).click()
@@ -136,7 +138,7 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
     await tab.screenshot({ path: info.outputPath('native-question-busy.png') })
 
     const other = await context.newPage()
-    track(other)
+    await track(other)
     await other.goto(await fixture.open('https://github.com/fixture/repo/pull/32'))
     expect((await source(other, 'Load pinned source')).state).toBe('fallback-required')
     await source(other, 'Use Git-only fallback')
@@ -246,7 +248,7 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
     const nextDiscovery = await fixture.discovery()
     expect(nextDiscovery.token === initialDiscovery.token).toBe(false)
     const reopenedPage = await context.newPage()
-    track(reopenedPage)
+    await track(reopenedPage)
     await reopenedPage.goto(restarted)
     const reopened = await source(reopenedPage, 'Load pinned source')
     expect(reopened.diff!.revisionID).toBe(original.revisionID)

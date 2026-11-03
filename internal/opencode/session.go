@@ -92,7 +92,11 @@ func (s *Service) CreateSession(ctx context.Context, directory string) (*Session
 	if err := s.call(ctx, "POST", "/api/session", map[string]any{"title": "Sheldon pinned-source investigation", "agent": "build", "location": map[string]string{"directory": directory}, "permissions": investigationRules(), "model": selected.Data}, &result); err != nil {
 		return nil, err
 	}
-	if !validNativeID(result.Data.ID) || result.Data.Location.Directory != directory || result.Data.Model != selected.Data || !slices.Equal(result.Data.Permissions, investigationRules()) {
+	expectedModel := selected.Data
+	if expectedModel.Variant == "" && result.Data.Model.Variant == "default" {
+		expectedModel.Variant = "default"
+	}
+	if !validNativeID(result.Data.ID) || result.Data.Location.Directory != directory || result.Data.Model != expectedModel || !slices.Equal(result.Data.Permissions, investigationRules()) {
 		s.cancel(ErrRestricted)
 		return nil, ErrRestricted
 	}
@@ -175,5 +179,5 @@ func validModel(model Model) bool {
 			return false
 		}
 	}
-	return model.Variant == ""
+	return model.Variant == "" || model.Variant == "default"
 }
