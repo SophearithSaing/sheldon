@@ -86,7 +86,7 @@ export function useConversations(client: () => RuntimeClient | null): Conversati
         turn.answer = { ...snapshot, stopRequested: turn.answer.stopRequested || snapshot.stopRequested }
         turn.observation = activeAnswer(snapshot) ? 'watching' : 'done'
       })
-      if (!controller.signal.aborted && epoch === generation) turn.observation = 'done'
+      if (!controller.signal.aborted && epoch === generation && client() === connection) turn.observation = 'done'
     } catch {
       if (!controller.signal.aborted && epoch === generation && client() === connection) {
         turn.observation = 'lost'
@@ -134,12 +134,12 @@ export function useConversations(client: () => RuntimeClient | null): Conversati
       thread.draft = ''
       void observe(thread.turns.at(-1)!)
     } catch (failure: unknown) {
-      if (controller.signal.aborted || epoch !== generation) return
+      if (controller.signal.aborted || epoch !== generation || client() !== connection) return
       thread.uncertain = !(failure instanceof QuestionAdmissionError) || failure.uncertain
       thread.error = failure instanceof QuestionAdmissionError ? failure.message : 'Follow-up delivery may be uncertain. The draft was retained; do not resend automatically.'
     } finally {
       requests.delete(controller)
-      if (epoch === generation) thread.pending = false
+      if (epoch === generation && client() === connection) thread.pending = false
     }
   }
 
@@ -167,10 +167,10 @@ export function useConversations(client: () => RuntimeClient | null): Conversati
       }
       turn.stopNotice = activeAnswer(turn.answer) ? turn.answer.stopRequested ? 'Stop requested. Termination is not yet confirmed.' : 'Stop was not confirmed. Execution may still be active.' : turn.answer.executionUnknown ? 'Execution remains unknown; the shared session is unavailable.' : 'Stop check returned a terminal answer snapshot.'
     } catch {
-      if (!controller.signal.aborted && epoch === generation) turn.stopNotice = 'Cannot confirm the Stop request. Execution may still be active; check observation before sending again.'
+      if (!controller.signal.aborted && epoch === generation && client() === connection) turn.stopNotice = 'Cannot confirm the Stop request. Execution may still be active; check observation before sending again.'
     } finally {
       requests.delete(controller)
-      if (epoch === generation) turn.stopPending = false
+      if (epoch === generation && client() === connection) turn.stopPending = false
     }
   }
 

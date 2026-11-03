@@ -117,13 +117,16 @@ async function submit(): Promise<void> {
   error.value = questionError(text.value) || props.busyReason
   if (error.value) return
   const input: InitialQuestion = { ...draft.value, question: text.value }
+  const client = props.client
+  const revisionID = props.diff.revisionID
+  const fileID = props.file.id
   const current = new AbortController()
   controller = current
   pending.value = true
   emit('sending', true)
   try {
-    const answer = await props.client.askQuestion(props.diff.revision.prID, input, current.signal)
-    if (current.signal.aborted || controller !== current) return
+    const answer = await client.askQuestion(input.revision.prID, input, current.signal)
+    if (current.signal.aborted || controller !== current || props.client !== client || props.diff.revisionID !== revisionID || props.file.id !== fileID) return
     emit('admitted', answer, input)
     draft.value = null
     text.value = ''
@@ -131,9 +134,9 @@ async function submit(): Promise<void> {
     message.value = ''
     emit('guard', false)
     await nextTick()
-    root.value?.querySelector<HTMLButtonElement>(`[data-answer="${answer.answerID}"]`)?.focus({ preventScroll: true })
+    if (!current.signal.aborted && controller === current && props.client === client && props.diff.revisionID === revisionID && props.file.id === fileID) root.value?.querySelector<HTMLButtonElement>(`[data-answer="${answer.answerID}"]`)?.focus({ preventScroll: true })
   } catch (failure: unknown) {
-    if (current.signal.aborted) return
+    if (current.signal.aborted || controller !== current || props.client !== client || props.diff.revisionID !== revisionID || props.file.id !== fileID) return
     uncertain.value = !(failure instanceof QuestionAdmissionError) || failure.uncertain
     error.value = failure instanceof QuestionAdmissionError ? failure.message : 'Question delivery may be uncertain. Do not resend automatically.'
   } finally {
@@ -148,7 +151,7 @@ function beforeLeave(event: BeforeUnloadEvent): void {
   if (draft.value) { event.preventDefault(); event.returnValue = '' }
 }
 window.addEventListener('beforeunload', beforeLeave)
-onUnmounted((): void => { controller?.abort(); window.removeEventListener('beforeunload', beforeLeave) })
+onUnmounted((): void => { const previous = controller; controller = undefined; previous?.abort(); window.removeEventListener('beforeunload', beforeLeave) })
 watch((): string => props.file.id, (): void => { anchor.value = null; message.value = '' })
 </script>
 

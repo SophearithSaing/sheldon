@@ -24,7 +24,10 @@ async function installStreams(page: Page): Promise<void> {
       const body = new ReadableStream<Uint8Array>({
         start(controller): void {
           streams[id] = controller
-          signal?.addEventListener('abort', (): void => { if (streams[id] === controller) { delete streams[id]; controller.error(new Error('Fixture observation aborted.')) } }, { once: true })
+          signal?.addEventListener('abort', (): void => {
+            if ((window as unknown as { fixtureIgnoreAbort?: boolean }).fixtureIgnoreAbort) return
+            if (streams[id] === controller) { delete streams[id]; controller.error(new Error('Fixture observation aborted.')) }
+          }, { once: true })
         },
         cancel(): void { delete streams[id] },
       })
@@ -100,6 +103,18 @@ async function ask(page: Page, line: number, question: string): Promise<void> {
   await page.getByRole('textbox', { name: 'Your question', exact: true }).fill(question)
   await page.getByRole('button', { name: 'Send question', exact: true }).click()
   await expect(page.getByRole('form', { name: 'New question', exact: true })).toHaveCount(0)
+}
+
+/**
+ * Explicitly reconnects the same renderer without reloading or recovering lost question state.
+ * @param page Disconnected fixture page.
+ */
+async function reconnect(page: Page): Promise<void> {
+  await page.getByLabel('API token', { exact: true }).fill(await token())
+  await page.getByRole('button', { name: 'Connect backend', exact: true }).click()
+  await expect(page.getByText('Previously accepted questions may still be running', { exact: false })).toBeVisible()
+  await page.getByRole('button', { name: 'Load pinned source', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'src/file0000.ts', exact: true })).toBeVisible()
 }
 
 test('real streamed snapshots stay escaped and do not steal source selection, focus or drafts', async ({ page }, testInfo): Promise<void> => {
@@ -312,4 +327,224 @@ test('unknown execution stays busy and wrong-scope stream text is never rendered
   await expect(page.getByRole('button', { name: 'Send follow-up', exact: true })).toBeDisabled()
   await page.screenshot({ path: testInfo.outputPath('real-conversation-unknown.png') })
   expect(f.answers).toHaveLength(1)
+})
+
+for (const change of ['base-only', 'head']) test(`${change} refresh preserves old follow-up bindings and never moves a pinned inline draft`, async ({ page }, testInfo): Promise<void> => {
+  const f = await fixture(page, change === 'base-only' ? 730 : 731)
+  await ask(page, 2, 'Synthetic original revision.')
+  await snapshot(page, f.answers[0]!, { state: 'completed', text: 'Synthetic original transcript.' }, true)
+  const original = f.source.diff!
+  const next = sourceFixture(f.source.pr, 2, change === 'base-only' ? 'd'.repeat(40) : original.revision.baseSHA, change === 'head' ? 'e'.repeat(40) : original.revision.headSHA)
+  next.requestedRevisionID = original.revisionID
+  let refreshes = 0
+  await page.route(`**/api/reviews/${original.revision.prID}/source`, async (route): Promise<void> => {
+    refreshes++
+    expect(route.request().postDataJSON()).toEqual({ action: 'refresh', revision: original.revision })
+    await route.fulfill({ json: next })
+  })
+  const followup = page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })
+  await followup.fill('Continue the old source after refresh.')
+  await page.getByRole('button', { name: 'Select head line 4', exact: true }).click()
+  await page.getByRole('button', { name: 'Ask about selection', exact: true }).click()
+  const initial = page.getByRole('textbox', { name: 'Your question', exact: true })
+  await initial.fill('Do not move this draft.')
+  await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
+  expect(refreshes).toBe(0)
+  await expect(initial).toHaveValue('Do not move this draft.')
+  await expect(page.getByRole('form', { name: 'New question', exact: true })).toContainText(original.revisionID.slice(0, 8))
+  await page.getByRole('button', { name: 'Discard draft', exact: true }).click()
+  await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
+  await expect(page.getByText('Older context.', { exact: false })).toBeVisible()
+  await expect(page.getByText(`Pinned revision ${next.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
+  await expect(page.locator('[data-answer]')).toHaveCount(0)
+  await expect(followup).toHaveValue('Continue the old source after refresh.')
+  await page.getByRole('button', { name: 'Close conversation', exact: true }).click()
+  await page.getByRole('button', { name: 'Open runtime conversation', exact: true }).click()
+  await expect(page.getByText('Older context.', { exact: false })).toBeVisible()
+  await expect(followup).toHaveValue('Continue the old source after refresh.')
+  await followup.press('Enter')
+  await expect.poll((): number => f.followups.length).toBe(1)
+  expect(f.followups[0]).toEqual({ revisionID: original.revisionID, question: 'Continue the old source after refresh.' })
+  expect(f.answers[1]!.reference.anchor).toEqual(f.answers[0]!.reference.anchor)
+  await snapshot(page, f.answers[1]!, { state: 'completed', text: 'Synthetic old-context follow-up.' }, true)
+  await expect(page.locator('.answer-text')).toHaveText(['Synthetic original transcript.', 'Synthetic old-context follow-up.'])
+  await page.screenshot({ path: testInfo.outputPath(`real-question-${change}-refresh.png`) })
+})
+
+test('disconnect requires a discard decision and late streams cannot populate a reconnected workspace', async ({ page }, testInfo): Promise<void> => {
+  const f = await fixture(page, 732)
+  await ask(page, 2, 'Synthetic connection-bound answer.')
+  const old = f.answers[0]!
+  await snapshot(page, old, { state: 'streaming', text: 'Synthetic before disconnect.' })
+  await page.getByRole('textbox', { name: 'Follow up in this thread', exact: true }).fill('Keep this local draft.')
+  let stops = 0
+  await page.route('**/threads/*/answers/*/stop', async (route): Promise<void> => { stops++; await route.fulfill({ status: 202, json: old }) })
+  await page.getByRole('button', { name: 'Development backend — Backend connected', exact: true }).click()
+  await page.getByRole('button', { name: 'Disconnect backend', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Disconnect this question workspace?', exact: true })
+  await expect(dialog).toContainText('does not stop accepted execution')
+  await page.screenshot({ path: testInfo.outputPath('real-question-disconnect-guard.png') })
+  await dialog.getByRole('button', { name: 'Keep connected', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })).toHaveValue('Keep this local draft.')
+  await expect(page.getByRole('button', { name: 'Disconnect backend', exact: true })).toBeFocused()
+  await page.evaluate((): void => { (window as unknown as { fixtureIgnoreAbort: boolean }).fixtureIgnoreAbort = true })
+  await page.getByRole('button', { name: 'Disconnect backend', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Discard page state and disconnect', exact: true }).click()
+  await reconnect(page)
+  await snapshot(page, old, { state: 'completed', text: 'STALE STREAM MUST NOT APPEAR' }, true)
+  await expect(page.locator('[data-answer]')).toHaveCount(0)
+  await expect(page.locator('.answer-text')).toHaveCount(0)
+  expect(await page.content()).not.toContain('STALE STREAM MUST NOT APPEAR')
+  expect(stops).toBe(0)
+  await ask(page, 4, 'Synthetic new connection answer.')
+  await snapshot(page, f.answers[1]!, { state: 'completed', text: 'Synthetic new connection result.' }, true)
+  await expect(page.locator('.answer-text')).toHaveText('Synthetic new connection result.')
+  expect(f.answers).toHaveLength(2)
+})
+
+for (const action of ['followup', 'stop']) test(`late ${action} replies cannot mutate a new verified connection`, async ({ page }): Promise<void> => {
+  const f = await fixture(page, action === 'followup' ? 733 : 734)
+  await ask(page, 2, 'Synthetic old request scope.')
+  const old = f.answers[0]!
+  await snapshot(page, old, { state: action === 'followup' ? 'completed' : 'streaming', text: 'Synthetic original scope.' }, action === 'followup')
+  await page.evaluate((action: string): void => {
+    const original = window.fetch.bind(window)
+    let armed = true
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const path = new URL(input instanceof Request ? input.url : String(input), location.href).pathname
+      if (armed && (action === 'stop' ? path.endsWith('/stop') : /\/threads\/[^/]+\/answers$/.test(path))) {
+        armed = false
+        return original(input, { ...init, signal: undefined })
+      }
+      return original(input, init)
+    }
+  }, action)
+  let release: (() => void) | undefined
+  await page.route(action === 'stop' ? '**/threads/*/answers/*/stop' : '**/threads/*/answers', async (route): Promise<void> => {
+    await new Promise<void>((resolve): void => { release = resolve })
+    await route.fulfill({ status: 202, json: action === 'stop' ? { ...old, state: 'interrupted', text: 'STALE STOP RESPONSE', stopRequested: true } : { ...old, answerID: digest('stale-followup'), question: 'Delayed old follow-up.' } })
+  })
+  if (action === 'stop') await page.getByRole('button', { name: 'Stop this answer', exact: true }).click()
+  else {
+    await page.getByRole('textbox', { name: 'Follow up in this thread', exact: true }).fill('Delayed old follow-up.')
+    await page.getByRole('button', { name: 'Send follow-up', exact: true }).click()
+  }
+  await expect.poll((): boolean => !!release).toBe(true)
+  await page.getByRole('button', { name: 'Development backend — Backend connected', exact: true }).click()
+  await page.getByRole('button', { name: 'Disconnect backend', exact: true }).click()
+  await page.getByRole('button', { name: 'Discard page state and disconnect', exact: true }).click()
+  await reconnect(page)
+  await ask(page, 4, 'Synthetic new request scope.')
+  release!()
+  await snapshot(page, f.answers[1]!, { state: 'completed', text: 'Synthetic current transcript.' }, true)
+  await expect(page.locator('.answer-text')).toHaveText('Synthetic current transcript.')
+  await expect(page.locator('[data-answer]')).toHaveCount(1)
+  expect(await page.content()).not.toContain('STALE STOP RESPONSE')
+  expect(await page.content()).not.toContain('Delayed old follow-up.')
+})
+
+test('two tabs share backend busy feedback but never share drafts or a Questions library', async ({ page, context }): Promise<void> => {
+  const first = await fixture(page, 735)
+  const secondPage = await context.newPage()
+  const second = await fixture(secondPage, 735)
+  await ask(page, 2, 'Synthetic tab A.')
+  await snapshot(page, first.answers[0]!, { state: 'streaming', text: 'Synthetic A active.' })
+  let allowed = false
+  await secondPage.route('**/api/reviews/*/questions', async (route): Promise<void> => {
+    if (!allowed) { await route.fulfill({ status: 409, json: { error: 'synthetic remote busy' } }); return }
+    const answer: QuestionAnswer = { ...first.answers[0]!, answerID: digest('second-tab-answer'), threadID: digest('second-tab-thread'), question: route.request().postDataJSON().question, reference: { revisionID: first.source.diff!.revisionID, anchor: route.request().postDataJSON().anchor } }
+    second.answers.push(answer)
+    await route.fulfill({ status: 202, json: answer })
+  })
+  await secondPage.getByRole('button', { name: 'Select head line 4', exact: true }).click()
+  await secondPage.getByRole('button', { name: 'Ask about selection', exact: true }).click()
+  await secondPage.getByRole('textbox', { name: 'Your question', exact: true }).fill('Synthetic tab B retained draft.')
+  await secondPage.getByRole('button', { name: 'Send question', exact: true }).click()
+  await expect(secondPage.getByText('This shared revision session is busy or unavailable.', { exact: false })).toBeVisible()
+  await expect(secondPage.locator('[data-answer]')).toHaveCount(0)
+  await expect(page.locator('[data-answer]')).toHaveCount(1)
+  const otherPage = await context.newPage()
+  const other = await fixture(otherPage, 736)
+  await ask(otherPage, 2, 'Synthetic independent PR.')
+  await snapshot(otherPage, other.answers[0]!, { state: 'completed', text: 'Synthetic independent result.' }, true)
+  await expect(page.locator('.answer-text')).toHaveText('Synthetic A active.')
+  await snapshot(page, first.answers[0]!, { state: 'completed', text: 'Synthetic A finished.' }, true)
+  allowed = true
+  await expect(secondPage.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('Synthetic tab B retained draft.')
+  await secondPage.getByRole('button', { name: 'Send question', exact: true }).click()
+  await expect.poll((): number => second.answers.length).toBe(1)
+  await snapshot(secondPage, second.answers[0]!, { state: 'completed', text: 'Synthetic B result.' }, true)
+  await expect(page.locator('.answer-text')).toHaveText('Synthetic A finished.')
+  await expect(secondPage.locator('.answer-text')).toHaveText('Synthetic B result.')
+  for (const tab of [page, secondPage, otherPage]) {
+    await expect(tab.getByRole('button', { name: 'Questions — unavailable', exact: true })).toBeDisabled()
+    const credential = await token()
+    expect(await tab.content()).not.toContain(credential)
+    expect(await tab.evaluate((): string => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }))).not.toContain(credential)
+  }
+})
+
+test('oversized admission responses are bounded and cannot invent a thread', async ({ page }): Promise<void> => {
+  const f = await fixture(page, 737)
+  await page.route('**/api/reviews/*/questions', async (route): Promise<void> => { await route.fulfill({ status: 202, body: 'x'.repeat(2 * 1024 * 1024 + 1) }) })
+  await page.getByRole('button', { name: 'Select head line 2', exact: true }).click()
+  await page.getByRole('button', { name: 'Ask about selection', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('Keep the bounded draft.')
+  await page.getByRole('button', { name: 'Send question', exact: true }).click()
+  await expect(page.getByText('Admission is uncertain.', { exact: false })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('Keep the bounded draft.')
+  await expect(page.locator('[data-answer]')).toHaveCount(0)
+  expect(f.answers).toHaveLength(0)
+})
+
+test('document navigation warns before discarding a follow-up draft without stopping observation', async ({ page }): Promise<void> => {
+  const f = await fixture(page, 738)
+  await ask(page, 2, 'Synthetic guarded navigation.')
+  const answer = f.answers[0]!
+  await snapshot(page, answer, { state: 'streaming', text: 'Synthetic still executing.' })
+  const draft = page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })
+  await draft.fill('Keep this draft on cancelled navigation.')
+  const originalURL = page.url()
+  let warned = false
+  page.once('dialog', async (dialog): Promise<void> => { warned = dialog.type() === 'beforeunload'; await dialog.dismiss() })
+  await page.getByRole('link', { name: 'Sample UI previews', exact: true }).click()
+  expect(warned).toBe(true)
+  expect(page.url()).toBe(originalURL)
+  await expect(draft).toHaveValue('Keep this draft on cancelled navigation.')
+  await snapshot(page, answer, { state: 'completed', text: 'Synthetic completed after navigation was cancelled.' }, true)
+  await expect(page.locator('.answer-text')).toHaveText('Synthetic completed after navigation was cancelled.')
+})
+
+test('a late initial admission cannot clear the next connection draft or create a ghost marker', async ({ page }): Promise<void> => {
+  const f = await fixture(page, 739)
+  await page.evaluate((): void => {
+    const original = window.fetch.bind(window)
+    let armed = true
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (armed && String(input).endsWith('/questions')) { armed = false; return original(input, { ...init, signal: undefined }) }
+      return original(input, init)
+    }
+  })
+  let release: (() => void) | undefined
+  await page.route('**/api/reviews/*/questions', async (route): Promise<void> => {
+    await new Promise<void>((resolve): void => { release = resolve })
+    await route.fallback()
+  })
+  await page.getByRole('button', { name: 'Select head line 2', exact: true }).click()
+  await page.getByRole('button', { name: 'Ask about selection', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('Synthetic delayed admission.')
+  await page.getByRole('button', { name: 'Send question', exact: true }).click()
+  await expect.poll((): boolean => !!release).toBe(true)
+  await page.getByRole('button', { name: 'Development backend — Backend connected', exact: true }).click()
+  await page.getByRole('button', { name: 'Disconnect backend', exact: true }).click()
+  await page.getByRole('button', { name: 'Discard page state and disconnect', exact: true }).click()
+  await reconnect(page)
+  await page.getByRole('button', { name: 'Select head line 4', exact: true }).click()
+  await page.getByRole('button', { name: 'Ask about selection', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('New connection draft must survive.')
+  release!()
+  await expect.poll((): number => f.answers.length).toBe(1)
+  await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('New connection draft must survive.')
+  await expect(page.locator('[data-answer]')).toHaveCount(0)
+  await expect(page.locator('.answer-text')).toHaveCount(0)
 })

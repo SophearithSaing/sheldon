@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -358,5 +359,136 @@ func TestRepeatedStartAndSlowObserverDoNotBlockExecution(t *testing.T) {
 	}
 	if prompts != 1 {
 		t.Fatal("repeated Start dispatched duplicate prompts")
+	}
+}
+
+func TestConcurrentHTTPClientsShareOneActiveRevisionSession(t *testing.T) {
+	f := newQuestionFixture(t, "answer-wait")
+	s := questionHTTP(t, f)
+	body, err := json.Marshal(f.input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	statuses := make(chan int, 2)
+	admitted := make(chan question.Answer, 2)
+	var work sync.WaitGroup
+	for range 2 {
+		work.Add(1)
+		go func() {
+			defer work.Done()
+			<-start
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			r, err := http.NewRequestWithContext(ctx, "POST", s.URL()+"/api/reviews/"+f.pr.ID+"/questions", bytes.NewReader(body))
+			if err != nil {
+				statuses <- 0
+				return
+			}
+			r.Header.Set("Authorization", "Bearer "+s.APIToken())
+			r.Header.Set("Content-Type", "application/json")
+			response, err := http.DefaultClient.Do(r)
+			if err != nil {
+				statuses <- 0
+				return
+			}
+			defer response.Body.Close()
+			statuses <- response.StatusCode
+			if response.StatusCode == 202 {
+				var answer question.Answer
+				if json.NewDecoder(response.Body).Decode(&answer) == nil {
+					admitted <- answer
+				}
+			}
+		}()
+	}
+	close(start)
+	work.Wait()
+	one, two := <-statuses, <-statuses
+	if !((one == 202 && two == 409) || (one == 409 && two == 202)) || len(admitted) != 1 {
+		t.Fatal("concurrent HTTP tabs bypassed shared admission")
+	}
+	answer := <-admitted
+	observeHTTP(t, s, answer, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	questionPost(t, ctx, s, answerPath(answer)+"/stop", question.AnswerRequest{RevisionID: answer.RevisionID})
+	if stopped := observeHTTP(t, s, answer, false); stopped.State != question.Interrupted || stopped.ExecutionUnknown {
+		t.Fatal("owned concurrent answer did not confirm interruption")
+	}
+	if countNativeSessions(nativeQuestionAudit(t, f.audit)) != 1 {
+		t.Fatal("concurrent HTTP tabs created separate native histories")
+	}
+}
+
+func TestHTTPRefreshKeepsOldThreadOnItsOriginalNativeSession(t *testing.T) {
+	f := newQuestionFixture(t, "answer-delayed")
+	s := questionHTTP(t, f)
+	original := askHTTP(t, s, f.pr.ID, f.input)
+	observeHTTP(t, s, original, false)
+	newBase := sourceGit(t, f.realGit, f.upstream, "base advanced\n", "commit-tree", f.tree, "-p", f.input.Revision.BaseSHA)
+	baseInput := prepareQuestionRevision(t, f, f.pr, newBase, f.head)
+	baseAnswer := askHTTP(t, s, f.pr.ID, baseInput)
+	observeHTTP(t, s, baseAnswer, false)
+	newHead := sourceGit(t, f.realGit, f.upstream, "head advanced\n", "commit-tree", f.tree, "-p", f.base)
+	headInput := prepareQuestionRevision(t, f, f.pr, newBase, newHead)
+	headAnswer := askHTTP(t, s, f.pr.ID, headInput)
+	observeHTTP(t, s, headAnswer, false)
+	if original.RevisionID == baseAnswer.RevisionID || headAnswer.RevisionID == baseAnswer.RevisionID || baseInput.Revision.HeadSHA != f.head {
+		t.Fatal("base-only or head-only refresh reused a comparison binding")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	r := questionPost(t, ctx, s, "/api/reviews/"+f.pr.ID+"/threads/"+original.ThreadID+"/answers", question.FollowupRequest{RevisionID: original.RevisionID, Question: "Continue the original pinned thread."})
+	var followup question.Answer
+	if r.StatusCode != 202 || json.NewDecoder(r.Body).Decode(&followup) != nil || followup.ThreadID != original.ThreadID || followup.RevisionID != original.RevisionID || followup.Reference.Anchor != f.input.Anchor {
+		t.Fatal("HTTP follow-up rebound to refreshed source")
+	}
+	if terminal := observeHTTP(t, s, followup, false); terminal.State != question.Completed {
+		t.Fatal("original pinned follow-up did not complete")
+	}
+	entries := nativeQuestionAudit(t, f.audit)
+	if countNativeSessions(entries) != 3 {
+		t.Fatal("old follow-up silently replaced its native session")
+	}
+	prompts := []string{}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Path, "/prompt") {
+			prompts = append(prompts, entry.Path)
+		}
+	}
+	if len(prompts) != 4 || prompts[0] != prompts[3] || prompts[0] == prompts[1] || prompts[1] == prompts[2] {
+		t.Fatal("native execution lost exact revision/session routing")
+	}
+}
+
+func TestHTTPFollowupStateLossNeverCreatesReplacementSourceOrSession(t *testing.T) {
+	for _, loss := range []string{"cache", "missing-session", "changed-session"} {
+		t.Run(loss, func(t *testing.T) {
+			f := newQuestionFixture(t, "answer-delayed")
+			s := questionHTTP(t, f)
+			answer := askHTTP(t, s, f.pr.ID, f.input)
+			before := observeHTTP(t, s, answer, false)
+			status := 503
+			if loss == "cache" {
+				path := filepath.Join(f.paths.Cache, "worktrees", f.pr.ID, f.head)
+				if err := os.Rename(path, path+".unavailable"); err != nil {
+					t.Fatal(err)
+				}
+				status = 410
+			} else if err := os.WriteFile(f.control, []byte(loss), 0600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			r := questionPost(t, ctx, s, "/api/reviews/"+f.pr.ID+"/threads/"+answer.ThreadID+"/answers", question.FollowupRequest{RevisionID: answer.RevisionID, Question: "Do not replace lost state."})
+			if r.StatusCode != status {
+				t.Fatal("lost original state admitted replacement work")
+			}
+			after := observeHTTP(t, s, answer, false)
+			if after.Text != before.Text || after.State != question.Completed || countNativeSessions(nativeQuestionAudit(t, f.audit)) != 1 {
+				t.Fatal("state loss erased history or replaced its native session")
+			}
+		})
 	}
 }

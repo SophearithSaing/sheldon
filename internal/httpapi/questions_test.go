@@ -109,3 +109,52 @@ func TestQuestionRoutesEnforceAuthenticationScopeAndBounds(t *testing.T) {
 		t.Fatal("provider diagnostics leaked into API")
 	}
 }
+
+func TestEveryQuestionRouteRejectsUntrustedRequestsBeforeProviderWork(t *testing.T) {
+	pr, _ := githubpr.ParseURL("https://github.com/owner/repo/pull/1")
+	f := &questionRegistryFixture{testPRRegistry: &testPRRegistry{prs: map[string]githubpr.PullRequest{pr.ID: pr}}}
+	s, err := Listen("", "", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := startTestServer(t, s)
+	base := "/api/reviews/" + pr.ID
+	thread := base + "/threads/" + strings.Repeat("a", 64) + "/answers"
+	answer := thread + "/" + strings.Repeat("b", 64)
+	for _, path := range []string{base + "/questions", thread, answer + "/events", answer + "/stop"} {
+		for _, test := range []struct {
+			headers map[string]string
+			query   string
+			status  int
+		}{
+			{headers: map[string]string{}, status: 401},
+			{headers: map[string]string{"Authorization": "Bearer wrong"}, status: 401},
+			{headers: map[string]string{"Cookie": "token=" + s.APIToken()}, status: 401},
+			{headers: map[string]string{}, query: "?token=" + s.APIToken(), status: 401},
+			{headers: map[string]string{"Authorization": "Bearer " + s.APIToken(), "Origin": "https://foreign.invalid"}, status: 403},
+			{headers: map[string]string{"Authorization": "Bearer " + s.APIToken(), "Origin": s.URL() + "/"}, status: 403},
+			{headers: map[string]string{"Authorization": "Bearer " + s.APIToken(), "Host": "localhost:7331"}, status: 403},
+			{headers: map[string]string{"Authorization": "Bearer " + s.APIToken()}, query: "?latest=1", status: 404},
+		} {
+			test.headers["Content-Type"] = "application/json"
+			r := request(t, s, client, "POST", path+test.query, `{}`, test.headers)
+			data, _ := io.ReadAll(r.Body)
+			if r.StatusCode != test.status || strings.Contains(string(data), s.APIToken()) {
+				t.Fatal("question route accepted an untrusted request or reflected credentials")
+			}
+		}
+		limit := 24 << 10
+		if strings.HasSuffix(path, "/events") || strings.HasSuffix(path, "/stop") {
+			limit = 1024
+		}
+		for _, body := range []string{`{"unknown":true}`, strings.Repeat("x", limit+1)} {
+			r := request(t, s, client, "POST", path, body, map[string]string{"Authorization": "Bearer " + s.APIToken(), "Content-Type": "application/json"})
+			if r.StatusCode != 400 && r.StatusCode != 413 {
+				t.Fatal("question route accepted malformed or oversized input")
+			}
+		}
+	}
+	if f.calls.Load() != 0 {
+		t.Fatal("untrusted question input reached native-capable provider work")
+	}
+}

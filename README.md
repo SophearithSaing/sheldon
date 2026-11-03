@@ -29,7 +29,7 @@ For a text diff, choose gutter line numbers (Shift extends on one side within on
 
 Successful admission adds one marker and opens its runtime-only conversation with streamed, escaped answer text, pinned context and **Stop this answer**. Admission and Stop acknowledgements are not completion proof. Follow-ups use **Enter to send / Shift+Enter for a newline**, respect IME composition, and retain each thread's own transcript and draft when switching threads/files. Model-written citations remain plain text, not trusted navigation links.
 
-The shared revision allows one active question; drafts stay editable while sending is unavailable. Backend busy rejection also covers other tabs; retry is explicit, not synchronized thread-library state. Rejected requests retain drafts without phantom messages. Uncertain admission disables resending. **Reconnect answer observation** only checks the original answer after stream loss—it never resubmits a question. Closing the panel does not stop execution. Reload/disconnect clears page-memory drafts, transcripts and markers, not accepted backend execution; restart loses all question state. Nothing is marked Saved.
+The shared revision allows one active question; drafts stay editable while sending is unavailable. Backend busy rejection also covers other tabs; retry is explicit, not synchronized thread-library state or a cross-tab exactly-once guarantee. Rejected requests retain drafts without phantom messages. Uncertain admission disables resending. **Reconnect answer observation** only checks the original answer after stream loss—it never resubmits a question. Closing the panel does not stop execution. Disconnecting a question workspace asks whether to keep connected or explicitly discard page state; it never implies native cancellation. Reload/disconnect clears page-memory drafts, transcripts and markers, not accepted backend execution; restart loses all question state. Nothing is marked Saved.
 
 **Sample UI previews** opens the separate `/?preview=library` entry. Its Files changed, Questions, Quiz, Semantic review, All PRs and Configuration use fictional data and page-memory simulations, never real PR source or inference.
 
@@ -48,7 +48,7 @@ Windows output: `bin/sheldon.exe`. Plain `go run`/`go build` omit the embedded U
 
 `sheldon open <url>` registers/reuses the PR in private `prs.json` under the OS data directory and opens `/reviews/<id>` on the existing backend. Source loads only after **Load pinned source**; registration/reconnection alone never fetches it. Each browser tab owns its routed PR and displayed revision. Plain `sheldon` opens the real PR entry page. Reloading requires reconnecting; rerun the command or enter the token from private `instance.lock`.
 
-Choose **Refresh source** to fetch current tips for this tab only. The displayed diff stays readable while loading and on failure; file navigation never refreshes it. Git-only refresh keeps the explicitly selected branch. Commit pinning remains internal—there is no snapshot-history UI or historical-read API. Reload/disconnect clears page-memory source.
+Choose **Refresh source** to fetch current tips for this tab only. The displayed diff stays readable while loading and on failure; file navigation never refreshes it. Git-only refresh keeps the explicitly selected branch. Existing threads and follow-up drafts retain their original revision/selection; the panel labels older context. **Open runtime conversation** reopens retained threads even after their markers no longer belong to the displayed diff. Inline drafts must be finished or discarded before refresh. Commit pinning remains internal—there is no snapshot-history UI or historical-read API. Reload/disconnect clears page-memory source.
 
 Source uses OS cache storage (`~/.cache/sheldon` on Linux, `%LOCALAPPDATA%\sheldon\cache` on Windows), not the project directory. Worktrees and diffs are bounded; unsafe cache state, unavailable history or oversized comparisons produce errors rather than partial source. Existing credential helpers/SSH routes remain trusted. A worktree is not an agent sandbox.
 
@@ -76,6 +76,8 @@ npm run test:web
 npm run test:release # clean source build + isolated binary/browser checks (Linux/macOS)
 npm run test --workspace=@sheldon/web -- --config playwright.release.config.ts release-source.spec.ts # native offline PR flow only
 ```
+
+Run the frontend and release browser suites separately; they share Playwright's output directory.
 
 [Foundation CI](.github/workflows/ci.yml) runs these checks on Ubuntu 24.04, starting without generated assets. It also compiles Windows/amd64 and macOS/arm64 tests; that is **not native platform validation**. CI never runs live agent experiments and does not upload private test artifacts.
 

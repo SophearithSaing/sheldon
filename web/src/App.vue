@@ -12,6 +12,7 @@ const client = shallowRef<RuntimeClient | null>(null)
 const samples = import.meta.env.MODE === 'fixture' || new URLSearchParams(location.search).has('preview')
 const runtimeExpanded = ref(true)
 const runtimeState = ref('Disconnected')
+const protectQuestions = ref(false)
 const runtimeLabel = import.meta.env.DEV ? 'Development backend' : 'Local runtime'
 
 const ControlsFixture =
@@ -29,7 +30,7 @@ const RuntimeConnection =
 <template>
   <div class="application">
     <ControlsFixture v-if="ControlsFixture" />
-    <component v-else :is="reviewID ? RegisteredPR : samples ? FixtureApplication : PRLanding" v-bind="reviewID ? { reviewId: reviewID, reviewState, client } : samples ? {} : { client }">
+    <component v-else :is="reviewID ? RegisteredPR : samples ? FixtureApplication : PRLanding" v-bind="reviewID ? { reviewId: reviewID, reviewState, client } : samples ? {} : { client }" @questions="protectQuestions = $event">
       <template v-if="RuntimeConnection" #runtime-trigger>
         <UiButton
           class="runtime-trigger"
@@ -46,7 +47,7 @@ const RuntimeConnection =
         </UiButton>
       </template>
       <template v-if="RuntimeConnection" #runtime-panel>
-        <RuntimeConnection v-model:expanded="runtimeExpanded" :review-id="reviewID || undefined" @state="runtimeState = $event" @review="reviewState = $event" @connection="client = $event" />
+        <RuntimeConnection v-model:expanded="runtimeExpanded" :review-id="reviewID || undefined" :protect-questions="protectQuestions" @state="runtimeState = $event" @review="reviewState = $event" @connection="client = $event" />
       </template>
     </component>
   </div>

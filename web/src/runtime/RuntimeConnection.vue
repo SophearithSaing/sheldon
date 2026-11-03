@@ -3,12 +3,14 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import UiButton from '../components/ui/UiButton.vue'
 import { inspectBackend, readRegisteredPR, takeLaunchToken, runtimeClient, type RuntimeClient, type ReviewState } from './client'
 
-const props = defineProps<{ reviewId?: string }>()
+const props = defineProps<{ reviewId?: string; protectQuestions?: boolean }>()
 
 const development = import.meta.env.DEV
 const tokenInput = ref('')
 const state = ref('Disconnected')
 const connected = ref(false)
+const disconnectDialog = ref<HTMLDialogElement>()
+const connectionPanel = ref<HTMLElement>()
 const expanded = defineModel<boolean>('expanded', { default: true })
 const emit = defineEmits<{ state: [value: string]; review: [value: ReviewState]; connection: [value: RuntimeClient | null] }>()
 let controller: AbortController | undefined
@@ -24,6 +26,24 @@ function disconnect(): void {
   emit('connection', null)
   emit('review', { status: 'disconnected' })
   state.value = 'Disconnected'
+}
+
+/** Requires an explicit decision before clearing a question workspace's page-memory state. */
+function requestDisconnect(): void {
+  if (props.protectQuestions) disconnectDialog.value?.showModal()
+  else disconnect()
+}
+
+/** Keeps drafts, observers and the verified connection intact after cancelling disconnect. */
+function keepConnected(): void {
+  disconnectDialog.value?.close()
+  connectionPanel.value?.querySelector<HTMLButtonElement>('[data-disconnect]')?.focus()
+}
+
+/** Clears browser state only after explicit consent; it never claims to cancel accepted execution. */
+function confirmDisconnect(): void {
+  disconnectDialog.value?.close()
+  disconnect()
 }
 
 /**
@@ -91,6 +111,7 @@ onUnmounted(disconnect)
 
 <template>
   <section
+    ref="connectionPanel"
     v-show="expanded"
     id="runtime-panel"
     class="runtime-connection"
@@ -118,10 +139,15 @@ onUnmounted(disconnect)
     </p>
     <div class="runtime-status">
       <p>{{ state }}</p>
-      <UiButton v-if="connected || state === 'Connecting'" variant="quiet" @click="disconnect">
+      <UiButton v-if="connected || state === 'Connecting'" data-disconnect variant="quiet" @click="requestDisconnect">
         Disconnect backend
       </UiButton>
     </div>
+    <dialog ref="disconnectDialog" class="disconnect-dialog" aria-labelledby="disconnect-title" @cancel.prevent="keepConnected">
+      <h2 id="disconnect-title">Disconnect this question workspace?</h2>
+      <p>This discards page-memory source, transcripts and drafts. It does not stop accepted execution. Use Stop and wait for confirmation if you need to interrupt an answer.</p>
+      <div><UiButton autofocus @click="keepConnected">Keep connected</UiButton><UiButton @click="confirmDisconnect">Discard page state and disconnect</UiButton></div>
+    </dialog>
   </section>
 </template>
 
@@ -134,6 +160,10 @@ onUnmounted(disconnect)
   border-bottom: 1px solid var(--color-border-strong);
   background: var(--color-panel);
 }
+.disconnect-dialog { max-width: min(36rem, calc(100vw - 2rem)); padding: var(--space-5); border: 1px solid var(--color-border); border-radius: var(--radius-panel); background: var(--color-panel); color: var(--color-text); }
+.disconnect-dialog::backdrop { background: rgb(0 0 0 / 55%); }
+.disconnect-dialog p { margin-block: var(--space-4); line-height: 1.6; }
+.disconnect-dialog > div { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .runtime-heading,
 .runtime-form,
 .runtime-status {

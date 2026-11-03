@@ -13,6 +13,7 @@ import type { ReviewState, RuntimeClient, RegisteredPR } from './client'
 import type { InitialQuestion, QuestionAnswer } from './questions'
 
 const props = defineProps<{ reviewId: string; reviewState: ReviewState; client: RuntimeClient | null }>()
+const emit = defineEmits<{ questions: [present: boolean] }>()
 const source = shallowRef<SourceResponse>()
 const displayed = shallowRef<SourceResponse>()
 const pending = ref(false)
@@ -52,6 +53,7 @@ const lines = computed(displayLines)
 /** Clears only this tab's transient source and cancels requests on disconnection. */
 function reset(): void {
   controller?.abort()
+  controller = undefined
   source.value = undefined
   displayed.value = undefined
   pending.value = false
@@ -65,6 +67,7 @@ function reset(): void {
   conversations.clear()
   initialSending.value = false
   conversationOpen.value = false
+  emit('questions', false)
 }
 
 /** Cancels only source work and returns keyboard focus to its surviving region. */
@@ -114,12 +117,13 @@ async function load(input: SourceRequest = { action: 'load' }): Promise<void> {
     }
     branch.value = ''
     await nextTick()
+    if (current.signal.aborted || controller !== current || requestedID !== props.reviewId || client !== props.client) return
     if (document.activeElement === document.body || document.activeElement instanceof Node && sourcePane.value?.contains(document.activeElement)) {
       if (sourceHeading.value) sourceHeading.value.focus()
       else sourcePane.value?.focus()
     }
   } catch (failure: unknown) {
-    if (!current.signal.aborted) {
+    if (!current.signal.aborted && controller === current && requestedID === props.reviewId && client === props.client) {
       error.value = failure instanceof Error ? failure.message : 'Source loading failed. Retry explicitly.'
       stale.value = !!requestedSnapshot
     }
@@ -197,8 +201,14 @@ function openAnswer(answer: QuestionAnswer, trigger: HTMLElement): void {
   selectedID.value = answer.threadID
   void workspace.value?.openConversation(trigger)
 }
-watch((): RuntimeClient | null => props.client, reset)
-watch((): string => props.reviewId, reset)
+/**
+ * Reports only the presence of disposable question state, never transcript text or credentials.
+ * @param present Whether disconnect needs an explicit discard decision.
+ */
+function reportQuestions(present: boolean): void { emit('questions', present) }
+watch((): boolean => drafting.value || threads.value.length > 0, reportQuestions)
+watch((): RuntimeClient | null => props.client, reset, { flush: 'sync' })
+watch((): string => props.reviewId, reset, { flush: 'sync' })
 onUnmounted(reset)
 </script>
 
@@ -217,7 +227,7 @@ onUnmounted(reset)
         <a class="github-link" :href="pr.url" target="_blank" rel="noreferrer">View on GitHub ↗</a>
       </template>
       <template #tabs>
-        <nav class="real-tabs" aria-label="PR views"><UiButton variant="quiet" aria-current="page">Files changed<span v-if="diff"> ({{ files.length }})</span></UiButton><UiButton v-for="label in ['Questions', 'Quiz', 'Semantic review']" :key="label" variant="quiet" disabled title="Not implemented for real PRs">{{ label }} — unavailable</UiButton></nav>
+        <nav class="real-tabs" aria-label="PR views"><UiButton variant="quiet" aria-current="page">Files changed<span v-if="diff"> ({{ files.length }})</span></UiButton><UiButton v-for="label in ['Questions', 'Quiz', 'Semantic review']" :key="label" variant="quiet" disabled title="Not implemented for real PRs">{{ label }} — unavailable</UiButton><UiButton v-if="threads.length && !conversationOpen" variant="quiet" @click="workspace?.openConversation($event)">Open runtime conversation</UiButton></nav>
       </template>
       <template #files><ChangedFileTree v-model="search" :files="treeFiles" :current="selected" :counts="questionCounts" :viewed="{}" real @select="selectFile" /></template>
       <template #conversation>
@@ -256,11 +266,11 @@ onUnmounted(reset)
             <div v-else class="source-notice" role="status"><h2>No changes in this comparison</h2><p>The pinned merge base and head have an empty diff.</p></div>
           </template>
           <div v-else class="source-notice">
-            <template v-if="pending"><h2>Loading pinned source…</h2><p role="status">Resolving metadata, fetched commits, source and a complete diff. No inference is running.</p><div class="source-skeleton" aria-hidden="true"><span v-for="n in 6" :key="n" /></div><UiButton variant="quiet" @click="cancelSource">Cancel source loading</UiButton></template>
+            <template v-if="pending"><h2>Loading pinned source…</h2><p role="status">Resolving metadata, fetched commits, source and a complete diff. Loading source does not start inference.</p><div class="source-skeleton" aria-hidden="true"><span v-for="n in 6" :key="n" /></div><UiButton variant="quiet" @click="cancelSource">Cancel source loading</UiButton></template>
             <template v-else>
               <p v-if="error" role="alert">{{ error }}</p><UiButton v-if="error" @click="retry">Retry source loading</UiButton>
               <template v-if="!error && !source"><h2>PR registered. Source not loaded.</h2><p>Registration is saved independently. Load a pinned merge-base → head comparison using your existing GitHub CLI/Git authentication.</p><UiButton :disabled="!client" @click="load()">Load pinned source</UiButton></template>
-              <p>{{ pr.url }}</p><p>No agent is connected and no question has been sent.</p>
+              <p>{{ pr.url }}</p><p>No question state is loaded in this page. Previously accepted questions may still be running; reconnecting does not cancel them.</p>
             </template>
           </div>
         </section>

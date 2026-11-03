@@ -91,13 +91,42 @@ export function parseObservedAnswer(value: unknown, original: QuestionAnswer): Q
 export function activeAnswer(answer: QuestionAnswer): boolean { return answer.state === 'pending' || answer.state === 'streaming' }
 
 /**
+ * Bounds decoded JSON bytes while reading, rather than after allocating an unbounded body.
+ * @param response Finite authenticated HTTP response.
+ * @param limit Maximum UTF-8 response size in bytes.
+ * @returns Decoded JSON value, subject to the caller's scope validation.
+ */
+export async function readBoundedJSON(response: Response, limit: number): Promise<unknown> {
+  if (!response.body) throw new Error('Missing JSON response.')
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder('utf-8', { fatal: true })
+  let bytes = 0
+  let text = ''
+  try {
+    while (true) {
+      const chunk = await reader.read()
+      bytes += chunk.value?.byteLength ?? 0
+      if (bytes > limit) throw new Error('JSON response exceeds limits.')
+      text += decoder.decode(chunk.value, { stream: !chunk.done })
+      if (chunk.done) return JSON.parse(text)
+    }
+  } finally {
+    await reader.cancel().catch((): void => {})
+    reader.releaseLock()
+  }
+}
+
+/**
  * Reads bounded fetch/SSE snapshots without replay, prompt dispatch or text concatenation.
  * @param response Authenticated events response.
  * @param original Original admission snapshot used for exact routing.
  * @param emit Receives validated cumulative snapshots.
  */
 export async function readAnswerEvents(response: Response, original: QuestionAnswer, emit: (answer: QuestionAnswer) => void): Promise<void> {
-  if (!response.ok || response.headers.get('content-type')?.split(';')[0] !== 'text/event-stream' || !response.body) throw new Error('Original answer observation is unavailable. No prompt was resent.')
+  if (!response.ok || response.headers.get('content-type')?.split(';')[0] !== 'text/event-stream' || !response.body) {
+    await response.body?.cancel().catch((): void => {})
+    throw new Error('Original answer observation is unavailable. No prompt was resent.')
+  }
   const reader = response.body.getReader()
   const decoder = new TextDecoder('utf-8', { fatal: true })
   let buffer = ''

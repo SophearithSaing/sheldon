@@ -1,5 +1,5 @@
 import { parseSourceResponse, pinnedID, type SourceRequest, type SourceResponse } from './source'
-import { parseQuestionAnswer, parseObservedAnswer, readAnswerEvents, questionError, QuestionAdmissionError, type InitialQuestion, type QuestionAnswer } from './questions'
+import { parseQuestionAnswer, parseObservedAnswer, readAnswerEvents, readBoundedJSON, sameAnchor, questionError, QuestionAdmissionError, type InitialQuestion, type QuestionAnswer } from './questions'
 
 let launchToken = ''
 
@@ -254,7 +254,7 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
     if (!id || reviewID(`/reviews/${id}`) !== id) throw new Error('Invalid review route.')
     const response = await post(`/api/reviews/${id}/source`, input, signal)
     if (!response.ok) {
-      const failure: { code?: unknown } | null = await response.json().catch((): object => ({}))
+      const failure = await readBoundedJSON(response, 16 * 1024).catch((): object => ({})) as { code?: unknown } | null
       const messages: Record<string, string> = {
         'refresh-required': 'PR or base changed. Retry loading or fetch branches and select again.',
         'source-too-large': 'Source exceeds the complete-view limits. No partial diff is shown.',
@@ -263,10 +263,8 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
       }
       throw new Error(typeof failure?.code === 'string' && Object.hasOwn(messages, failure.code) && messages[failure.code] || 'Cannot prepare source. Check Git access and the managed cache, then retry.')
     }
-    const text = await response.text()
-    if (text.length > 32 * 1024 * 1024) throw new Error('Source exceeds the complete-view limits.')
     let value: unknown
-    try { value = JSON.parse(text) } catch { throw new Error('Unexpected source response.') }
+    try { value = await readBoundedJSON(response, 32 * 1024 * 1024) } catch { throw new Error('Unexpected or oversized source response. No partial diff was accepted.') }
     const result = await parseSourceResponse(value, id)
     if (input.revision) {
       const requested = await pinnedID(input.revision)
@@ -286,10 +284,12 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
     if (!id || reviewID(`/reviews/${id}`) !== id || input.revision.prID !== id || questionError(input.question)) throw new QuestionAdmissionError('Invalid question or PR context.', false)
     if (new TextEncoder().encode(JSON.stringify(input)).length > 24 * 1024) throw new QuestionAdmissionError('The encoded question exceeds the request size limit. Shorten it; your draft was retained.', false)
     const revisionID = await pinnedID(input.revision)
+    if (previous && (previous.prID !== id || previous.revisionID !== revisionID || !sameAnchor(previous.reference.anchor, input.anchor))) throw new QuestionAdmissionError('Follow-ups must retain their original pinned context.', false)
     try {
       const path = previous ? `/api/reviews/${id}/threads/${previous.threadID}/answers` : `/api/reviews/${id}/questions`
-      const response = await post(path, previous ? { revisionID, question: input.question } : input, signal)
+      const response = await post(path, previous ? { revisionID, question: input.question } : input, AbortSignal.any([signal, AbortSignal.timeout(100000)]))
       if (response.status !== 202) {
+        await response.body?.cancel().catch((): void => {})
         const messages: Record<number, string> = {
           400: 'The selection or question is invalid. Your draft was retained.',
           409: 'This shared revision session is busy or unavailable. Your draft was retained; retry only when it is safe.',
@@ -300,9 +300,7 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
         const message = messages[response.status]
         throw new QuestionAdmissionError(message ?? 'Question delivery may be uncertain. Your draft was retained; do not resend automatically.', !message)
       }
-      const text = await response.text()
-      if (text.length > 2 * 1024 * 1024) throw new Error('Oversized admission')
-      const answer = parseQuestionAnswer(JSON.parse(text), id, revisionID, input)
+      const answer = parseQuestionAnswer(await readBoundedJSON(response, 2 * 1024 * 1024), id, revisionID, input)
       if (answer.state !== 'pending' || answer.text !== '' || answer.stopRequested || answer.executionUnknown) throw new Error('Unexpected admission state')
       if (previous && (answer.threadID !== previous.threadID || answer.answerID === previous.answerID || answer.revisionID !== previous.revisionID)) throw new Error('Unexpected follow-up binding')
       return answer
@@ -328,7 +326,7 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
    * @param emit Receives normalized cumulative snapshots.
    */
   async function observeAnswer(answer: QuestionAnswer, signal: AbortSignal, emit: (answer: QuestionAnswer) => void): Promise<void> {
-    const response = await post(`/api/reviews/${answer.prID}/threads/${answer.threadID}/answers/${answer.answerID}/events`, { revisionID: answer.revisionID }, signal)
+    const response = await post(`/api/reviews/${answer.prID}/threads/${answer.threadID}/answers/${answer.answerID}/events`, { revisionID: answer.revisionID }, AbortSignal.any([signal, AbortSignal.timeout(6 * 60 * 1000)]))
     await readAnswerEvents(response, answer, emit)
   }
   /**
@@ -338,11 +336,12 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
    * @returns Exact-answer Stop snapshot.
    */
   async function stopAnswer(answer: QuestionAnswer, signal: AbortSignal): Promise<QuestionAnswer> {
-    const response = await post(`/api/reviews/${answer.prID}/threads/${answer.threadID}/answers/${answer.answerID}/stop`, { revisionID: answer.revisionID }, signal)
-    if (!response.ok) throw new Error('Cannot confirm the Stop request. Execution may still be active.')
-    const text = await response.text()
-    if (text.length > 2 * 1024 * 1024) throw new Error('Unexpected Stop response.')
-    return parseObservedAnswer(JSON.parse(text), answer)
+    const response = await post(`/api/reviews/${answer.prID}/threads/${answer.threadID}/answers/${answer.answerID}/stop`, { revisionID: answer.revisionID }, AbortSignal.any([signal, AbortSignal.timeout(10000)]))
+    if (!response.ok) {
+      await response.body?.cancel().catch((): void => {})
+      throw new Error('Cannot confirm the Stop request. Execution may still be active.')
+    }
+    return parseObservedAnswer(await readBoundedJSON(response, 2 * 1024 * 1024), answer)
   }
   return { openPR, source, askQuestion, askFollowup, observeAnswer, stopAnswer }
 }
