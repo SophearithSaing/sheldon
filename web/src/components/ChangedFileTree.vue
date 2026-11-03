@@ -51,7 +51,7 @@ const visibleGroups = computed(groups)
     <p>Files viewed <strong>{{ files.filter((file) => viewed[file.id]).length }} / {{ files.length }}</strong></p>
     <div class="viewed-segments" aria-hidden="true"><span v-for="file in files" :key="file.id" :class="{ done: viewed[file.id] }" /></div>
     <p>At your own pace.</p>
-    <p class="tree-note">Choose line numbers, then Ask. Questions share agent context for this PR revision. Sample data only.</p>
+    <p class="tree-note">Click or drag line numbers to ask. Questions share agent context for this PR revision. Sample data only.</p>
   </div>
 </template>
 

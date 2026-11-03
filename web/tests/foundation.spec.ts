@@ -162,7 +162,7 @@ for (const width of [900, 899]) {
   }, testInfo) => {
     await page.setViewportSize({ width, height: 1080 })
     await openSampleThread(page)
-    await page.getByRole('button', { name: 'Ask about selected lines', exact: true }).click()
+    await page.getByRole('button', { name: 'Select head line 30', exact: true }).click({ modifiers: ['Shift'] })
     await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('Keep the inline draft')
     const trigger = page.getByRole('button', { name: 'Open sample question 1', exact: true })
     await expect(page.getByRole('main')).toBeVisible()

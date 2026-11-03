@@ -34,7 +34,7 @@ test('desktop chrome is 160px and native tree collapse returns 192px to source',
   const expanded = await source.boundingBox()
   const pane = await conversation.boundingBox()
   expect(pane!.x - expanded!.x - expanded!.width).toBeCloseTo(16, 0)
-  await page.getByRole('button', { name: 'Ask about selected lines', exact: true }).click()
+  await page.getByRole('button', { name: 'Select head line 27', exact: true }).click()
   await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('Keep the selected source draft')
   const scroll = page.getByRole('region', { name: 'Sample code diff', exact: true })
   const position = await scroll.evaluate((element): number => {
@@ -83,7 +83,7 @@ test('global destinations are links and library/configuration omit PR chrome', a
  */
 test('workspace switches and close/reopen preserve page-memory drafts without sharing them', async ({ page }): Promise<void> => {
   await openSampleThread(page)
-  await page.getByRole('button', { name: 'Ask about selected lines', exact: true }).click()
+  await page.getByRole('button', { name: 'Select head line 27', exact: true }).click()
   await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('PR 248 draft')
   await page.getByRole('textbox', { name: 'Follow up in this thread', exact: true }).fill('PR 248 follow-up')
   const source = page.getByRole('region', { name: 'Sample code diff', exact: true })

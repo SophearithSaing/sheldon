@@ -94,7 +94,7 @@ test('quiz source and settings navigation retain local attempts and unrelated th
   await page.getByRole('tab', { name: 'Files changed', exact: true }).click()
   await openSampleThread(page)
   await page.getByRole('textbox', { name: 'Follow up in this thread', exact: true }).fill('Unrelated thread draft')
-  await page.getByRole('button', { name: 'Ask about selected lines', exact: true }).click()
+  await page.getByRole('button', { name: 'Select head line 27', exact: true }).click()
   await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('Keep my pinned line draft')
   await page.getByRole('tab', { name: 'Quiz', exact: true }).click()
   await page.getByRole('radio').nth(1).check()

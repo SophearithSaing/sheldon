@@ -14,7 +14,7 @@ interface Draft {
   text: string
   error: string
 }
-type Change = { fileId: string; range: LineRange | null; draftId?: number; compose?: boolean; origin?: number; revealId?: number; sourceOnly?: boolean }
+type Change = { fileId: string; range: LineRange | null; draftId?: number; compose?: boolean; origin?: number; revealId?: number; sourceOnly?: boolean; selecting?: boolean }
 const props = defineProps<{ threads: SampleThread[]; viewed: Record<string, boolean> }>()
 const file = defineModel<string>('file', { required: true })
 const emit = defineEmits<{
@@ -112,7 +112,7 @@ function gutter(range: LineRange | null): HTMLButtonElement | null {
 }
 
 /**
- * Focuses the local composer after an explicit Ask or recovery action.
+ * Focuses the local composer after a direct selection or recovery action.
  */
 async function focusDraft(): Promise<void> {
   await nextTick()
@@ -130,7 +130,7 @@ async function applyChange(change: Change): Promise<void> {
   const recovered = change.draftId === undefined
     ? drafts.value.filter((item): boolean => item.anchor.fileId === change.fileId).at(-1)
     : drafts.value.find((item): boolean => item.id === change.draftId)
-  expanded.value = change.compose || change.sourceOnly || change.revealId !== undefined || (change.draftId === undefined && change.range) ? null : recovered?.id ?? null
+  expanded.value = change.selecting || change.compose || change.sourceOnly || change.revealId !== undefined || (change.draftId === undefined && change.range) ? null : recovered?.id ?? null
   if (recovered && expanded.value !== null) selection.value = recovered.anchor.range
   pendingChange.value = null
   await nextTick()
@@ -211,7 +211,7 @@ function selectFile(id: string): void {
 }
 
 /**
- * Selects gutter coordinates without treating native text selection as Ask.
+ * Selects gutter coordinates and opens their composer without using source-text selection.
  * @param side Base or head side.
  * @param line Selected line number.
  * @param extend Whether Shift extends the existing range.
@@ -219,7 +219,29 @@ function selectFile(id: string): void {
 function selectRange(side: 'base' | 'head', line: number, extend: boolean): void {
   const start = extend && selection.value?.side === side ? origin.value : line
   const range = { side, start: Math.min(start, line), end: Math.max(start, line) }
-  requestChange({ fileId: file.value, range, origin: start })
+  requestChange({ fileId: file.value, range, origin: start, compose: true })
+}
+
+/**
+ * Updates the highlighted range during a drag without opening or retargeting a composer.
+ * @param side Base or head side.
+ * @param start Initial dragged line number.
+ * @param current Current dragged line number.
+ */
+function dragRange(side: 'base' | 'head', start: number, current: number): void {
+  const range = { side, start: Math.min(start, current), end: Math.max(start, current) }
+  requestChange({ fileId: file.value, range, origin: start, selecting: true })
+}
+
+/**
+ * Opens the composer for a completed drag selection.
+ * @param side Base or head side.
+ * @param start Initial dragged line number.
+ * @param current Final dragged line number.
+ */
+function completeDrag(side: 'base' | 'head', start: number, current: number): void {
+  const range = { side, start: Math.min(start, current), end: Math.max(start, current) }
+  requestChange({ fileId: file.value, range, origin: start, compose: true })
 }
 
 /**
@@ -234,7 +256,7 @@ function confirmChange(discard: boolean): void {
 }
 
 /**
- * Opens or recovers the draft for an explicit line/file Ask action.
+ * Opens or recovers the draft for a direct line selection or whole-file Ask action.
  * @param wholeFile Whether to anchor beneath the file header instead of a line range.
  */
 async function ask(wholeFile = false): Promise<void> {
@@ -347,8 +369,7 @@ defineExpose({ selectFile, revealSource, revealAnchor })
       </div>
     </div>
     <div class="selection-actions">
-      <span>{{ selection ? context({ fileId: file, revision: 'a81c2f4', range: selection }) : 'Choose line numbers. Shift+click or Shift+Enter extends a range.' }}</span>
-      <UiButton :disabled="!selection || pending" @click="ask()">Ask about selected lines</UiButton>
+      <span>{{ selection ? `${context({ fileId: file, revision: 'a81c2f4', range: selection })} · ` : '' }}Click a line number to ask. Drag to select multiple lines. Shift extends a range.</span>
     </div>
     <p class="sr-only" role="status">{{ message }}</p>
     <section v-if="pendingChange" class="context-guard" role="alert" tabindex="-1" aria-label="Keep your draft context">
@@ -368,7 +389,7 @@ defineExpose({ selectFile, revealSource, revealAnchor })
         <button v-for="thread in fileThreads.filter((item) => !item.anchor.range)" :key="thread.id" class="question-marker" :data-thread-id="thread.id" :aria-label="`Open sample question ${thread.id}`" @click="openThread(thread, $event)">Question {{ thread.id }} · {{ thread.question }} →</button>
         <div class="hunk-header">{{ selectedFile.hunk }}</div>
         <template v-for="block in blocks" :key="block.start">
-          <SourceDiff :lines="block.lines" :label="block.start === 0 ? 'Sample source before draft' : 'Sample source after draft'" :selection="selection" :highlight="file !== 'docs'" @select="selectRange" />
+          <SourceDiff :lines="block.lines" :label="block.start === 0 ? 'Sample source before draft' : 'Sample source after draft'" :selection="selection" :highlight="file !== 'docs'" drag-selectable @select="selectRange" @drag="dragRange" @dragend="completeDrag" />
           <InlineQuestionComposer v-if="draft?.anchor.range && anchorIndex(draft.anchor) === block.end" v-model="draft.text" :context="context(draft.anchor)" :error="draft.error" :pending="pending" :busy="revisionBusy" @submit="submit" @cancel="cancel" @finish="complete" />
           <button v-for="thread in fileThreads.filter((item) => item.anchor.range && anchorIndex(item.anchor) === block.end)" :key="thread.id" class="question-marker" :data-thread-id="thread.id" :aria-label="`Open sample question ${thread.id}`" @click="openThread(thread, $event)"><span>{{ thread.id }}</span> {{ thread.question }} <span>Open thread →</span></button>
         </template>

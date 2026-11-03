@@ -158,7 +158,7 @@ test('context and citations select the owning thread and restore source focus', 
  */
 test('citation navigation guards inline drafts before changing pinned coordinates', async ({ page }): Promise<void> => {
   await page.getByRole('tab', { name: 'Files changed', exact: true }).click()
-  await page.getByRole('button', { name: 'Ask about selected lines', exact: true }).click()
+  await page.getByRole('button', { name: 'Select head line 27', exact: true }).click()
   await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('Keep this range')
   await page.getByRole('tab', { name: 'Questions', exact: true }).click()
   await selectQuestion(page, '04')

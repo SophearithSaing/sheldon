@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { DiffLine, LineRange } from './diff'
 
 const props = withDefaults(defineProps<{
@@ -7,12 +8,87 @@ const props = withDefaults(defineProps<{
   selection: LineRange | null
   highlight?: boolean
   selectable?: boolean
+  dragSelectable?: boolean
   real?: boolean
   insertAfter?: string
   markedLines?: readonly string[]
   selectedHunk?: string
 }>(), { selectable: true })
-const emit = defineEmits<{ select: [side: 'base' | 'head', line: number, extend: boolean] }>()
+const emit = defineEmits<{
+  select: [side: 'base' | 'head', line: number, extend: boolean]
+  drag: [side: 'base' | 'head', origin: number, current: number]
+  dragend: [side: 'base' | 'head', origin: number, current: number]
+}>()
+const dragSelection = ref<{
+  pointerId: number
+  side: 'base' | 'head'
+  origin: number
+  current: number
+  extend: boolean
+  moved: boolean
+} | null>(null)
+
+/**
+ * Starts an opt-in pointer selection on a line-number gutter.
+ * @param event Pointer-down event.
+ * @param side Base or head side.
+ * @param line Initial line number.
+ */
+function startDrag(event: PointerEvent, side: 'base' | 'head', line: number): void {
+  if (!props.dragSelectable || event.button !== 0) return
+  const trigger = event.currentTarget as HTMLButtonElement
+  trigger.setPointerCapture(event.pointerId)
+  dragSelection.value = { pointerId: event.pointerId, side, origin: line, current: line, extend: event.shiftKey, moved: false }
+}
+
+/**
+ * Extends an active pointer selection across displayed line-number gutters.
+ * @param event Captured pointer-move event.
+ */
+function moveDrag(event: PointerEvent): void {
+  const drag = dragSelection.value
+  if (!drag || drag.pointerId !== event.pointerId || drag.extend) return
+  const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLButtonElement>('button[data-line][data-side]')
+  if (!target || target.dataset.side !== drag.side) return
+  const line = Number(target.dataset.line)
+  if (!Number.isInteger(line) || line === drag.current) return
+  drag.current = line
+  drag.moved = true
+  emit('drag', drag.side, drag.origin, line)
+}
+
+/**
+ * Finishes a pointer selection and emits either a click or a completed range.
+ * @param event Captured pointer-up event.
+ */
+function endDrag(event: PointerEvent): void {
+  const drag = dragSelection.value
+  if (!drag || drag.pointerId !== event.pointerId) return
+  const trigger = event.currentTarget as HTMLButtonElement
+  if (trigger.hasPointerCapture(event.pointerId)) trigger.releasePointerCapture(event.pointerId)
+  dragSelection.value = null
+  if (!drag.moved) emit('select', drag.side, drag.origin, drag.extend)
+  else emit('dragend', drag.side, drag.origin, drag.current)
+}
+
+/**
+ * Clears an interrupted pointer selection without opening a question.
+ * @param event Pointer cancellation or capture-loss event.
+ */
+function cancelDrag(event: PointerEvent): void {
+  if (dragSelection.value?.pointerId === event.pointerId) dragSelection.value = null
+}
+
+/**
+ * Activates a line from a keyboard click, or from pointer input when dragging is disabled.
+ * @param event Line-button click event.
+ * @param side Base or head side.
+ * @param line Selected line number.
+ */
+function clickLine(event: MouseEvent, side: 'base' | 'head', line: number): void {
+  if (props.dragSelectable && event.detail !== 0) return
+  emit('select', side, line, event.shiftKey)
+}
 
 /**
  * Checks a displayed line against the explicitly selected side and coordinates.
@@ -25,6 +101,28 @@ function selected(line: DiffLine): boolean {
   if (!range) return false
   const number = line[range.side]
   return number !== null && number >= range.start && number <= range.end
+}
+
+/**
+ * Checks whether a row starts a contiguous selected range within this source block.
+ * @param index Displayed line index.
+ * @returns Whether the row needs the selection's top border.
+ */
+function selectionStart(index: number): boolean {
+  const line = props.lines[index]
+  const previous = props.lines[index - 1]
+  return !!line && selected(line) && (!previous || !selected(previous))
+}
+
+/**
+ * Checks whether a row ends a contiguous selected range within this source block.
+ * @param index Displayed line index.
+ * @returns Whether the row needs the selection's bottom border.
+ */
+function selectionEnd(index: number): boolean {
+  const line = props.lines[index]
+  const next = props.lines[index + 1]
+  return !!line && selected(line) && (!next || !selected(next))
 }
 
 /**
@@ -51,7 +149,7 @@ function tokens(text: string): { text: string; tone: string }[] {
 </script>
 
 <template>
-  <section class="sample-source" :aria-label="label" tabindex="0">
+  <section class="sample-source" :class="{ 'drag-selectable': dragSelectable }" :aria-label="label" tabindex="0">
     <table class="diff-table">
       <caption class="sr-only">
         {{ real ? 'Unified diff.' : 'Sample unified diff.' }} Plus and minus signs identify additions and removals.
@@ -67,12 +165,12 @@ function tokens(text: string): { text: string; tone: string }[] {
       <tbody>
         <template v-for="(line, index) in lines" :key="line.id ?? index">
           <tr v-if="line.hunkHeader" class="diff-omission"><td colspan="4">{{ line.hunkHeader }}</td></tr>
-          <tr :class="[`diff-line--${line.kind}`, { 'is-selected': selected(line) }]">
+          <tr :class="[`diff-line--${line.kind}`, { 'is-selected': selected(line), 'is-selection-start': selectionStart(index), 'is-selection-end': selectionEnd(index) }]">
             <td class="line-number">
-              <button v-if="line.base !== null && selectable !== false" type="button" :data-line="line.base" data-side="base" :aria-label="`Select base line ${line.base}`" :aria-pressed="selected(line) && selection?.side === 'base'" @keydown.shift.enter.prevent="emit('select', 'base', line.base, true)" @click="emit('select', 'base', line.base, $event.shiftKey)">{{ line.base }}</button><span v-else>{{ line.base }}</span>
+              <button v-if="line.base !== null && selectable !== false" type="button" :data-line="line.base" data-side="base" :aria-label="`Select base line ${line.base}`" :aria-pressed="selected(line) && selection?.side === 'base'" @keydown.shift.enter.prevent="emit('select', 'base', line.base, true)" @pointerdown="startDrag($event, 'base', line.base)" @pointermove="moveDrag" @pointerup="endDrag" @pointercancel="cancelDrag" @lostpointercapture="cancelDrag" @click="clickLine($event, 'base', line.base)">{{ line.base }}</button><span v-else>{{ line.base }}</span>
             </td>
             <td class="line-number">
-              <button v-if="line.head !== null && selectable !== false" type="button" :data-line="line.head" data-side="head" :aria-label="`Select head line ${line.head}`" :aria-pressed="selected(line) && selection?.side === 'head'" @keydown.shift.enter.prevent="emit('select', 'head', line.head, true)" @click="emit('select', 'head', line.head, $event.shiftKey)">{{ line.head }}</button><span v-else>{{ line.head }}</span>
+              <button v-if="line.head !== null && selectable !== false" type="button" :data-line="line.head" data-side="head" :aria-label="`Select head line ${line.head}`" :aria-pressed="selected(line) && selection?.side === 'head'" @keydown.shift.enter.prevent="emit('select', 'head', line.head, true)" @pointerdown="startDrag($event, 'head', line.head)" @pointermove="moveDrag" @pointerup="endDrag" @pointercancel="cancelDrag" @lostpointercapture="cancelDrag" @click="clickLine($event, 'head', line.head)">{{ line.head }}</button><span v-else>{{ line.head }}</span>
             </td>
             <td class="line-sign">
               {{ line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : '' }}
@@ -138,6 +236,11 @@ function tokens(text: string): { text: string; tone: string }[] {
 .syntax-function { color: var(--color-code-function); }
 .syntax-comment { color: var(--color-code-comment); }
 .diff-table tr.is-selected { background: var(--color-accent-soft); outline: 1px solid var(--color-accent-border); outline-offset: -1px; }
+.drag-selectable tr.is-selected { outline: 0; }
+.drag-selectable tr.is-selected td:first-child { border-left: 1px solid var(--color-accent-border); }
+.drag-selectable tr.is-selected td:last-child { border-right: 1px solid var(--color-accent-border); }
+.drag-selectable tr.is-selection-start td { border-top: 1px solid var(--color-accent-border); }
+.drag-selectable tr.is-selection-end td { border-bottom: 1px solid var(--color-accent-border); }
 .diff-inline { position: sticky; left: 0; width: calc(100cqw - 2px); white-space: normal; font-family: var(--font-ui); }
 .is-selected .line-number { color: var(--color-accent); }
 .line-sign {

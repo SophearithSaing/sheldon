@@ -31,10 +31,10 @@ test('one submission creates one thread and reopening never increments counts', 
 })
 
 /**
- * Keeps text selection inert and base/head coordinate ranges explicit.
+ * Keeps native text selection inert while direct gutter clicks compose and retain range origins.
  * @param fixtures Playwright page.
  */
-test('source selection is inert until Ask and range extension retains its origin', async ({ page }): Promise<void> => {
+test('source text is inert and direct line selection opens a question with Shift extension', async ({ page }): Promise<void> => {
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   await page.locator('.line-source code').first().evaluate((element): void => {
     const range = document.createRange()
@@ -43,14 +43,40 @@ test('source selection is inert until Ask and range extension retains its origin
     window.getSelection()?.addRange(range)
   })
   await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).not.toBeVisible()
+  await expect(page.getByRole('button', { name: 'Ask about selected lines', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Select base line 23', exact: true }).click()
-  await page.getByRole('button', { name: 'Ask about selected lines', exact: true }).click()
   await expect(page.getByRole('form', { name: 'New sample question' })).toContainText('base L23–23')
   await page.getByRole('button', { name: 'Select head line 30', exact: true }).click()
   await page.getByRole('button', { name: 'Select head line 27', exact: true }).click({ modifiers: ['Shift'] })
   await page.getByRole('button', { name: 'Select head line 32', exact: true }).press('Shift+Enter')
-  await page.getByRole('button', { name: 'Ask about selected lines', exact: true }).click()
   await expect(page.getByRole('form', { name: 'New sample question' })).toContainText('head L30–32')
+})
+
+/**
+ * Selects a multi-line range by dragging, composes on release and draws one continuous outer border.
+ * @param fixtures Playwright page.
+ * @param testInfo Screenshot output location.
+ */
+test('dragging line numbers selects multiple lines and opens their question on release', async ({ page }, testInfo): Promise<void> => {
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  const start = page.getByRole('button', { name: 'Select head line 27', exact: true })
+  const end = page.getByRole('button', { name: 'Select head line 31', exact: true })
+  await start.hover()
+  await page.mouse.down()
+  await end.hover()
+  await expect(end).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).not.toBeVisible()
+  await page.mouse.up()
+  await expect(page.getByRole('form', { name: 'New sample question' })).toContainText('head L27–31')
+  await expect(page.getByRole('textbox', { name: 'Your question', exact: true })).toBeFocused()
+  const selectedRows = page.locator('.drag-selectable tr.is-selected:visible')
+  await expect(selectedRows).toHaveCount(5)
+  await expect(selectedRows.first().locator('td').first()).toHaveCSS('border-top-width', '1px')
+  await expect(selectedRows.last().locator('td').first()).toHaveCSS('border-bottom-width', '1px')
+  await expect(selectedRows.nth(1)).toHaveCSS('outline-style', 'none')
+  await expect(selectedRows.nth(1).locator('td').first()).toHaveCSS('border-top-width', '0px')
+  await expect(selectedRows.nth(1).locator('td').first()).toHaveCSS('border-bottom-width', '0px')
+  await page.screenshot({ path: testInfo.outputPath('direct-drag-question.png'), fullPage: true })
 })
 
 /**
@@ -128,7 +154,7 @@ test('draft guards, recovery and whole-file questions preserve pinned context', 
 test('four-thread sample retains counts and blocks creation during investigating', async ({ page }, testInfo): Promise<void> => {
   await page.goto('/?sample=review')
   await expect(page.getByRole('tab', { name: 'Questions', exact: true })).toHaveAttribute('aria-description', '4 sample items')
-  await page.getByRole('button', { name: 'Ask about selected lines', exact: true }).click()
+  await page.getByRole('button', { name: 'Select head line 27', exact: true }).click()
   await page.getByRole('textbox', { name: 'Your question', exact: true }).fill('Waiting for shared context')
   await expect(page.getByRole('button', { name: 'Preview thread creation', exact: true })).toBeDisabled()
   await expect(page.getByText('Another sample question is investigating in this PR revision. Creation is unavailable.')).toBeVisible()
