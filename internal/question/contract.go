@@ -1,4 +1,4 @@
-// Package question defines routed question inputs, not native execution or persistence.
+// Package question validates routed questions and pinned source, not native execution or persistence.
 package question
 
 import (
