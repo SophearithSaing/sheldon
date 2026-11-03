@@ -211,19 +211,12 @@ func TestShutdownDeadlineClosesStalledRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A test-only body reader keeps a request active without a product mutation.
+	active := make(chan struct{})
+	// Wait for handler entry, not ConnState: shutdown can reject an active connection before dispatch.
 	s.mux.HandleFunc("POST /api/test/stalled", func(w http.ResponseWriter, r *http.Request) {
+		close(active)
 		io.Copy(io.Discard, r.Body)
 	})
-	active := make(chan struct{}, 1)
-	s.http.ConnState = func(_ net.Conn, state http.ConnState) {
-		if state == http.StateActive {
-			select {
-			case active <- struct{}{}:
-			default:
-			}
-		}
-	}
 	startTestServer(t, s)
 	conn, err := net.Dial("tcp", s.authority)
 	if err != nil {
@@ -238,7 +231,7 @@ func TestShutdownDeadlineClosesStalledRequest(t *testing.T) {
 	select {
 	case <-active:
 	case <-time.After(time.Second):
-		t.Fatal("stalled request never became active")
+		t.Fatal("stalled request never entered its handler")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
