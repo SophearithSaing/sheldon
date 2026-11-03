@@ -77,7 +77,8 @@ func main() {
 	audit, _ := json.Marshal(struct {
 		Operation, Directory          string
 		Safe, AuthenticationPreserved bool
-	}{operation, wd, safe, os.Getenv("GIT_SSH_COMMAND") == "preserved-fixture-ssh-route"})
+		PID                           int
+	}{operation, wd, safe, os.Getenv("GIT_SSH_COMMAND") == "preserved-fixture-ssh-route", os.Getpid()})
 	log, err := os.OpenFile(os.Getenv("SHELDON_GIT_AUDIT"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		os.Exit(91)
