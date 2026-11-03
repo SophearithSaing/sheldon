@@ -1,62 +1,9 @@
-import { expect, test, type Page } from '@playwright/test'
-import { readFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
-import type { RegisteredPR } from '../src/runtime/client'
-import type { SourceResponse, SourceFile, SourceLine } from '../src/runtime/source'
+import { expect, test } from '@playwright/test'
+import { digest, token, registered, sourceFixture } from './runtime-fixture'
 
 const frontend = 'http://127.0.0.1:5175'
 test.use({ baseURL: frontend })
 
-/**
- * Hashes explicit browser fixture references, never a real source claim.
- * @param value Fixture identity.
- * @returns Full digest.
- */
-function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
-
-/**
- * Reads only the isolated development fixture's credential.
- * @returns Fixture backend credential.
- */
-async function token(): Promise<string> { return JSON.parse(await readFile(process.env.SHELDON_TEST_STATE!, 'utf8')).token }
-
-/**
- * Registers an offline browser fixture and connects its routed page.
- * @param page Browser page.
- * @param number Distinct fixture PR number.
- * @returns Registered fixture identity.
- */
-async function registered(page: Page, number: number): Promise<RegisteredPR> {
-  const credential = await token()
-  const response = await page.request.post(frontend + '/api/open', { headers: { Authorization: `Bearer ${credential}` }, data: { url: `https://github.com/ui/fixture/pull/${number}` } })
-  const opened: { prID: string; route: string } = await response.json()
-  const metadata = await page.request.get(frontend + '/api/reviews/' + opened.prID, { headers: { Authorization: `Bearer ${credential}` } })
-  const pr: RegisteredPR = await metadata.json()
-  await page.goto(`${opened.route}#token=${credential}`)
-  await expect(page.getByRole('heading', { name: `Pull request #${number}`, exact: true })).toBeVisible()
-  return pr
-}
-
-/**
- * Builds explicit source-UI fixture data, not a native Git result.
- * @param pr Registered browser fixture PR.
- * @param count Number of fixture changed files.
- * @param baseSHA Fixture base tip.
- * @param headSHA Fixture head commit.
- * @returns Pinned-looking fixture response for renderer testing only.
- */
-function sourceFixture(pr: RegisteredPR, count = 40, baseSHA = 'a'.repeat(40), headSHA = 'c'.repeat(40)): SourceResponse {
-  const revision = { prID: pr.id, baseBranch: 'release/target', baseSource: 'github' as const, baseSHA, headSHA, mergeBaseSHA: 'b'.repeat(40) }
-  const revisionID = digest([pr.id, revision.baseSHA, revision.headSHA, revision.mergeBaseSHA].join('\n'))
-  const files: SourceFile[] = []
-  for (let index = 0; index < count; index++) {
-    const id = digest(`${revisionID}/file/${index}`)
-    const lines: SourceLine[] = []
-    for (let n = 1; n <= 120; n++) lines.push({ id: digest(`${id}/line/${n}`), sign: n === 1 ? '+' : ' ', text: n === 1 ? '<script>literal source, never HTML</script> ' + 'long source '.repeat(40) : `const fixtureLine${n} = ${n}`, oldLine: n === 1 ? undefined : n - 1, newLine: n, noNewline: n === 120 })
-    files.push({ id, status: 'modified', oldPath: `src/file${String(index).padStart(4, '0')}.ts`, newPath: `src/file${String(index).padStart(4, '0')}.ts`, oldMode: '100644', newMode: '100644', oldObject: 'd'.repeat(40), newObject: 'e'.repeat(40), kind: 'text', hunks: [{ id: digest(id + '/hunk'), old: { id: digest(id + '/old'), start: 1, count: 119 }, new: { id: digest(id + '/new'), start: 1, count: 120 }, section: '', lines }] })
-  }
-  return { state: 'ready', pr: { ...pr, title: `Offline source fixture #${pr.number}`, author: 'fixture-author' }, diff: { revision, revisionID, complete: true, files } }
-}
 
 test('real inline questions keep pinned drafts, keyboard semantics and exactly one admitted marker', async ({ page }, testInfo): Promise<void> => {
   const pr = await registered(page, 711)
@@ -134,7 +81,7 @@ test('real inline questions keep pinned drafts, keyboard semantics and exactly o
   await expect(page.locator('[data-answer]')).toHaveCount(1)
   await expect(page.locator('[data-answer]')).toBeFocused()
   await expect(page.getByLabel('1 runtime questions', { exact: true })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Submitted question' })).toContainText('not completion proof')
+  await expect(page.getByRole('region', { name: 'Question conversation', exact: true })).toContainText('Runtime only')
   expect(calls).toBe(2)
   expect(await page.content()).not.toContain(await token())
   await page.screenshot({ path: testInfo.outputPath('real-question-admitted.png'), fullPage: true })
@@ -147,7 +94,7 @@ test('real inline questions keep pinned drafts, keyboard semantics and exactly o
   await page.route(`**/api/reviews/${pr.id}/threads/*/answers/*/stop`, async (route): Promise<void> => {
     expect(route.request().postDataJSON()).toEqual({ revisionID: fixture.diff!.revisionID })
     expect(route.request().url()).toContain(`/threads/${digest('thread711')}/answers/${digest('answer711')}/stop`)
-    await route.fulfill({ status: 202, json: {} })
+    await route.fulfill({ status: 202, json: { answerID: digest('answer711'), threadID: digest('thread711'), prID: pr.id, revisionID: fixture.diff!.revisionID, question: 'Explain this\nselection.', text: '', state: 'pending', stopRequested: true, executionUnknown: false, reference: { revisionID: fixture.diff!.revisionID, anchor: { kind: 'lines', fileID: fixture.diff!.files[0]!.id, hunkID: fixture.diff!.files[0]!.hunks[0]!.id, side: 'new', start: 2, end: 5 } } } })
   })
   await page.getByRole('button', { name: 'Stop this answer', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Termination is not yet confirmed' })).toBeVisible()

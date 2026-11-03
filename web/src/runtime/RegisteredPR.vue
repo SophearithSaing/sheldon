@@ -3,6 +3,8 @@ import { computed, nextTick, onUnmounted, ref, shallowRef, watch } from 'vue'
 import WorkspaceShell from '../components/WorkspaceShell.vue'
 import ChangedFileTree from '../components/ChangedFileTree.vue'
 import SourceQuestions from './SourceQuestions.vue'
+import QuestionConversation from './QuestionConversation.vue'
+import { useConversations } from './conversations'
 import UiButton from '../components/ui/UiButton.vue'
 import OpenPR from './OpenPR.vue'
 import { lineCounts, type SourceRequest, type SourceResponse, type SourceFile, type PinnedDiff } from './source'
@@ -25,14 +27,15 @@ const sourcePane = ref<HTMLElement>()
 const workspace = ref<InstanceType<typeof WorkspaceShell>>()
 const drafting = ref(false)
 const conversationOpen = ref(false)
-const admissions = ref<{ answer: QuestionAnswer; input: InitialQuestion }[]>([])
-const currentAnswer = ref<QuestionAnswer>()
-const stopPending = ref(false)
-const stopNotice = ref('')
-const activeMarkers = computed((): { answer: QuestionAnswer; anchor: InitialQuestion['anchor'] }[] => admissions.value.filter((item): boolean => item.answer.revisionID === diff.value?.revisionID && item.input.anchor.fileID === active.value?.id).map((item): { answer: QuestionAnswer; anchor: InitialQuestion['anchor'] } => ({ answer: item.answer, anchor: item.input.anchor })))
+const conversations = useConversations((): RuntimeClient | null => props.client)
+const { threads, selectedID, current: currentThread } = conversations
+const initialSending = ref(false)
+const revisionBusy = computed((): string => diff.value ? initialSending.value ? 'A question is awaiting admission in this shared PR-revision session. Drafts stay editable.' : conversations.busy(diff.value.revisionID) : '')
+const currentBusy = computed((): string => currentThread.value ? conversations.busy(currentThread.value.turns[0]!.answer.revisionID) || (initialSending.value && currentThread.value.turns[0]!.answer.revisionID === diff.value?.revisionID ? 'Another question is awaiting admission in this shared PR-revision session.' : '') : '')
+const activeMarkers = computed((): { answer: QuestionAnswer; anchor: InitialQuestion['anchor'] }[] => threads.value.filter((item): boolean => item.turns[0]!.answer.revisionID === diff.value?.revisionID && item.input.anchor.fileID === active.value?.id).map((item): { answer: QuestionAnswer; anchor: InitialQuestion['anchor'] } => ({ answer: item.turns[0]!.answer, anchor: item.input.anchor })))
 const questionCounts = computed((): Record<string, number> => {
   const result: Record<string, number> = {}
-  for (const item of admissions.value) if (item.answer.revisionID === diff.value?.revisionID) result[item.input.anchor.fileID] = (result[item.input.anchor.fileID] ?? 0) + 1
+  for (const item of threads.value) if (item.turns[0]!.answer.revisionID === diff.value?.revisionID) result[item.input.anchor.fileID] = (result[item.input.anchor.fileID] ?? 0) + 1
   return result
 })
 let controller: AbortController | undefined
@@ -59,10 +62,9 @@ function reset(): void {
   branch.value = ''
   search.value = ''
   drafting.value = false
-  admissions.value = []
-  currentAnswer.value = undefined
+  conversations.clear()
+  initialSending.value = false
   conversationOpen.value = false
-  stopNotice.value = ''
 }
 
 /** Cancels only source work and returns keyboard focus to its surviving region. */
@@ -171,10 +173,10 @@ function displayLines(): DiffLine[] {
  * @param input Original question and pinned selection.
  */
 function admitted(answer: QuestionAnswer, input: InitialQuestion): void {
-  if (!admissions.value.some((item): boolean => item.answer.answerID === answer.answerID)) admissions.value.push({ answer, input })
-  currentAnswer.value = answer
+  const file = active.value
+  const path = input.anchor.kind === 'lines' && input.anchor.side === 'old' ? file?.oldPath : file?.newPath ?? file?.oldPath
+  conversations.add(answer, input, path ?? 'Original pinned source')
   conversationOpen.value = true
-  stopNotice.value = ''
 }
 
 /**
@@ -192,23 +194,8 @@ function guardDraft(active: boolean): void {
  * @param trigger Marker control used for focus restoration.
  */
 function openAnswer(answer: QuestionAnswer, trigger: HTMLElement): void {
-  currentAnswer.value = answer
-  stopNotice.value = ''
+  selectedID.value = answer.threadID
   void workspace.value?.openConversation(trigger)
-}
-
-/** Requests Stop only for the displayed admission and never treats acknowledgement as termination. */
-async function stopAnswer(): Promise<void> {
-  const answer = currentAnswer.value
-  const client = props.client
-  if (!answer || !client || stopPending.value) return
-  stopPending.value = true
-  try {
-    await client.stopAnswer(answer, AbortSignal.timeout(10000))
-    if (currentAnswer.value?.answerID === answer.answerID && props.client === client) stopNotice.value = 'Stop requested for this answer. Termination is not yet confirmed; a completed answer is unaffected.'
-  } catch {
-    if (currentAnswer.value?.answerID === answer.answerID && props.client === client) stopNotice.value = 'Cannot confirm the Stop request. Execution may still be active.'
-  } finally { stopPending.value = false }
 }
 watch((): RuntimeClient | null => props.client, reset)
 watch((): string => props.reviewId, reset)
@@ -223,7 +210,7 @@ onUnmounted(reset)
       <span>Registered PR</span><OpenPR :client="client" /><slot name="runtime-trigger" />
     </header>
     <slot name="runtime-panel" />
-    <WorkspaceShell v-if="reviewState.status === 'registered' && pr" ref="workspace" v-model:conversation-open="conversationOpen" :has-file-rail="!!diff && files.length > 0" conversation-title="Question admission">
+    <WorkspaceShell v-if="reviewState.status === 'registered' && pr" ref="workspace" v-model:conversation-open="conversationOpen" :has-file-rail="!!diff && files.length > 0" conversation-title="Question conversation">
       <template #summary>
         <h1 class="pr-title">{{ pr.title ?? `Pull request #${pr.number}` }}</h1>
         <p class="fixture-meta"><span>{{ pr.owner }}/{{ pr.repository }} #{{ pr.number }}</span> · <span>{{ pr.author ? `Author: ${pr.author}` : 'Author unavailable' }}</span><span v-if="diff"> · {{ diff.revision.baseBranch }} · {{ diff.revision.mergeBaseSHA.slice(0, 8) }} → {{ diff.revision.headSHA.slice(0, 8) }}</span></p>
@@ -234,14 +221,7 @@ onUnmounted(reset)
       </template>
       <template #files><ChangedFileTree v-model="search" :files="treeFiles" :current="selected" :counts="questionCounts" :viewed="{}" real @select="selectFile" /></template>
       <template #conversation>
-        <section v-if="currentAnswer" class="admission-panel" aria-label="Submitted question">
-          <h3>{{ currentAnswer.question }}</h3>
-          <p>Admitted to the backend; this is not completion proof. Live answer display and follow-ups are not connected yet.</p>
-          <p>Revision {{ currentAnswer.revisionID.slice(0, 8) }} · Shared PR-revision context.</p>
-          <p>Runtime only; lost on restart. Disconnecting does not stop execution. The backend bounds execution to five minutes including recovery.</p>
-          <UiButton :busy="stopPending" :disabled="stopPending || !client" @click="stopAnswer">Stop this answer</UiButton>
-          <p v-if="stopNotice" role="status">{{ stopNotice }}</p>
-        </section>
+        <QuestionConversation v-if="currentThread" :thread="currentThread" :threads="threads" :busy-reason="currentBusy" :displayed-revision="diff?.revisionID" @followup="conversations.followup" @stop="conversations.stop" @observe="conversations.observe" @select="selectedID = $event" />
       </template>
       <template #default>
         <section id="review-content" ref="sourcePane" class="source-pane" tabindex="-1" :aria-busy="pending && !diff" aria-label="Pinned PR source">
@@ -270,7 +250,7 @@ onUnmounted(reset)
             <div class="revision-bar"><p>{{ files.length }} changed files · +{{ counts.added }} / −{{ counts.removed }} text lines</p><details><summary>Pinned revision {{ diff.revisionID.slice(0, 8) }}</summary><dl><dt>Base branch / tip</dt><dd>{{ diff.revision.baseBranch }} / {{ diff.revision.baseSHA }}</dd><dt>Merge base</dt><dd>{{ diff.revision.mergeBaseSHA }}</dd><dt>Head</dt><dd>{{ diff.revision.headSHA }}</dd><dt>Base selection</dt><dd>{{ diff.revision.baseSource === 'github' ? 'GitHub metadata' : 'Explicit Git-only selection; target unverified by GitHub' }}</dd><dt>Revision</dt><dd>{{ diff.revisionID }}</dd></dl></details></div>
             <template v-if="active">
               <header class="file-header"><h2 ref="sourceHeading" tabindex="-1">{{ active.newPath ?? active.oldPath }}</h2><div class="file-tools"><span>{{ active.status }} · {{ active.kind }} · +{{ currentCounts.added }} / −{{ currentCounts.removed }}</span><span>Unified</span><UiButton variant="quiet" disabled title="Split diff is not implemented">Split — unavailable</UiButton></div><p v-if="active.oldPath && active.newPath && active.oldPath !== active.newPath">Renamed from {{ active.oldPath }}</p><p v-if="active.oldMode !== active.newMode">Mode {{ active.oldMode }} → {{ active.newMode }}</p></header>
-              <SourceQuestions v-if="active.kind === 'text' && client" :key="diff.revisionID" :diff="diff" :file="active" :lines="lines" :client="client" :source-pending="pending" :markers="activeMarkers" @guard="guardDraft" @admitted="admitted" @open="openAnswer" />
+              <SourceQuestions v-if="active.kind === 'text' && client" :key="diff.revisionID" :diff="diff" :file="active" :lines="lines" :client="client" :source-pending="pending" :markers="activeMarkers" :busy-reason="revisionBusy" @guard="guardDraft" @sending="initialSending = $event" @admitted="admitted" @open="openAnswer" />
               <div v-else class="source-notice" role="status"><h3>{{ active.kind }} change</h3><p>{{ active.reason ?? 'This change has no unified text lines. No source lines are invented.' }}</p><p>Line questions are unavailable for non-text changes.</p><p v-if="active.kind === 'submodule'">Submodules are not initialized.</p><p>Old object: {{ active.oldObject }}</p><p>New object: {{ active.newObject }}</p></div>
             </template>
             <div v-else class="source-notice" role="status"><h2>No changes in this comparison</h2><p>The pinned merge base and head have an empty diff.</p></div>
@@ -324,7 +304,6 @@ onUnmounted(reset)
 .source-skeleton span { height: 0.75rem; background: var(--color-surface); border-radius: var(--radius-control); }
 .source-skeleton span:nth-child(even) { width: 65%; }
 .real-source { flex-shrink: 0; }
-.admission-panel { display: grid; align-content: start; gap: var(--space-4); padding: var(--space-4); overflow-wrap: anywhere; font-size: var(--text-small); }
 .refresh-controls { flex-shrink: 0; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); font-size: var(--text-small); overflow-wrap: anywhere; }
 .refresh-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .refresh-controls p { margin-top: var(--space-2); }

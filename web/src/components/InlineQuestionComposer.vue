@@ -24,7 +24,7 @@ function shortcut(event: KeyboardEvent): void {
     <div class="draft-heading"><h3>{{ heading ?? `Ask about ${context.startsWith('Whole') ? 'this file' : 'these lines'}` }}</h3><span>{{ context }}</span></div>
     <UiField v-model="text" label="Your question" multiline data-draft-input :error="error" :readonly="pending" :aria-describedby="busy || unavailableReason || pending ? `${id}-availability` : undefined" :hint="real ? 'Ctrl/Cmd+Enter sends. Enter inserts a new line. Limit: 16,384 UTF-8 bytes.' : 'Ctrl/Cmd+Enter previews creation. Enter inserts a new line; nothing is sent.'" @keydown="shortcut" />
     <div class="draft-actions">
-      <p>New thread · Shared PR-revision context<br />{{ real ? 'Runtime only; lost on restart. Answer display and follow-ups are not connected yet.' : 'Local preview only. Live agent requests and saving are unavailable.' }}</p>
+      <p>New thread · Shared PR-revision context<br />{{ real ? 'Runtime only; not saved and lost on restart. Accepted execution continues if the browser disconnects.' : 'Local preview only. Live agent requests and saving are unavailable.' }}</p>
       <UiButton :disabled="real && pending" @click="emit('cancel')">Cancel</UiButton>
       <UiButton v-if="pending && !real" variant="soft" :disabled="busy || !!unavailableReason" :aria-describedby="`${id}-availability`" @click="emit('finish')">Finish sample creation</UiButton>
       <UiButton type="submit" variant="primary" :busy="pending" :disabled="busy || !!unavailableReason || (real && pending)" :aria-describedby="busy || unavailableReason || pending ? `${id}-availability` : undefined">{{ real ? pending ? 'Sending question…' : 'Send question' : pending ? 'Sample creation pending…' : 'Preview thread creation' }}</UiButton>

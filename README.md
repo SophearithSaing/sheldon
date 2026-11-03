@@ -2,7 +2,7 @@
 
 **Don't just merge it. Understand it.**
 
-A local pull-request explainer. **Real pinned Files changed + inline question admission + separate Slate UI previews**—streamed conversation display, follow-ups and durable review saving remain unimplemented.
+A local pull-request explainer. **Real pinned Files changed + streamed questions/follow-ups + separate Slate UI previews**—durable review saving remains unimplemented.
 
 ## Toolchains
 
@@ -27,7 +27,9 @@ Connect the runtime, choose **Open a PR**, then **Register and open PR**. Openin
 
 For a text diff, choose gutter line numbers (Shift extends on one side within one hunk) or **Select hunk**, then **Ask about selection**. The inline composer is pinned to that file/side/range/revision. **Send question** or Ctrl/Cmd+Enter explicitly starts backend work; Enter inserts a newline. Cancel retains the draft; resume or explicitly discard it before changing files/selection or refreshing. Native text selection/copy never submits. Non-text changes have no line questions.
 
-Successful admission adds one marker and opens a runtime-only admission panel with **Stop this answer**. **Live answers and follow-ups are not displayed yet**; admission and Stop acknowledgements are not completion proof. Rejected requests retain drafts without creating markers. Uncertain delivery disables resending rather than automatically retrying. Reload/disconnect clears page-memory drafts and markers, not accepted backend execution.
+Successful admission adds one marker and opens its runtime-only conversation with streamed, escaped answer text, pinned context and **Stop this answer**. Admission and Stop acknowledgements are not completion proof. Follow-ups use **Enter to send / Shift+Enter for a newline**, respect IME composition, and retain each thread's own transcript and draft when switching threads/files. Model-written citations remain plain text, not trusted navigation links.
+
+The shared revision allows one active question; drafts stay editable while sending is unavailable. Backend busy rejection also covers other tabs; retry is explicit, not synchronized thread-library state. Rejected requests retain drafts without phantom messages. Uncertain admission disables resending. **Reconnect answer observation** only checks the original answer after stream loss—it never resubmits a question. Closing the panel does not stop execution. Reload/disconnect clears page-memory drafts, transcripts and markers, not accepted backend execution; restart loses all question state. Nothing is marked Saved.
 
 **Sample UI previews** opens the separate `/?preview=library` entry. Its Files changed, Questions, Quiz, Semantic review, All PRs and Configuration use fictional data and page-memory simulations, never real PR source or inference.
 

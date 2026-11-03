@@ -1,5 +1,5 @@
 import { parseSourceResponse, pinnedID, type SourceRequest, type SourceResponse } from './source'
-import { parseQuestionAnswer, questionError, QuestionAdmissionError, type InitialQuestion, type QuestionAnswer } from './questions'
+import { parseQuestionAnswer, parseObservedAnswer, readAnswerEvents, questionError, QuestionAdmissionError, type InitialQuestion, type QuestionAnswer } from './questions'
 
 let launchToken = ''
 
@@ -27,11 +27,27 @@ export interface RuntimeClient {
    */
   askQuestion(id: string, input: InitialQuestion, signal: AbortSignal): Promise<QuestionAnswer>
   /**
+   * Admits a follow-up in the original thread and comparison, at most once.
+   * @param answer Previous answer identifying the original thread.
+   * @param input Original selection/revision and new literal question.
+   * @param signal Admission observation cancellation signal.
+   * @returns Validated admission, not completion proof.
+   */
+  askFollowup(answer: QuestionAnswer, input: InitialQuestion, signal: AbortSignal): Promise<QuestionAnswer>
+  /**
+   * Observes one admitted answer without dispatching or cancelling execution.
+   * @param answer Original scoped admission.
+   * @param signal Observer lifetime.
+   * @param emit Receives cumulative public snapshots.
+   */
+  observeAnswer(answer: QuestionAnswer, signal: AbortSignal, emit: (answer: QuestionAnswer) => void): Promise<void>
+  /**
    * Requests interruption of one exact admitted answer.
    * @param answer Original routed answer snapshot.
    * @param signal Request cancellation signal.
+   * @returns Scoped Stop snapshot, not an assumption of termination.
    */
-  stopAnswer(answer: QuestionAnswer, signal: AbortSignal): Promise<void>
+  stopAnswer(answer: QuestionAnswer, signal: AbortSignal): Promise<QuestionAnswer>
 }
 
 export interface RegisteredPR {
@@ -263,14 +279,16 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
    * @param id Routed PR identifier.
    * @param input Immutable question request.
    * @param signal Admission request cancellation signal.
+   * @param previous Previous answer when continuing an existing thread.
    * @returns Public admission snapshot.
    */
-  async function askQuestion(id: string, input: InitialQuestion, signal: AbortSignal): Promise<QuestionAnswer> {
+  async function askQuestion(id: string, input: InitialQuestion, signal: AbortSignal, previous?: QuestionAnswer): Promise<QuestionAnswer> {
     if (!id || reviewID(`/reviews/${id}`) !== id || input.revision.prID !== id || questionError(input.question)) throw new QuestionAdmissionError('Invalid question or PR context.', false)
     if (new TextEncoder().encode(JSON.stringify(input)).length > 24 * 1024) throw new QuestionAdmissionError('The encoded question exceeds the request size limit. Shorten it; your draft was retained.', false)
     const revisionID = await pinnedID(input.revision)
     try {
-      const response = await post(`/api/reviews/${id}/questions`, input, signal)
+      const path = previous ? `/api/reviews/${id}/threads/${previous.threadID}/answers` : `/api/reviews/${id}/questions`
+      const response = await post(path, previous ? { revisionID, question: input.question } : input, signal)
       if (response.status !== 202) {
         const messages: Record<number, string> = {
           400: 'The selection or question is invalid. Your draft was retained.',
@@ -286,6 +304,7 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
       if (text.length > 2 * 1024 * 1024) throw new Error('Oversized admission')
       const answer = parseQuestionAnswer(JSON.parse(text), id, revisionID, input)
       if (answer.state !== 'pending' || answer.text !== '' || answer.stopRequested || answer.executionUnknown) throw new Error('Unexpected admission state')
+      if (previous && (answer.threadID !== previous.threadID || answer.answerID === previous.answerID || answer.revisionID !== previous.revisionID)) throw new Error('Unexpected follow-up binding')
       return answer
     } catch (failure: unknown) {
       if (failure instanceof QuestionAdmissionError) throw failure
@@ -293,13 +312,37 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
     }
   }
   /**
+   * Continues only the originally admitted thread and immutable comparison.
+   * @param answer Previous scoped answer.
+   * @param input Original source and new question.
+   * @param signal Admission cancellation signal.
+   * @returns New validated admission.
+   */
+  function askFollowup(answer: QuestionAnswer, input: InitialQuestion, signal: AbortSignal): Promise<QuestionAnswer> {
+    return askQuestion(answer.prID, input, signal, answer)
+  }
+  /**
+   * Opens an authenticated fetch stream; reconnecting here never submits a prompt.
+   * @param answer Scoped admission to observe.
+   * @param signal Observer cancellation signal.
+   * @param emit Receives normalized cumulative snapshots.
+   */
+  async function observeAnswer(answer: QuestionAnswer, signal: AbortSignal, emit: (answer: QuestionAnswer) => void): Promise<void> {
+    const response = await post(`/api/reviews/${answer.prID}/threads/${answer.threadID}/answers/${answer.answerID}/events`, { revisionID: answer.revisionID }, signal)
+    await readAnswerEvents(response, answer, emit)
+  }
+  /**
    * Requests exact-answer Stop without interpreting its acknowledgement as completion.
    * @param answer Admitted answer identity.
    * @param signal Stop request cancellation signal.
+   * @returns Exact-answer Stop snapshot.
    */
-  async function stopAnswer(answer: QuestionAnswer, signal: AbortSignal): Promise<void> {
+  async function stopAnswer(answer: QuestionAnswer, signal: AbortSignal): Promise<QuestionAnswer> {
     const response = await post(`/api/reviews/${answer.prID}/threads/${answer.threadID}/answers/${answer.answerID}/stop`, { revisionID: answer.revisionID }, signal)
     if (!response.ok) throw new Error('Cannot confirm the Stop request. Execution may still be active.')
+    const text = await response.text()
+    if (text.length > 2 * 1024 * 1024) throw new Error('Unexpected Stop response.')
+    return parseObservedAnswer(JSON.parse(text), answer)
   }
-  return { openPR, source, askQuestion, stopAnswer }
+  return { openPR, source, askQuestion, askFollowup, observeAnswer, stopAnswer }
 }

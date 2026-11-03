@@ -8,8 +8,8 @@ import type { RuntimeClient } from './client'
 import type { PinnedDiff, SourceFile } from './source'
 import { questionError, QuestionAdmissionError, sameAnchor, type InitialQuestion, type QuestionAnchor, type QuestionAnswer } from './questions'
 
-const props = defineProps<{ diff: PinnedDiff; file: SourceFile; lines: DiffLine[]; client: RuntimeClient; sourcePending: boolean; markers: { answer: QuestionAnswer; anchor: QuestionAnchor }[] }>()
-const emit = defineEmits<{ guard: [active: boolean]; admitted: [answer: QuestionAnswer, input: InitialQuestion]; open: [answer: QuestionAnswer, trigger: HTMLElement] }>()
+const props = defineProps<{ diff: PinnedDiff; file: SourceFile; lines: DiffLine[]; client: RuntimeClient; sourcePending: boolean; busyReason: string; markers: { answer: QuestionAnswer; anchor: QuestionAnchor }[] }>()
+const emit = defineEmits<{ guard: [active: boolean]; sending: [pending: boolean]; admitted: [answer: QuestionAnswer, input: InitialQuestion]; open: [answer: QuestionAnswer, trigger: HTMLElement] }>()
 const anchor = ref<QuestionAnchor | null>(null)
 const draft = ref<InitialQuestion | null>(null)
 const text = ref('')
@@ -114,12 +114,13 @@ async function discard(): Promise<void> {
 /** Sends one explicit immutable question and creates a marker only after validated admission. */
 async function submit(): Promise<void> {
   if (!draft.value || pending.value || uncertain.value) return
-  error.value = questionError(text.value)
+  error.value = questionError(text.value) || props.busyReason
   if (error.value) return
   const input: InitialQuestion = { ...draft.value, question: text.value }
   const current = new AbortController()
   controller = current
   pending.value = true
+  emit('sending', true)
   try {
     const answer = await props.client.askQuestion(props.diff.revision.prID, input, current.signal)
     if (current.signal.aborted || controller !== current) return
@@ -136,7 +137,7 @@ async function submit(): Promise<void> {
     uncertain.value = !(failure instanceof QuestionAdmissionError) || failure.uncertain
     error.value = failure instanceof QuestionAdmissionError ? failure.message : 'Question delivery may be uncertain. Do not resend automatically.'
   } finally {
-    if (controller === current) pending.value = false
+    if (controller === current) { pending.value = false; emit('sending', false) }
   }
 }
 
@@ -164,7 +165,7 @@ watch((): string => props.file.id, (): void => { anchor.value = null; message.va
     </div>
     <SourceDiff class="real-source" :lines="lines" :label="`Unified diff for ${file.newPath ?? file.oldPath}`" :selection="range" :selected-hunk="anchor?.kind === 'hunk' ? anchor.hunkID : undefined" :highlight="false" :insert-after="opened ? inlineID : undefined" :marked-lines="markerLines" real @select="selectLine">
       <template #inline="{ lineId }">
-        <InlineQuestionComposer v-if="draft && opened && inlineID === lineId" v-model="text" :context="context" :error="error" :pending="pending" :busy="false" :unavailable-reason="uncertain ? 'Admission is uncertain. Sending again is disabled to avoid duplicate execution.' : undefined" heading="Ask about this pinned selection" real @submit="submit" @cancel="cancel" />
+        <InlineQuestionComposer v-if="draft && opened && inlineID === lineId" v-model="text" :context="context" :error="error" :pending="pending" :busy="false" :unavailable-reason="uncertain ? 'Admission is uncertain. Sending again is disabled to avoid duplicate execution.' : pending ? undefined : busyReason || undefined" heading="Ask about this pinned selection" real @submit="submit" @cancel="cancel" />
         <div v-if="markers.some((marker): boolean => endpoint(marker.anchor) === lineId)" class="question-markers" aria-label="Questions at this selection">
           <UiButton v-for="marker in markers.filter((item): boolean => endpoint(item.anchor) === lineId)" :key="marker.answer.answerID" :data-answer="marker.answer.answerID" variant="quiet" @click="emit('open', marker.answer, $event.currentTarget as HTMLElement)">Question · {{ marker.anchor.kind === 'hunk' ? 'hunk' : `${marker.anchor.side === 'old' ? 'merge base' : 'head'} L${marker.anchor.start}–${marker.anchor.end}` }} · {{ marker.answer.question }}</UiButton>
         </div>
