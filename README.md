@@ -2,7 +2,7 @@
 
 **Don't just merge it. Understand it.**
 
-A local pull-request explainer. **Real pinned Files changed + separate Slate UI previews**—agent integration, questions and durable review saving remain unimplemented.
+A local pull-request explainer. **Real pinned Files changed + separate Slate UI previews**—the question backend supports execution/streaming/Stop; real question UI and durable review saving remain unimplemented.
 
 ## Toolchains
 
@@ -46,6 +46,8 @@ Choose **Refresh source** to fetch current tips for this tab only. The displayed
 
 Source uses OS cache storage (`~/.cache/sheldon` on Linux, `%LOCALAPPDATA%\sheldon\cache` on Windows), not the project directory. Worktrees and diffs are bounded; unsafe cache state, unavailable history or oversized comparisons produce errors rather than partial source. Existing credential helpers/SSH routes remain trusted. A worktree is not an agent sandbox.
 
+Question backend operations are explicit, authenticated and runtime-only; browsing never starts inference. Execution uses the pinned OpenCode 2.1.4 adapter and existing provider setup, without installing or configuring either. Browser disconnect stops observation, not execution. A worker has a 4m50s deadline plus up to 10s of reconciliation; Stop targets its active answer/session and is not completion proof. Native stream loss permits bounded history checks, never prompt replay. An unknown outcome blocks that shared revision session; shutdown cancels owned activity. Restart loses question state. Real Ask controls remain disabled pending UI integration.
+
 ## Check & build
 
 ```sh
@@ -81,13 +83,13 @@ The native-source release test needs Go and Git to build disposable tools and lo
 cmd/sheldon/          Go CLI + tests
 internal/platform/   OS storage paths
 internal/process/    Owned command execution + cancellation
-internal/httpapi/    Protected loopback registration, lookup and source API
+internal/httpapi/    Protected loopback PR/source and question/SSE/Stop API
 internal/app/        Writer lifecycle, PR index and source orchestration
 internal/githubpr/   Canonical PR/revision contracts (no fetching)
 internal/github/     Optional gh target-branch resolution
 internal/git/        Managed fetch, pinned worktrees and unified diffs
-internal/question/   Runtime-only PR-revision sessions, admission and pinned question context
-internal/opencode/   Restricted native service/session adapter (no prompt dispatch yet)
+internal/question/   Runtime-only sessions, pinned context and answer execution/observation
+internal/opencode/   Restricted native service/session, execution and history adapter
 internal/ui/         Embedded release shell / asset-free development fallback
 scripts/build.js     Frontend → embed copy → Go build
 web/                 Vue + Slate shell/fixtures + browser tests

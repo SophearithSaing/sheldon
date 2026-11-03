@@ -72,6 +72,7 @@ func main() {
 		json.NewEncoder(os.Stdout).Encode(map[string]string{"url": endpoint})
 	}
 	done := make(chan struct{})
+	execution := newExecutionFixture(mode, done)
 	trigger := make(chan struct{}, 1)
 	var mu sync.Mutex
 	sessions := make(map[string]map[string]any)
@@ -86,6 +87,9 @@ func main() {
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		audit(map[string]any{"method": r.Method, "path": r.URL.Path, "body": string(body), "directory": r.URL.Query().Get("location[directory]")})
 		w.Header().Set("Content-Type", "application/json")
+		if execution.handle(w, r, body) {
+			return
+		}
 		switch {
 		case r.URL.Path == "/api/info":
 			if mode == "info-wrong" {
@@ -111,13 +115,33 @@ func main() {
 			}
 			fmt.Fprint(w, "data: {\"type\":\"session.tool.input.delta\",\"data\":{\"delta\":{\"structured\":true}}}\n\n")
 			w.(http.Flusher).Flush()
-			select {
-			case <-trigger:
-				fmt.Fprint(w, "data: {\"type\":\"permission.asked\",\"data\":{\"sessionID\":\"ses_fixture\"}}\n\n")
-				w.(http.Flusher).Flush()
-				<-r.Context().Done()
-			case <-done:
-			case <-r.Context().Done():
+			for {
+				select {
+				case event := <-execution.events:
+					if event == "close-feed" {
+						return
+					}
+					frame := "data: " + event + "\n\n"
+					if mode == "answer-fragmented" {
+						for len(frame) > 0 {
+							n := min(7, len(frame))
+							fmt.Fprint(w, frame[:n])
+							frame = frame[n:]
+							w.(http.Flusher).Flush()
+						}
+					} else {
+						fmt.Fprint(w, frame)
+						w.(http.Flusher).Flush()
+					}
+				case <-trigger:
+					fmt.Fprint(w, "data: {\"type\":\"permission.asked\",\"data\":{\"sessionID\":\"ses_fixture\"}}\n\n")
+					w.(http.Flusher).Flush()
+					<-r.Context().Done()
+				case <-done:
+					return
+				case <-r.Context().Done():
+					return
+				}
 			}
 		case r.URL.Path == "/api/model/default":
 			mu.Lock()

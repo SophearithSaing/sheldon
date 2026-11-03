@@ -3,17 +3,19 @@ package opencode
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"mime"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
 const maxFrame = 1 << 20
 
-// guard watches safety events only; answer normalization and browser streaming belong to later work.
+// guard routes only managed visible events and fails closed on unattended safety requests.
 func (s *Service) guard(connected chan<- error) {
 	defer close(s.guardDone)
 	announced := false
@@ -34,7 +36,7 @@ func (s *Service) guard(connected chan<- error) {
 		if event.Type == "permission.asked" || event.Type == "form.created" {
 			return ErrRestricted
 		}
-		return nil
+		return s.deliver(data)
 	})
 	if err == nil {
 		err = ErrStreamLost
@@ -42,7 +44,16 @@ func (s *Service) guard(connected chan<- error) {
 	if !announced {
 		connected <- err
 	}
-	s.cancel(err)
+	s.feedMu.Lock()
+	s.feedErr = err
+	close(s.feedDone)
+	s.feedMu.Unlock()
+	if errors.Is(err, ErrRestricted) || errors.Is(err, ErrProtocol) {
+		s.cancel(err)
+	} else {
+		timer := time.AfterFunc(30*time.Second, func() { s.cancel(ErrStreamLost) })
+		context.AfterFunc(s.ctx, func() { timer.Stop() })
+	}
 }
 
 // watch consumes the owned native feed without replay, automatic reconnect or raw payload forwarding.

@@ -243,10 +243,14 @@ func TestSafetyFeedFailureStopsOwnedService(t *testing.T) {
 			if mode == "approval" {
 				_, _ = s.CreateSession(context.Background(), t.TempDir())
 			}
+			failure := s.ctx.Done()
+			if mode == "stream-loss" {
+				failure = s.feedDone
+			}
 			select {
-			case <-s.ctx.Done():
+			case <-failure:
 			case <-time.After(3 * time.Second):
-				t.Fatal("unattended safety failure did not stop execution")
+				t.Fatal("unattended safety failure was not recorded")
 			}
 			if mode == "approval" && !errors.Is(s.Err(), ErrRestricted) {
 				t.Fatal("approval failure was not recorded as restricted")

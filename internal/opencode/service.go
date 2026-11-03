@@ -48,6 +48,10 @@ type Service struct {
 	closeErr   error
 	sessionMu  sync.Mutex
 	sessionIDs map[string]bool
+	feedMu     sync.Mutex
+	feedErr    error
+	feedDone   chan struct{}
+	listeners  map[string]*subscription
 }
 
 // Start verifies and starts the installed native executable without contacting a shared service.
@@ -71,7 +75,7 @@ func Start(ctx context.Context) (*Service, error) {
 		return nil, ErrUnavailable
 	}
 	lifetime, cancel := context.WithCancelCause(ctx)
-	s := &Service{ctx: lifetime, cancel: cancel, directory: directory}
+	s := &Service{ctx: lifetime, cancel: cancel, directory: directory, feedDone: make(chan struct{}), listeners: make(map[string]*subscription)}
 	success := false
 	defer func() {
 		if !success {
@@ -162,7 +166,14 @@ func (s *Service) readAnnouncement(ready chan<- string) {
 }
 
 // Err reports a fixed terminal service failure without native diagnostics or credentials.
-func (s *Service) Err() error { return context.Cause(s.ctx) }
+func (s *Service) Err() error {
+	if err := context.Cause(s.ctx); err != nil {
+		return err
+	}
+	s.feedMu.Lock()
+	defer s.feedMu.Unlock()
+	return s.feedErr
+}
 
 // Close cancels owned activity and removes only this service's temporary startup directory.
 func (s *Service) Close() error {

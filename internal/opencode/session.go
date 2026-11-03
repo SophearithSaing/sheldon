@@ -66,6 +66,9 @@ func (s *Session) GoString() string { return s.String() }
 // CreateSession resolves the existing native default and pins it explicitly without fallback.
 // The caller must first verify directory as the exact managed worktree using the Git source service.
 func (s *Service) CreateSession(ctx context.Context, directory string) (*Session, error) {
+	if err := s.Err(); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {

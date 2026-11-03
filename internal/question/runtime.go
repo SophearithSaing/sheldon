@@ -31,6 +31,7 @@ var (
 	ErrUncertain          = errors.New("question execution is uncertain; the shared session remains unavailable")
 	ErrPromptLimit        = errors.New("question and thread history exceed the bounded prompt limit")
 	ErrAnswerState        = errors.New("invalid or conflicting question answer update")
+	ErrNotFound           = errors.New("question thread or answer not found in the requested scope")
 )
 
 // State separates answer presentation from reader understanding and native session availability.
@@ -46,13 +47,17 @@ const (
 
 // Answer is a runtime-only transcript snapshot, without native identifiers or paths.
 type Answer struct {
-	ID         string `json:"answerID"`
-	ThreadID   string `json:"threadID"`
-	PRID       string `json:"prID"`
-	RevisionID string `json:"revisionID"`
-	Question   string `json:"question"`
-	Text       string `json:"text"`
-	State      State  `json:"state"`
+	ID               string    `json:"answerID"`
+	ThreadID         string    `json:"threadID"`
+	PRID             string    `json:"prID"`
+	RevisionID       string    `json:"revisionID"`
+	Question         string    `json:"question"`
+	Text             string    `json:"text"`
+	State            State     `json:"state"`
+	StopRequested    bool      `json:"stopRequested"`
+	ExecutionUnknown bool      `json:"executionUnknown"`
+	FailureCode      string    `json:"failureCode,omitempty"`
+	Reference        Reference `json:"reference"`
 }
 
 type revisionKey struct{ prID, revisionID string }
@@ -95,13 +100,17 @@ type Runtime struct {
 
 // Turn holds a backend-only admitted question; it does not dispatch native input.
 type Turn struct {
-	runtime   *Runtime
-	binding   *binding
-	source    Context
-	prompt    string
-	answer    Answer
-	finished  bool
-	uncertain bool
+	runtime    *Runtime
+	binding    *binding
+	source     Context
+	prompt     string
+	answer     Answer
+	finished   bool
+	uncertain  bool
+	started    bool
+	workerDone bool
+	stop       chan struct{}
+	changed    chan struct{}
 }
 
 // New creates empty runtime state without starting a harness or loading source.
@@ -124,10 +133,10 @@ func (r *Runtime) BeginFollowup(ctx context.Context, prID, threadID string, inpu
 	existing := r.threads[threadID]
 	r.mu.Unlock()
 	if existing == nil {
-		return nil, errors.New("unknown question thread")
+		return nil, ErrNotFound
 	}
 	if err := input.Validate(prID, threadID, r.registry, existing.context); err != nil {
-		return nil, err
+		return nil, errors.Join(ErrNotFound, err)
 	}
 	return r.begin(ctx, prID, InitialRequest{Revision: existing.context.Revision, Anchor: existing.anchor, Question: input.Question}, existing)
 }
@@ -259,6 +268,8 @@ func (r *Runtime) begin(ctx context.Context, prID string, input InitialRequest, 
 		r.threads[threadID] = existing
 	}
 	turn = &Turn{runtime: r, binding: b, source: source, prompt: prompt, answer: Answer{ID: answerID, ThreadID: threadID, PRID: prID, RevisionID: revisionID, Question: input.Question, State: Pending}}
+	turn.stop, turn.changed = make(chan struct{}), make(chan struct{})
+	turn.answer.Reference = Reference{RevisionID: source.RevisionID, Anchor: source.Anchor, OldPath: source.OldPath, NewPath: source.NewPath}
 	b.active = turn
 	existing.answers = append(existing.answers, turn)
 	r.answers[answerID] = turn
@@ -301,11 +312,11 @@ func (r *Runtime) ReadAnswer(prID, threadID, answerID string, input AnswerReques
 	defer r.mu.Unlock()
 	turn := r.answers[answerID]
 	if turn == nil {
-		return Answer{}, errors.New("unknown question answer")
+		return Answer{}, ErrNotFound
 	}
 	thread := r.threads[turn.answer.ThreadID]
 	if err := input.Validate(prID, threadID, answerID, r.registry, AnswerContext{ID: turn.answer.ID, Thread: thread.context}); err != nil {
-		return Answer{}, err
+		return Answer{}, errors.Join(ErrNotFound, err)
 	}
 	return turn.answer, nil
 }
@@ -325,7 +336,9 @@ func (r *Runtime) Close() error {
 		for _, b := range r.bindings {
 			if b.active != nil {
 				b.active.answer.State = Interrupted
+				b.active.answer.ExecutionUnknown = true
 				b.broken = ErrSessionUnavailable
+				b.active.notify()
 			}
 		}
 		r.mu.Unlock()
@@ -371,11 +384,13 @@ func (t *Turn) Finish(state State, text string) error {
 		return ErrAnswerState
 	}
 	t.answer.State, t.answer.Text, t.finished = state, text, true
+	t.answer.ExecutionUnknown = false
 	t.binding.busy, t.binding.active = false, nil
 	if t.uncertain {
 		t.binding.broken = nil
 		t.uncertain = false
 	}
+	t.notify()
 	return nil
 }
 
@@ -391,7 +406,9 @@ func (t *Turn) Uncertain() error {
 		return ErrAnswerState
 	}
 	t.answer.State, t.uncertain = Interrupted, true
+	t.answer.ExecutionUnknown = true
 	t.binding.broken = ErrUncertain
+	t.notify()
 	return nil
 }
 

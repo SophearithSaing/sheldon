@@ -29,7 +29,7 @@ func (s *Service) request(ctx context.Context, method, path string, body any) (*
 	combined, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(s.ctx, cancel)
 	cleanup := func() { stop(); cancel() }
-	if err := s.Err(); err != nil {
+	if err := context.Cause(s.ctx); err != nil {
 		cleanup()
 		return nil, combined, cleanup, err
 	}

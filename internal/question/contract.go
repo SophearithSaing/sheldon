@@ -150,3 +150,6 @@ func validateText(text string) error {
 	}
 	return nil
 }
+
+// ValidText checks the bounded UTF-8 question-text contract without changing literal input.
+func ValidText(text string) bool { return validateText(text) == nil }
