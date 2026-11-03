@@ -13,7 +13,10 @@ import (
 	"testing"
 
 	"github.com/SophearithSaing/sheldon/internal/git"
+	"github.com/SophearithSaing/sheldon/internal/github"
+	"github.com/SophearithSaing/sheldon/internal/githubpr"
 	"github.com/SophearithSaing/sheldon/internal/httpapi"
+	"github.com/SophearithSaing/sheldon/internal/question"
 )
 
 // sourceGit runs native, isolated offline setup without reading personal Git configuration.
@@ -101,6 +104,12 @@ func TestSourceRegistryComposesRealOfflineResolutionFetchWorktreeAndDiff(t *test
 		t.Fatal("backend source location leaked")
 	}
 	original := ready.Diff.Revision
+	anchor := question.Anchor{Kind: "lines", FileID: ready.Diff.Files[0].ID, HunkID: ready.Diff.Files[0].Hunks[0].ID, Side: "new", Start: 1, End: 1}
+	questionInput := question.InitialRequest{Revision: original, Anchor: anchor, Question: "Explain this addition."}
+	quoted, err := question.Resolve(context.Background(), pr.ID, i, i.cache, questionInput)
+	if err != nil || len(quoted.Selected) != 1 || quoted.Selected[0].Text != "literal source" || quoted.Selected[0].OldLine != 0 {
+		t.Fatalf("real added-line question context: %+v %v", quoted, err)
+	}
 	refresh := httpapi.SourceRequest{Action: "refresh", Revision: &original}
 	unchanged, err := service.LoadSource(context.Background(), pr, refresh)
 	if err != nil || unchanged.Diff.RevisionID != ready.Diff.RevisionID {
@@ -120,6 +129,11 @@ func TestSourceRegistryComposesRealOfflineResolutionFetchWorktreeAndDiff(t *test
 	if !os.SameFile(before, after) {
 		t.Fatal("base-only refresh replaced the head worktree")
 	}
+	staleAnchor := questionInput
+	staleAnchor.Revision = baseOnly.Diff.Revision
+	if _, err := question.Resolve(context.Background(), pr.ID, i, i.cache, staleAnchor); !errors.Is(err, question.ErrInvalidSelection) {
+		t.Fatalf("old anchor accepted for a new comparison: %v", err)
+	}
 	newBlob := sourceGit(t, realGit, upstream, "refreshed source\n", "hash-object", "-w", "--stdin")
 	newTree := sourceGit(t, realGit, upstream, "100644 blob "+newBlob+"\tsource.txt\n", "mktree")
 	newHead := sourceGit(t, realGit, upstream, "force pushed head\n", "commit-tree", newTree, "-p", base)
@@ -134,6 +148,10 @@ func TestSourceRegistryComposesRealOfflineResolutionFetchWorktreeAndDiff(t *test
 	}
 	if data, err := os.ReadFile(filepath.Join(originalPath, "source.txt")); err != nil || string(data) != "literal source\n" {
 		t.Fatal("refresh changed original source")
+	}
+	pinnedQuote, err := question.Resolve(context.Background(), pr.ID, i, i.cache, questionInput)
+	if err != nil || !reflect.DeepEqual(pinnedQuote, quoted) {
+		t.Fatalf("refresh rebound question source: %v", err)
 	}
 	t.Setenv("SHELDON_GIT_MODE", "fail")
 	if result, err := service.LoadSource(context.Background(), pr, refresh); err == nil || result.Diff != nil {
@@ -172,4 +190,37 @@ func TestSourceRegistryComposesRealOfflineResolutionFetchWorktreeAndDiff(t *test
 	if _, err := service.LoadSource(context.Background(), pr, selected); !errors.Is(err, git.ErrRefreshRequired) {
 		t.Fatalf("moved branch was accepted: %v", err)
 	}
+	t.Run("removed source uses merge base not advanced base tip", func(t *testing.T) {
+		removedPR, err := i.RegisterPR("https://github.com/owner/repo/pull/32")
+		if err != nil {
+			t.Fatal(err)
+		}
+		empty := sourceGit(t, realGit, upstream, "", "mktree")
+		removedHead := sourceGit(t, realGit, upstream, "removed head\n", "commit-tree", empty, "-p", head)
+		baseTip := sourceGit(t, realGit, upstream, "advanced comparison base\n", "commit-tree", empty, "-p", head)
+		sourceGit(t, realGit, upstream, "", "update-ref", "refs/heads/question-base", baseTip)
+		sourceGit(t, realGit, upstream, "", "update-ref", "refs/pull/32/head", removedHead)
+		resolution := github.Resolution{PR: removedPR, State: github.Resolved, Base: &github.Base{Branch: "question-base", SHA: baseTip, Source: githubpr.GitHubBase}, HeadSHA: removedHead}
+		snapshot, err := i.cache.Fetch(context.Background(), resolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared, err := i.cache.Prepare(context.Background(), removedPR, snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		diff, err := i.cache.Diff(context.Background(), removedPR, prepared.Revision)
+		if err != nil || len(diff.Files) != 1 || diff.Files[0].Status != "deleted" {
+			t.Fatalf("removed fixture: %v", err)
+		}
+		input := question.InitialRequest{Revision: prepared.Revision, Question: "Why removed?", Anchor: question.Anchor{Kind: "lines", FileID: diff.Files[0].ID, HunkID: diff.Files[0].Hunks[0].ID, Side: "old", Start: 1, End: 1}}
+		got, err := question.Resolve(context.Background(), removedPR.ID, i, i.cache, input)
+		if err != nil || len(got.Selected) != 1 || got.Selected[0].Text != "literal source" || got.Selected[0].Sign != "-" || got.Revision.MergeBaseSHA != head || got.Revision.BaseSHA != baseTip {
+			t.Fatalf("removed source context: %+v %v", got, err)
+		}
+		input.Anchor.Kind, input.Anchor.Side, input.Anchor.Start, input.Anchor.End = "hunk", "", 0, 0
+		if _, err := question.Resolve(context.Background(), removedPR.ID, i, i.cache, input); err != nil {
+			t.Fatalf("removed hunk context: %v", err)
+		}
+	})
 }

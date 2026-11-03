@@ -94,6 +94,11 @@ func (c *Cache) Diff(ctx context.Context, pr githubpr.PullRequest, revision gith
 	if err := c.retain(ctx, repo, revision); err != nil {
 		return Diff{}, errors.Join(ErrIncompleteDiff, err)
 	}
+	return c.readDiff(ctx, repo, revision)
+}
+
+// readDiff compares verified immutable objects while the caller holds the repository gate.
+func (c *Cache) readDiff(ctx context.Context, repo string, revision githubpr.Revision) (Diff, error) {
 	output, err := c.run(ctx, repo, "-c", "core.quotePath=true", "-c", "diff.suppressBlankEmpty=false",
 		"diff", "--raw", "-z", "--patch", "--no-abbrev", "--full-index", "--no-color", "--no-ext-diff", "--no-textconv",
 		"--no-relative", "--src-prefix=a/", "--dst-prefix=b/", "--line-prefix=", "--output-indicator-old=-", "--output-indicator-new=+", "--output-indicator-context= ",
