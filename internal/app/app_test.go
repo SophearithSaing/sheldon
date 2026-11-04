@@ -547,6 +547,22 @@ func TestContenderWaitsForPublication(t *testing.T) {
 	}
 }
 
+func TestStartupPrintsCopyableTokenOnlyOnStdout(t *testing.T) {
+	env := newAppEnvironment(t)
+	a := startApp(t, env, "")
+	_, token := readLaunchedPR(t, a.target)
+	a.cancel()
+	err := <-a.done
+	a.done <- err
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := "API token: " + token + "\n"
+	if strings.Count(a.stdout.String(), line) != 1 || strings.Contains(strings.Replace(a.stdout.String(), line, "", 1), token) || strings.Contains(a.stderr.String(), token) {
+		t.Fatal("expected one labeled stdout token and no other token output")
+	}
+}
+
 func TestBrowserFailureKeepsRuntimeAndRedactsURL(t *testing.T) {
 	env := newAppEnvironment(t)
 	t.Setenv("SHELDON_TEST_BROWSER_FAIL", "1")
@@ -562,7 +578,10 @@ func TestBrowserFailureKeepsRuntimeAndRedactsURL(t *testing.T) {
 	if !strings.Contains(output, "Browser launch failed") || !strings.Contains(output, "instance.lock") || !strings.Contains(output, "http://127.0.0.1:") {
 		t.Fatal("missing manual connection guidance")
 	}
-	if strings.Contains(output, token) || strings.Contains(output, "fake opener") {
+	if strings.Count(a.stdout.String(), "API token: "+token+"\n") != 1 {
+		t.Fatal("startup did not print exactly one copyable API token")
+	}
+	if strings.Contains(strings.Replace(output, "API token: "+token+"\n", "", 1), token) || strings.Contains(output, "fake opener") {
 		t.Fatal("unsafe browser error displayed")
 	}
 }

@@ -14,15 +14,18 @@ import (
 
 // instance holds one stable OS-locked discovery file per data root.
 type instance struct {
-	mu        sync.Mutex
-	file      *os.File
-	owned     bool
-	cache     *git.Cache
-	cacheRoot string
-	questions *question.Runtime
-	closing   bool
-	closeOnce sync.Once
-	closeErr  error
+	mu                     sync.Mutex
+	file                   *os.File
+	owned                  bool
+	cache                  *git.Cache
+	cacheRoot              string
+	questions              *question.Runtime
+	questionStoreMu        sync.Mutex
+	questionStoreUncertain map[string]bool
+	questionsLoaded        map[string]bool
+	closing                bool
+	closeOnce              sync.Once
+	closeErr               error
 }
 
 type record struct {
@@ -103,6 +106,8 @@ func (i *instance) close() error {
 		if questions != nil {
 			i.closeErr = questions.Close()
 		}
+		i.questionStoreMu.Lock()
+		defer i.questionStoreMu.Unlock()
 		i.mu.Lock()
 		defer i.mu.Unlock()
 		if i.cache != nil {

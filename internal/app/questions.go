@@ -42,10 +42,37 @@ func (s *sourceRegistry) BeginQuestion(ctx context.Context, prID string, input q
 func (s *sourceRegistry) BeginFollowup(ctx context.Context, prID, threadID string, input question.FollowupRequest) (*question.Turn, error) {
 	s.mu.Lock()
 	runtime := s.questions
-	available := s.owned && !s.closing && s.cacheRoot == s.paths.Cache && filepath.Dir(s.file.Name()) == s.paths.Data
+	available := s.owned && !s.closing && (s.cache == nil || s.cacheRoot == s.paths.Cache) && filepath.Dir(s.file.Name()) == s.paths.Data
 	s.mu.Unlock()
-	if !available || runtime == nil {
+	if !available {
 		return nil, question.ErrSessionUnavailable
+	}
+	if runtime == nil {
+		saved, err := s.ReadQuestions(prID)
+		if err != nil {
+			return nil, question.ErrPersistence
+		}
+		found := false
+		for _, thread := range saved.Threads {
+			if thread.ID != threadID {
+				continue
+			}
+			if err := input.Validate(prID, threadID, s.instance, question.ThreadContext{ID: thread.ID, Revision: thread.Context.Revision}); err != nil {
+				return nil, question.ErrNotFound
+			}
+			found = true
+			break
+		}
+		if !found {
+			return nil, question.ErrNotFound
+		}
+		if _, err := s.openExistingCache(s.paths); err != nil {
+			return nil, git.ErrQuestionSourceUnavailable
+		}
+		runtime, err = s.openQuestions(s.paths)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return runtime.BeginFollowup(ctx, prID, threadID, input)
 }
@@ -58,7 +85,7 @@ func (s *sourceRegistry) AskQuestion(ctx context.Context, prID string, input que
 	}
 	admitted := turn.Snapshot()
 	if err := turn.Start(); err != nil {
-		return question.Answer{}, err
+		return question.Answer{}, question.ErrSaveUncertain
 	}
 	return admitted, nil
 }
@@ -71,7 +98,7 @@ func (s *sourceRegistry) AskFollowup(ctx context.Context, prID, threadID string,
 	}
 	admitted := turn.Snapshot()
 	if err := turn.Start(); err != nil {
-		return question.Answer{}, err
+		return question.Answer{}, question.ErrSaveUncertain
 	}
 	return admitted, nil
 }
@@ -102,4 +129,13 @@ func (s *sourceRegistry) StopAnswer(prID, threadID, answerID string, input quest
 		return question.Answer{}, err
 	}
 	return runtime.StopAnswer(prID, threadID, answerID, input)
+}
+
+// SaveAnswer retries only local persistence for the exact retained answer; no prompt is sent.
+func (s *sourceRegistry) SaveAnswer(ctx context.Context, prID, threadID, answerID string, input question.AnswerRequest) (question.Answer, error) {
+	runtime, err := s.questionRuntime()
+	if err != nil {
+		return question.Answer{}, err
+	}
+	return runtime.SaveAnswer(ctx, prID, threadID, answerID, input)
 }

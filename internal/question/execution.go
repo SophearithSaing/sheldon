@@ -48,13 +48,13 @@ func (t *Turn) Start() error {
 func (t *Turn) execute() {
 	r := t.runtime
 	defer r.work.Done()
-	defer func() { r.mu.Lock(); t.workerDone = true; t.notify(); r.mu.Unlock() }()
 	ctx, cancel := context.WithTimeout(r.ctx, 4*time.Minute+50*time.Second)
 	defer cancel()
 	_, err := Resolve(ctx, t.answer.PRID, r.registry, r.cache, InitialRequest{Revision: t.source.Revision, Anchor: t.source.Anchor, Question: t.answer.Question})
 	if err != nil {
 		r.mu.Lock()
 		t.answer.FailureCode = "source-unavailable"
+		t.dirtyLocked()
 		r.mu.Unlock()
 		t.Finish(Failed, "")
 		return
@@ -62,9 +62,9 @@ func (t *Turn) execute() {
 	result := r.service.Execute(ctx, t.binding.session, t.prompt, t.stop, func(text string) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		if !r.closed && !t.finished {
+		if !r.drained && !t.finished {
 			t.answer.Text, t.answer.State = text, Streaming
-			t.notify()
+			t.dirtyLocked()
 		}
 	})
 	r.mu.Lock()
@@ -81,6 +81,7 @@ func (t *Turn) execute() {
 		t.answer.Text = result.Text
 	}
 	text := t.answer.Text
+	t.dirtyLocked()
 	r.mu.Unlock()
 	if result.Idle {
 		state := State(result.State)
@@ -111,8 +112,8 @@ func (r *Runtime) ObserveAnswer(ctx context.Context, prID, threadID, answerID st
 	}
 	for {
 		r.mu.Lock()
-		snapshot, changed := turn.answer, turn.changed
-		done := r.closed || turn.finished || turn.uncertain
+		snapshot, changed := turn.snapshotLocked(), turn.changed
+		done := r.drained || (turn.finished || turn.uncertain) && turn.saveState != "saving"
 		r.mu.Unlock()
 		if err := emit(snapshot); err != nil {
 			return err
@@ -140,15 +141,15 @@ func (r *Runtime) StopAnswer(prID, threadID, answerID string, input AnswerReques
 		return Answer{}, ErrRuntimeClosed
 	}
 	if turn.finished || turn.binding.active != turn {
-		return turn.answer, nil
+		return turn.snapshotLocked(), nil
 	}
-	if turn.workerDone && turn.uncertain {
-		return turn.answer, ErrUncertain
+	if turn.uncertain {
+		return turn.snapshotLocked(), ErrUncertain
 	}
 	if !turn.answer.StopRequested {
 		turn.answer.StopRequested = true
 		close(turn.stop)
-		turn.notify()
+		turn.dirtyLocked()
 	}
-	return turn.answer, nil
+	return turn.snapshotLocked(), nil
 }

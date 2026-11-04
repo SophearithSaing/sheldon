@@ -79,7 +79,7 @@ function requestStatus(request: IncomingMessage, origin: string): number | undef
     ?.split(':')[0]
     ?.replace(/[ .]+$/, '')
     .toLowerCase()
-  if (filename === 'instance.lock' || filename === 'prs.json' || /^\.prs-.*\.tmp$/.test(filename ?? '')) return 403
+  if (filename === 'instance.lock' || filename === 'prs.json' || filename === 'threads.json' || /^\.(prs|threads)-.*\.tmp$/.test(filename ?? '')) return 403
   if (url.pathname === '/reviews' || url.pathname.startsWith('/reviews/')) {
     const id = /^\/reviews\/([a-f0-9]{64})$/.exec(url.pathname)?.[1]
     if (!id || /^0+$/.test(id)) return 404

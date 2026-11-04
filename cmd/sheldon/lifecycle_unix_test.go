@@ -55,17 +55,23 @@ func TestCLILaunchForwardAndSignalShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { owner.Process.Kill(); owner.Wait() }()
-	ready := make(chan string, 1)
-	go func() { line, _ := bufio.NewReader(stdout).ReadString('\n'); ready <- line }()
-	var origin string
+	ready := make(chan [2]string, 1)
+	go func() {
+		reader := bufio.NewReader(stdout)
+		token, _ := reader.ReadString('\n')
+		address, _ := reader.ReadString('\n')
+		ready <- [2]string{token, address}
+	}()
+	var origin, tokenLine string
 	select {
-	case line := <-ready:
-		origin = strings.TrimSpace(strings.TrimPrefix(line, "Sheldon: "))
+	case lines := <-ready:
+		tokenLine = lines[0]
+		origin = strings.TrimSpace(strings.TrimPrefix(lines[1], "Sheldon: "))
 	case <-ctx.Done():
 		t.Fatal("CLI did not become ready")
 	}
 	if !strings.HasPrefix(origin, "http://127.0.0.1:") {
-		t.Fatalf("unexpected CLI output %q", origin)
+		t.Fatal("CLI did not print its loopback address")
 	}
 	dataDir := filepath.Join(root, "data", "sheldon")
 	if runtime.GOOS == "darwin" {
@@ -79,6 +85,9 @@ func TestCLILaunchForwardAndSignalShutdown(t *testing.T) {
 	var state struct{ URL, Token string }
 	if json.Unmarshal(b, &state) != nil || state.URL != origin || state.Token == "" {
 		t.Fatal("CLI did not publish discovery")
+	}
+	if tokenLine != "API token: "+state.Token+"\n" {
+		t.Fatal("CLI did not print its copyable startup token")
 	}
 	forwarder := exec.CommandContext(ctx, executable, "-test.run=^TestCLIProcessHelper$")
 	forwarder.Env = append(env, "SHELDON_CLI_OPEN_URL=https://github.com/owner/repo/pull/7")

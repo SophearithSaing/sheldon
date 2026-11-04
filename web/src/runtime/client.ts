@@ -1,9 +1,25 @@
 import { parseSourceResponse, pinnedID, type SourceRequest, type SourceResponse } from './source'
 import { parseQuestionAnswer, parseObservedAnswer, readAnswerEvents, readBoundedJSON, sameAnchor, questionError, QuestionAdmissionError, type InitialQuestion, type QuestionAnswer } from './questions'
+import { historyID, parseThreadList, parseThreadDetail, type ThreadList, type ThreadDetail } from './history'
 
 let launchToken = ''
 
 export interface RuntimeClient {
+  /**
+   * Reads saved navigation without source loading or inference.
+   * @param id Routed PR identity.
+   * @param signal Read lifetime.
+   * @returns Saved creation-ordered summaries and file generation.
+   */
+  listThreads(id: string, signal: AbortSignal): Promise<ThreadList>
+  /**
+   * Reads one saved transcript without dispatching or verifying native state.
+   * @param id Routed PR identity.
+   * @param threadID Exact saved thread.
+   * @param signal Read lifetime.
+   * @returns Saved transcript and separate current runtime feedback.
+   */
+  readThread(id: string, threadID: string, signal: AbortSignal): Promise<ThreadDetail>
   /**
    * Registers a PR and opens its independent route.
    * @param url Entered GitHub PR URL.
@@ -48,6 +64,13 @@ export interface RuntimeClient {
    * @returns Scoped Stop snapshot, not an assumption of termination.
    */
   stopAnswer(answer: QuestionAnswer, signal: AbortSignal): Promise<QuestionAnswer>
+  /**
+   * Retries only the exact answer's local save, never its question or native execution.
+   * @param answer Original routed answer snapshot.
+   * @param signal Save request cancellation signal.
+   * @returns Updated saving status and retained answer.
+   */
+  saveAnswer(answer: QuestionAnswer, signal: AbortSignal): Promise<QuestionAnswer>
 }
 
 export interface RegisteredPR {
@@ -217,6 +240,35 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
     return fetch(path, { ...options, method: 'POST', headers: { ...options.headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   }
   /**
+   * Reads one protected finite saved-history response through the verified connection.
+   * @param id Routed PR.
+   * @param threadID Exact thread, or empty for navigation.
+   * @param signal Caller cancellation signal.
+   * @returns Bounded decoded response, subject to exact DTO validation.
+   */
+  async function history(id: string, threadID: string, signal: AbortSignal): Promise<unknown> {
+    if (!historyID(id) || threadID !== '' && !historyID(threadID) || lifetime.aborted || !credential) throw new Error('Saved history unavailable.')
+    const response = await fetch(`/api/reviews/${id}/threads${threadID ? `/${threadID}` : ''}`, authenticatedRequest(credential, AbortSignal.any([lifetime, signal, AbortSignal.timeout(10000)])))
+    if (!response.ok) { await response.body?.cancel().catch((): void => {}); throw new Error('Cannot read saved question history.') }
+    if (!response.headers.get('Content-Type')?.startsWith('application/json')) { await response.body?.cancel().catch((): void => {}); throw new Error('Unexpected saved history response.') }
+    return readBoundedJSON(response, threadID ? 8 << 20 : 2 << 20)
+  }
+  /**
+   * Validates explicit saved-list reads.
+   * @param id Routed PR.
+   * @param signal Read lifetime.
+   * @returns Scoped saved navigation.
+   */
+  async function listThreads(id: string, signal: AbortSignal): Promise<ThreadList> { return parseThreadList(await history(id, '', signal), id) }
+  /**
+   * Validates explicit saved-detail reads separately from pending admissions.
+   * @param id Routed PR.
+   * @param threadID Exact saved thread.
+   * @param signal Read lifetime.
+   * @returns Scoped saved transcript.
+   */
+  async function readThread(id: string, threadID: string, signal: AbortSignal): Promise<ThreadDetail> { return parseThreadDetail(await history(id, threadID, signal), id, threadID) }
+  /**
    * Registers one PR and transfers its credential through a cleared launch fragment.
    * @param url User-entered GitHub PR URL.
    * @param signal Action cancellation signal.
@@ -295,10 +347,10 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
           409: 'This shared revision session is busy or unavailable. Your draft was retained; retry only when it is safe.',
           410: 'The original pinned source is unavailable. No newer source was substituted.',
           422: 'The question or source exceeds backend limits. Your draft was retained.',
-          503: 'The original question runtime is unavailable. Your draft was retained.',
+          503: 'The question could not be admitted or saved. Your draft was retained; check the original runtime/session or local storage before retrying.',
         }
         const message = messages[response.status]
-        throw new QuestionAdmissionError(message ?? 'Question delivery may be uncertain. Your draft was retained; do not resend automatically.', !message)
+        throw new QuestionAdmissionError(message ?? 'Question delivery may be uncertain. Your draft was retained; do not resend automatically.', !message, response.status)
       }
       const answer = parseQuestionAnswer(await readBoundedJSON(response, 2 * 1024 * 1024), id, revisionID, input)
       if (answer.state !== 'pending' || answer.text !== '' || answer.stopRequested || answer.executionUnknown) throw new Error('Unexpected admission state')
@@ -343,5 +395,16 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
     }
     return parseObservedAnswer(await readBoundedJSON(response, 2 * 1024 * 1024), answer)
   }
-  return { openPR, source, askQuestion, askFollowup, observeAnswer, stopAnswer }
+  /**
+   * Writes retained text to disk without admitting or replaying a question.
+   * @param answer Exact answer identity and comparison.
+   * @param signal Save request lifetime.
+   * @returns Validated current answer and persistence status.
+   */
+  async function saveAnswer(answer: QuestionAnswer, signal: AbortSignal): Promise<QuestionAnswer> {
+    const response = await post(`/api/reviews/${answer.prID}/threads/${answer.threadID}/answers/${answer.answerID}/save`, { revisionID: answer.revisionID }, AbortSignal.any([signal, AbortSignal.timeout(10000)]))
+    if (!response.ok) { await response.body?.cancel().catch((): void => {}); throw new Error('Answer saving failed. No question was resent.') }
+    return parseObservedAnswer(await readBoundedJSON(response, 2 * 1024 * 1024), answer)
+  }
+  return { openPR, source, askQuestion, askFollowup, observeAnswer, stopAnswer, saveAnswer, listThreads, readThread }
 }

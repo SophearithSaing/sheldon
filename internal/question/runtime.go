@@ -32,6 +32,9 @@ var (
 	ErrPromptLimit        = errors.New("question and thread history exceed the bounded prompt limit")
 	ErrAnswerState        = errors.New("invalid or conflicting question answer update")
 	ErrNotFound           = errors.New("question thread or answer not found in the requested scope")
+	ErrPersistence        = errors.New("question admission could not be saved; no prompt was sent")
+	ErrSaveUncertain      = errors.New("saved question admission is uncertain; do not resend automatically")
+	ErrAnswerSave         = errors.New("answer saving failed; retry saving before continuing, no question will be resent")
 )
 
 // State separates answer presentation from reader understanding and native session availability.
@@ -45,7 +48,7 @@ const (
 	Interrupted State = "interrupted"
 )
 
-// Answer is a runtime-only transcript snapshot, without native identifiers or paths.
+// Answer is a normalized transcript snapshot, without native identifiers or host paths.
 type Answer struct {
 	ID               string    `json:"answerID"`
 	ThreadID         string    `json:"threadID"`
@@ -58,16 +61,19 @@ type Answer struct {
 	ExecutionUnknown bool      `json:"executionUnknown"`
 	FailureCode      string    `json:"failureCode,omitempty"`
 	Reference        Reference `json:"reference"`
+	Persistence      string    `json:"persistence,omitempty"`
+	SavedVersion     string    `json:"savedVersion,omitempty"`
 }
 
 type revisionKey struct{ prID, revisionID string }
 
 type binding struct {
-	session   *opencode.Session
-	directory string
-	busy      bool
-	broken    error
-	active    *Turn
+	session    *opencode.Session
+	directory  string
+	busy       bool
+	broken     error
+	active     *Turn
+	saveFailed bool
 }
 
 type thread struct {
@@ -79,10 +85,12 @@ type thread struct {
 // Runtime owns bounded in-memory conversations and one lazy native service for an app writer.
 type Runtime struct {
 	mu           sync.Mutex
+	persistMu    sync.Mutex
 	ctx          context.Context
 	cancel       context.CancelFunc
 	registry     Registry
 	cache        *git.Cache
+	store        Persistence
 	bindings     map[revisionKey]*binding
 	threads      map[string]*thread
 	answers      map[string]*Turn
@@ -94,29 +102,34 @@ type Runtime struct {
 	serviceErr   error
 	work         sync.WaitGroup
 	closed       bool
+	drained      bool
 	closeOnce    sync.Once
 	closeErr     error
 }
 
 // Turn holds a backend-only admitted question; it does not dispatch native input.
 type Turn struct {
-	runtime    *Runtime
-	binding    *binding
-	source     Context
-	prompt     string
-	answer     Answer
-	finished   bool
-	uncertain  bool
-	started    bool
-	workerDone bool
-	stop       chan struct{}
-	changed    chan struct{}
+	runtime       *Runtime
+	binding       *binding
+	source        Context
+	prompt        string
+	answer        Answer
+	finished      bool
+	uncertain     bool
+	started       bool
+	stop          chan struct{}
+	changed       chan struct{}
+	sequence      uint64
+	savedSequence uint64
+	saveState     string
+	savedVersion  uint64
 }
 
 // New creates empty runtime state without starting a harness or loading source.
 func New(registry Registry, cache *git.Cache) *Runtime {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Runtime{ctx: ctx, cancel: cancel, registry: registry, cache: cache, bindings: make(map[revisionKey]*binding), threads: make(map[string]*thread), answers: make(map[string]*Turn), serviceReady: make(chan struct{})}
+	store, _ := registry.(Persistence)
+	return &Runtime{ctx: ctx, cancel: cancel, registry: registry, cache: cache, store: store, bindings: make(map[revisionKey]*binding), threads: make(map[string]*thread), answers: make(map[string]*Turn), serviceReady: make(chan struct{})}
 }
 
 // BeginQuestion reserves one revision slot and creates a thread only after verified admission.
@@ -133,7 +146,11 @@ func (r *Runtime) BeginFollowup(ctx context.Context, prID, threadID string, inpu
 	existing := r.threads[threadID]
 	r.mu.Unlock()
 	if existing == nil {
-		return nil, ErrNotFound
+		var err error
+		existing, err = r.restoreThread(prID, threadID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := input.Validate(prID, threadID, r.registry, existing.context); err != nil {
 		return nil, errors.Join(ErrNotFound, err)
@@ -151,6 +168,9 @@ func (r *Runtime) reserve(key revisionKey, newThread bool) (*binding, error) {
 	b := r.bindings[key]
 	if b != nil && b.broken != nil {
 		return nil, b.broken
+	}
+	if b != nil && b.saveFailed {
+		return nil, ErrAnswerSave
 	}
 	if b != nil && b.busy {
 		return nil, ErrBusy
@@ -205,6 +225,9 @@ func (r *Runtime) begin(ctx context.Context, prID string, input InitialRequest, 
 	if err != nil {
 		return nil, err
 	}
+	if existing != nil && len(existing.answers) > 0 && !sameSavedSource(source, existing.answers[0].source) {
+		return nil, git.ErrQuestionSourceUnavailable
+	}
 	threadID, err := newQuestionID()
 	if err != nil {
 		return nil, err
@@ -222,12 +245,24 @@ func (r *Runtime) begin(ctx context.Context, prID string, input InitialRequest, 
 	if err != nil {
 		return nil, err
 	}
+	record, prompts, err := r.prepareSavedBinding(source, b)
+	if err != nil {
+		return nil, err
+	}
 	service, err := r.nativeService(operation)
 	if err != nil {
+		r.mu.Lock()
+		b.broken = ErrSessionUnavailable
+		r.mu.Unlock()
 		return nil, errors.Join(ErrSessionUnavailable, err)
 	}
 	if b.session == nil {
-		session, err := service.CreateSession(operation, source.Directory)
+		var session *opencode.Session
+		if record == nil {
+			session, err = service.CreateSession(operation, source.Directory)
+		} else {
+			session, err = service.ReopenSession(operation, *record, prompts)
+		}
 		r.mu.Lock()
 		if err != nil {
 			b.broken = ErrSessionUnavailable
@@ -237,6 +272,14 @@ func (r *Runtime) begin(ctx context.Context, prID string, input InitialRequest, 
 		r.mu.Unlock()
 		if err != nil {
 			return nil, errors.Join(ErrSessionUnavailable, err)
+		}
+		if record == nil {
+			if err := r.saveBoundSession(source, session); err != nil {
+				r.mu.Lock()
+				b.broken = err
+				r.mu.Unlock()
+				return nil, err
+			}
 		}
 	} else {
 		if b.directory != source.Directory {
@@ -249,27 +292,37 @@ func (r *Runtime) begin(ctx context.Context, prID string, input InitialRequest, 
 			return nil, errors.Join(ErrSessionUnavailable, err)
 		}
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		return nil, ErrRuntimeClosed
-	}
 	if err := operation.Err(); err != nil {
 		return nil, err
 	}
 	if err := service.Err(); err != nil {
 		return nil, errors.Join(ErrSessionUnavailable, err)
 	}
+	turn = &Turn{runtime: r, binding: b, source: source, prompt: prompt, answer: Answer{ID: answerID, ThreadID: threadID, PRID: prID, RevisionID: revisionID, Question: input.Question, State: Pending}}
+	turn.stop, turn.changed = make(chan struct{}), make(chan struct{})
+	turn.answer.Reference = Reference{RevisionID: source.RevisionID, Anchor: source.Anchor, OldPath: source.OldPath, NewPath: source.NewPath}
+	if err := r.saveAdmission(turn, existing != nil); err != nil {
+		if errors.Is(err, ErrSaveUncertain) {
+			r.mu.Lock()
+			b.broken = err
+			r.mu.Unlock()
+		}
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || operation.Err() != nil {
+		b.broken = ErrSaveUncertain
+		return nil, ErrSaveUncertain
+	}
 	if r.answers[answerID] != nil || existing == nil && r.threads[threadID] != nil {
-		return nil, errors.New("question identity collision; no question admitted")
+		b.broken = ErrSaveUncertain
+		return nil, ErrSaveUncertain
 	}
 	if existing == nil {
 		existing = &thread{context: ThreadContext{ID: threadID, Revision: source.Revision}, anchor: source.Anchor}
 		r.threads[threadID] = existing
 	}
-	turn = &Turn{runtime: r, binding: b, source: source, prompt: prompt, answer: Answer{ID: answerID, ThreadID: threadID, PRID: prID, RevisionID: revisionID, Question: input.Question, State: Pending}}
-	turn.stop, turn.changed = make(chan struct{}), make(chan struct{})
-	turn.answer.Reference = Reference{RevisionID: source.RevisionID, Anchor: source.Anchor, OldPath: source.OldPath, NewPath: source.NewPath}
 	b.active = turn
 	existing.answers = append(existing.answers, turn)
 	r.answers[answerID] = turn
@@ -318,7 +371,7 @@ func (r *Runtime) ReadAnswer(prID, threadID, answerID string, input AnswerReques
 	if err := input.Validate(prID, threadID, answerID, r.registry, AnswerContext{ID: turn.answer.ID, Thread: thread.context}); err != nil {
 		return Answer{}, errors.Join(ErrNotFound, err)
 	}
-	return turn.answer, nil
+	return turn.snapshotLocked(), nil
 }
 
 // Close cancels owned startup/preparation and closes native resources before the app releases its writer.
@@ -334,12 +387,17 @@ func (r *Runtime) Close() error {
 		}
 		r.mu.Lock()
 		for _, b := range r.bindings {
-			if b.active != nil {
+			if b.active != nil && !b.active.finished && !b.active.uncertain {
 				b.active.answer.State = Interrupted
 				b.active.answer.ExecutionUnknown = true
+				b.active.uncertain = true
 				b.broken = ErrSessionUnavailable
-				b.active.notify()
+				b.active.dirtyLocked()
 			}
+		}
+		r.drained = true
+		for _, turn := range r.answers {
+			turn.notify()
 		}
 		r.mu.Unlock()
 	})
@@ -356,7 +414,7 @@ func (r *Runtime) GoString() string { return r.String() }
 func (t *Turn) Snapshot() Answer {
 	t.runtime.mu.Lock()
 	defer t.runtime.mu.Unlock()
-	return t.answer
+	return t.snapshotLocked()
 }
 
 // Prompt returns backend-only thread-specific input for later native dispatch, never browser output.
@@ -367,49 +425,58 @@ func (t *Turn) Prompt() string { return t.prompt }
 func (t *Turn) Finish(state State, text string) error {
 	r := t.runtime
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
+	if r.drained {
+		r.mu.Unlock()
 		return ErrRuntimeClosed
 	}
 	if state != Completed && state != Failed && state != Interrupted || len(text) > maxAnswerBytes || !utf8.ValidString(text) || strings.ContainsRune(text, 0) || state == Completed && strings.TrimSpace(text) == "" {
+		r.mu.Unlock()
 		return ErrAnswerState
 	}
 	if t.finished {
 		if t.answer.State == state && t.answer.Text == text {
+			r.mu.Unlock()
 			return nil
 		}
+		r.mu.Unlock()
 		return ErrAnswerState
 	}
 	if t.binding.active != t {
+		r.mu.Unlock()
 		return ErrAnswerState
 	}
 	t.answer.State, t.answer.Text, t.finished = state, text, true
 	t.answer.ExecutionUnknown = false
-	t.binding.busy, t.binding.active = false, nil
 	if t.uncertain {
 		t.binding.broken = nil
 		t.uncertain = false
 	}
-	t.notify()
-	return nil
+	t.dirtyLocked()
+	if r.store == nil {
+		t.binding.busy, t.binding.active = false, nil
+	}
+	r.mu.Unlock()
+	return t.flush(false)
 }
 
 // Uncertain retains the active slot when native execution cannot be confirmed idle.
 func (t *Turn) Uncertain() error {
 	r := t.runtime
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
+	if r.drained {
+		r.mu.Unlock()
 		return ErrRuntimeClosed
 	}
 	if t.finished || t.binding.active != t {
+		r.mu.Unlock()
 		return ErrAnswerState
 	}
 	t.answer.State, t.uncertain = Interrupted, true
 	t.answer.ExecutionUnknown = true
 	t.binding.broken = ErrUncertain
-	t.notify()
-	return nil
+	t.dirtyLocked()
+	r.mu.Unlock()
+	return t.flush(false)
 }
 
 // String keeps question text, source paths and native bindings out of diagnostics.

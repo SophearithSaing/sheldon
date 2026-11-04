@@ -10,6 +10,16 @@ import (
 
 // openCache lazily attaches one cache to the existing data-root writer lifetime.
 func (i *instance) openCache(paths platform.Paths) (*git.Cache, error) {
+	return i.attachCache(paths, false)
+}
+
+// openExistingCache attaches source for explicit continuation without recreating missing cache state.
+func (i *instance) openExistingCache(paths platform.Paths) (*git.Cache, error) {
+	return i.attachCache(paths, true)
+}
+
+// attachCache checks app ownership and keeps one matching Git cache for its writer lifetime.
+func (i *instance) attachCache(paths platform.Paths, existing bool) (*git.Cache, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if err := paths.Validate(); err != nil {
@@ -22,7 +32,13 @@ func (i *instance) openCache(paths platform.Paths) (*git.Cache, error) {
 		return nil, errors.New("an owning instance cannot change its active Git cache root")
 	}
 	if i.cache == nil {
-		cache, err := git.Open(paths)
+		var cache *git.Cache
+		var err error
+		if existing {
+			cache, err = git.OpenExisting(paths)
+		} else {
+			cache, err = git.Open(paths)
+		}
 		if err != nil {
 			return nil, err
 		}

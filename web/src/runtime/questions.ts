@@ -12,7 +12,9 @@ export interface QuestionAnswer {
   state: 'pending' | 'streaming' | 'completed' | 'failed' | 'interrupted'
   stopRequested: boolean
   executionUnknown: boolean
-  failureCode?: 'source-unavailable' | 'execution-failed' | 'answer-too-large' | 'execution-uncertain'
+  persistence?: 'saved' | 'saving' | 'failed'
+  savedVersion?: string
+  failureCode?: 'source-unavailable' | 'execution-failed' | 'answer-too-large' | 'execution-uncertain' | 'runtime-restarted'
   reference: { revisionID: string; anchor: QuestionAnchor; oldPath?: string; newPath?: string }
 }
 
@@ -21,8 +23,9 @@ export class QuestionAdmissionError extends Error {
    * Keeps uncertain delivery distinct from a rejected request without exposing diagnostics.
    * @param message Safe reader-facing explanation.
    * @param uncertain Whether admission might already have started execution.
+   * @param status Known HTTP rejection status, if present.
    */
-  constructor(message: string, public readonly uncertain: boolean) { super(message) }
+  constructor(message: string, public readonly uncertain: boolean, public readonly status?: number) { super(message) }
 }
 
 /**
@@ -61,13 +64,17 @@ export function parseQuestionAnswer(value: unknown, prID: string, revisionID: st
       answer.prID !== prID || answer.revisionID !== revisionID || answer.question !== input.question || typeof answer.text !== 'string' ||
       new TextEncoder().encode(answer.text).length > 262144 || answer.text.includes('\0') || !['pending', 'streaming', 'completed', 'failed', 'interrupted'].includes(answer.state ?? '') ||
       typeof answer.stopRequested !== 'boolean' || typeof answer.executionUnknown !== 'boolean' || answer.reference?.revisionID !== revisionID ||
+      answer.persistence !== undefined && (!['saved', 'saving', 'failed'].includes(answer.persistence) || typeof answer.savedVersion !== 'string' || !/^[1-9][0-9]{0,19}$/.test(answer.savedVersion) || BigInt(answer.savedVersion) > 18446744073709551615n) ||
+      answer.persistence === undefined && answer.savedVersion !== undefined ||
       answer.state === 'completed' && (!answer.text.trim() || answer.executionUnknown) ||
-      answer.failureCode !== undefined && !['source-unavailable', 'execution-failed', 'answer-too-large', 'execution-uncertain'].includes(answer.failureCode) ||
+      answer.failureCode !== undefined && !['source-unavailable', 'execution-failed', 'answer-too-large', 'execution-uncertain', 'runtime-restarted'].includes(answer.failureCode) ||
+      answer.failureCode === 'runtime-restarted' && (answer.state !== 'interrupted' || !answer.executionUnknown) ||
       !answer.reference.anchor || !sameAnchor(input.anchor, answer.reference.anchor)) throw new QuestionAdmissionError('Unexpected admission response. Delivery may be uncertain; do not resend automatically.', true)
   return {
     answerID: answer.answerID!, threadID: answer.threadID!, prID, revisionID, question: input.question,
     text: answer.text, state: answer.state!, stopRequested: answer.stopRequested, executionUnknown: answer.executionUnknown,
     failureCode: answer.failureCode, reference: { revisionID, anchor: { ...input.anchor } },
+    persistence: answer.persistence, savedVersion: answer.savedVersion,
   }
 }
 
@@ -148,7 +155,7 @@ export async function readAnswerEvents(response: Response, original: QuestionAns
             if (event !== 'answer') throw new Error('Unexpected answer event.')
             const answer = parseObservedAnswer(JSON.parse(data), original)
             emit(answer)
-            if (!activeAnswer(answer)) return
+            if (!activeAnswer(answer) && answer.persistence !== 'saving') return
           }
           data = ''; event = ''; frameSize = 0
         } else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).replace(/^ /, '')

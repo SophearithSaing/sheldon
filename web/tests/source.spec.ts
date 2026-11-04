@@ -4,6 +4,38 @@ import { digest, token, registered, sourceFixture } from './runtime-fixture'
 const frontend = 'http://127.0.0.1:5175'
 test.use({ baseURL: frontend })
 
+for (const status of [503, 500]) {
+  test(`admission storage status ${status} retains drafts without phantom markers or automatic retry`, async ({ page }, testInfo): Promise<void> => {
+    const pr = await registered(page, 800 + status)
+    const fixture = sourceFixture(pr, 1)
+    await page.route(`**/api/reviews/${pr.id}/source`, async (route): Promise<void> => { await route.fulfill({ json: fixture }) })
+    let calls = 0
+    await page.route(`**/api/reviews/${pr.id}/questions`, async (route): Promise<void> => { calls++; await route.fulfill({ status, json: { error: 'RAW PRIVATE STORAGE SECRET' } }) })
+    await page.getByRole('button', { name: 'Load pinned source', exact: true }).click()
+    await page.getByRole('button', { name: 'Select hunk 1', exact: true }).click()
+    await page.getByRole('button', { name: 'Ask about selection', exact: true }).click()
+    const input = page.getByRole('textbox', { name: 'Your question', exact: true })
+    await input.fill('Retain this unsaved question')
+    await input.press('Control+Enter')
+    const form = page.getByRole('form', { name: 'New question', exact: true })
+    await expect(form).toContainText(status === 503 ? 'could not be admitted or saved' : 'delivery may be uncertain')
+    await expect(input).toHaveValue('Retain this unsaved question')
+    await expect(page.locator('[data-answer]')).toHaveCount(0)
+    expect(await page.content()).not.toContain('RAW PRIVATE STORAGE SECRET')
+    expect(calls).toBe(1)
+    if (status === 503) {
+      await form.getByRole('button', { name: 'Send question', exact: true }).click()
+      await expect.poll((): number => calls).toBe(2)
+      await expect(input).toHaveValue('Retain this unsaved question')
+    } else {
+      await expect(form.getByRole('button', { name: 'Send question', exact: true })).toBeDisabled()
+      await input.press('Control+Enter')
+      expect(calls).toBe(1)
+    }
+    await page.screenshot({ path: testInfo.outputPath(`admission-storage-${status}.png`), fullPage: true })
+  })
+}
+
 
 test('real inline questions keep pinned drafts, keyboard semantics and exactly one admitted marker', async ({ page }, testInfo): Promise<void> => {
   const pr = await registered(page, 711)
@@ -81,7 +113,7 @@ test('real inline questions keep pinned drafts, keyboard semantics and exactly o
   await expect(page.locator('[data-answer]')).toHaveCount(1)
   await expect(page.locator('[data-answer]')).toBeFocused()
   await expect(page.getByLabel('1 runtime questions', { exact: true })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Question conversation', exact: true })).toContainText('Runtime only')
+  await expect(page.getByRole('region', { name: 'Question conversation', exact: true })).toContainText('Submitted questions and finished answers are saved locally')
   expect(calls).toBe(2)
   expect(await page.content()).not.toContain(await token())
   await page.screenshot({ path: testInfo.outputPath('real-question-admitted.png'), fullPage: true })
@@ -124,7 +156,7 @@ test('real hunk questions refuse cross-hunk ranges and preserve cancel/discard f
   const input = page.getByRole('textbox', { name: 'Your question', exact: true })
   await input.fill('Whole hunk question.')
   await page.getByRole('button', { name: 'Send question', exact: true }).click()
-  await expect(page.getByText('The original question runtime is unavailable.', { exact: false })).toBeVisible()
+  await expect(page.getByText('The question could not be admitted or saved.', { exact: false })).toBeVisible()
   expect(calls).toBe(1)
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Resume draft', exact: true })).toBeFocused()

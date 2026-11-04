@@ -137,6 +137,7 @@ func serve(ctx context.Context, paths platform.Paths, i *instance, prURL, devOri
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(stdout, "API token: %s\n", s.APIToken())
 	if err := launch(ctx, paths, client, s.URL(), devOrigin, route, stdout, stderr); err != nil {
 		return err
 	}

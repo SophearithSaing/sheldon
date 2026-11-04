@@ -89,7 +89,7 @@ export default async function setup(): Promise<() => Promise<void>> {
       }
       if (!origin) return
       if (child.exitCode !== 0) throw new Error('Release CLI did not shut down gracefully.')
-      if (output.includes(discovery.token)) throw new Error('Release output exposed its credential.')
+      if (output.replace(`API token: ${discovery.token}\n`, '').includes(discovery.token)) throw new Error('Release output exposed its credential outside the startup line.')
       if ((await readFile(stateFile)).subarray(1).toString().trim()) {
         throw new Error('Release shutdown left discovery credentials behind.')
       }
@@ -121,7 +121,7 @@ export default async function setup(): Promise<() => Promise<void>> {
     })
     const state = JSON.parse((await readFile(stateFile)).subarray(1).toString())
     origin = state.url
-    if (output.includes(state.token)) throw new Error('Release output exposed its credential.')
+    if (!output.includes(`API token: ${state.token}\n`) || output.replace(`API token: ${state.token}\n`, '').includes(state.token)) throw new Error('Release startup token was missing or repeated outside its labeled line.')
     process.env.SHELDON_RELEASE_STATE = stateFile
     process.env.SHELDON_RELEASE_BINARY = binary
     process.env.SHELDON_RELEASE_ENV = JSON.stringify(env)

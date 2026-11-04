@@ -92,6 +92,13 @@ function hunk(value: unknown): value is SourceHunk {
 }
 
 /**
+ * Checks retained hunk structure without loading or authorizing source.
+ * @param value Decoded saved hunk.
+ * @returns Whether the hunk uses supported literal source fields.
+ */
+export function validSourceHunk(value: unknown): value is SourceHunk { return hunk(value) }
+
+/**
  * Checks the PR association and canonical URL of source metadata.
  * @param value Candidate PR.
  * @param id Expected routed identifier.

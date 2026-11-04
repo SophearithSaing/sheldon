@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 var auditMu sync.Mutex
@@ -76,6 +77,7 @@ func main() {
 	trigger := make(chan struct{}, 1)
 	var mu sync.Mutex
 	sessions := make(map[string]map[string]any)
+	readFixtureState("sessions", &sessions)
 	defaultReads := 0
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		username, password, ok := r.BasicAuth()
@@ -164,7 +166,7 @@ func main() {
 			case "model-trailing":
 				fmt.Fprint(w, `{"data":{"providerID":"fixture","id":"chat"}} {}`)
 			default:
-				if changed {
+				if changed || mode == "reopen-changed-default" {
 					fmt.Fprint(w, `{"data":{"providerID":"fixture","id":"changed-default"}}`)
 				} else {
 					fmt.Fprint(w, `{"data":{"providerID":"fixture","id":"chat"}}`)
@@ -185,6 +187,23 @@ func main() {
 			}
 			session := map[string]any{"id": id, "location": input["location"], "permissions": input["permissions"], "model": input["model"]}
 			sessions[id] = session
+			if mode == "create-gated" {
+				os.WriteFile(os.Getenv("SHELDON_NATIVE_CONTROL")+".created", []byte("created"), 0600)
+				tick := time.NewTicker(10 * time.Millisecond)
+				waiting := true
+				for waiting {
+					select {
+					case <-r.Context().Done():
+						tick.Stop()
+						mu.Unlock()
+						return
+					case <-tick.C:
+						data, _ := os.ReadFile(os.Getenv("SHELDON_NATIVE_CONTROL"))
+						waiting = string(data) != "release-create"
+					}
+				}
+				tick.Stop()
+			}
 			switch mode {
 			case "session-default-variant", "model-default-variant":
 				session["model"] = map[string]string{"providerID": "fixture", "id": "chat", "variant": "default"}
@@ -199,6 +218,7 @@ func main() {
 			case "session-id":
 				session["id"] = "../foreign"
 			}
+			writeFixtureState("sessions", sessions)
 			json.NewEncoder(w).Encode(map[string]any{"data": session})
 			mu.Unlock()
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/session/"):
@@ -213,6 +233,12 @@ func main() {
 			if mode == "get-mismatch" || string(control) == "changed-session" {
 				session["model"] = map[string]string{"providerID": "other", "id": "changed"}
 			}
+			if string(control) == "changed-location" {
+				session["location"] = map[string]string{"directory": "/foreign"}
+			}
+			if string(control) == "changed-permissions" {
+				session["permissions"] = []any{}
+			}
 			json.NewEncoder(w).Encode(map[string]any{"data": session})
 			mu.Unlock()
 		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/api/session/") && strings.HasSuffix(r.URL.Path, "/permission"):
@@ -225,7 +251,8 @@ func main() {
 			if input.Action == "glob" || input.Action == "grep" || input.Action == "read" && !strings.Contains(input.Resources[0], ".env") {
 				effect = "allow"
 			}
-			if mode == "permission-mismatch" && input.Action == "shell" {
+			control, _ := os.ReadFile(os.Getenv("SHELDON_NATIVE_CONTROL"))
+			if (mode == "permission-mismatch" || string(control) == "permission-mismatch") && input.Action == "shell" {
 				effect = "allow"
 			}
 			json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"effect": effect}})
