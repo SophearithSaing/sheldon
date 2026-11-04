@@ -350,7 +350,7 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
           503: 'The question could not be admitted or saved. Your draft was retained; check the original runtime/session or local storage before retrying.',
         }
         const message = messages[response.status]
-        throw new QuestionAdmissionError(message ?? 'Question delivery may be uncertain. Your draft was retained; do not resend automatically.', !message)
+        throw new QuestionAdmissionError(message ?? 'Question delivery may be uncertain. Your draft was retained; do not resend automatically.', !message, response.status)
       }
       const answer = parseQuestionAnswer(await readBoundedJSON(response, 2 * 1024 * 1024), id, revisionID, input)
       if (answer.state !== 'pending' || answer.text !== '' || answer.stopRequested || answer.executionUnknown) throw new Error('Unexpected admission state')

@@ -113,7 +113,7 @@ test('real inline questions keep pinned drafts, keyboard semantics and exactly o
   await expect(page.locator('[data-answer]')).toHaveCount(1)
   await expect(page.locator('[data-answer]')).toBeFocused()
   await expect(page.getByLabel('1 runtime questions', { exact: true })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Question conversation', exact: true })).toContainText('Runtime only')
+  await expect(page.getByRole('region', { name: 'Question conversation', exact: true })).toContainText('Submitted questions and finished answers are saved locally')
   expect(calls).toBe(2)
   expect(await page.content()).not.toContain(await token())
   await page.screenshot({ path: testInfo.outputPath('real-question-admitted.png'), fullPage: true })

@@ -23,8 +23,9 @@ export class QuestionAdmissionError extends Error {
    * Keeps uncertain delivery distinct from a rejected request without exposing diagnostics.
    * @param message Safe reader-facing explanation.
    * @param uncertain Whether admission might already have started execution.
+   * @param status Known HTTP rejection status, if present.
    */
-  constructor(message: string, public readonly uncertain: boolean) { super(message) }
+  constructor(message: string, public readonly uncertain: boolean, public readonly status?: number) { super(message) }
 }
 
 /**

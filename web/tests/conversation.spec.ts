@@ -208,7 +208,7 @@ test('real streamed snapshots stay escaped and do not steal source selection, fo
   await expect(draft).toHaveValue('Keep this draft\n')
   await expect(panel).toContainText('src/file0000.ts · head L2–2')
   await expect(panel.getByText('Completed', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Questions — unavailable', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Questions', exact: true })).toBeEnabled()
   expect(await panel.textContent()).not.toContain('Sample transcript')
   expect(await panel.textContent()).not.toContain('Saved')
   expect(f.answers).toHaveLength(1)
@@ -388,7 +388,7 @@ for (const reason of ['execution-uncertain', 'runtime-restarted'] as const) test
   expect(await page.content()).not.toContain('WRONG SCOPE SECRET')
   await page.getByRole('button', { name: 'Reconnect answer observation', exact: true }).click()
   await snapshot(page, answer, { state: 'interrupted', text: 'Synthetic retained text.', executionUnknown: true, failureCode: reason }, true)
-  await expect(page.getByText('Interrupted / execution unknown', { exact: false })).toBeVisible()
+  await expect(page.locator('.execution-status')).toContainText(reason === 'runtime-restarted' ? 'Interrupted after restart' : 'Interrupted / execution unknown')
   const draft = page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })
   await draft.fill('Editable but not sent.')
   await expect(draft).toBeEditable()
@@ -427,7 +427,7 @@ for (const change of ['base-only', 'head']) test(`${change} refresh preserves ol
   await expect(page.locator('[data-answer]')).toHaveCount(0)
   await expect(followup).toHaveValue('Continue the old source after refresh.')
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click()
-  await page.getByRole('button', { name: 'Open runtime conversation', exact: true }).click()
+  await page.getByRole('button', { name: 'Open conversation', exact: true }).click()
   await expect(page.getByText('Older context.', { exact: false })).toBeVisible()
   await expect(followup).toHaveValue('Continue the old source after refresh.')
   await followup.press('Enter')
@@ -511,7 +511,7 @@ for (const action of ['followup', 'stop']) test(`late ${action} replies cannot m
   expect(await page.content()).not.toContain('Delayed old follow-up.')
 })
 
-test('two tabs share backend busy feedback but never share drafts or a Questions library', async ({ page, context }): Promise<void> => {
+test('two tabs share backend busy feedback but never share drafts', async ({ page, context }): Promise<void> => {
   const first = await fixture(page, 735)
   const secondPage = await context.newPage()
   const second = await fixture(secondPage, 735)
@@ -545,11 +545,43 @@ test('two tabs share backend busy feedback but never share drafts or a Questions
   await expect(page.locator('.answer-text')).toHaveText('Synthetic A finished.')
   await expect(secondPage.locator('.answer-text')).toHaveText('Synthetic B result.')
   for (const tab of [page, secondPage, otherPage]) {
-    await expect(tab.getByRole('button', { name: 'Questions — unavailable', exact: true })).toBeDisabled()
+    await expect(tab.getByRole('button', { name: 'Questions', exact: true })).toBeEnabled()
     const credential = await token()
     expect(await tab.content()).not.toContain(credential)
     expect(await tab.evaluate((): string => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }))).not.toContain(credential)
   }
+})
+
+test('Questions preserves inline drafts and observes a reopened active answer through save failure and retry', async ({ page }): Promise<void> => {
+  const f = await fixture(page, 785)
+  await page.getByRole('button', { name: 'Select head line 1', exact: true }).click()
+  await page.getByRole('button', { name: 'Ask about selection', exact: true }).click()
+  const inline = page.getByRole('textbox', { name: 'Your question', exact: true })
+  await inline.fill('Keep the original inline draft.')
+  const data = historyFixture(f.source.pr)
+  const answer = data.detail.answers[0]!
+  Object.assign(answer, { state: 'pending', text: '' })
+  data.detail.persistence = 'saving'
+  data.detail.session = { state: 'busy', reason: 'question-active' }
+  await page.route('**/threads', async (route): Promise<void> => { await route.fulfill({ json: data.list }) })
+  await page.route(`**/threads/${data.detail.threadID}`, async (route): Promise<void> => { await route.fulfill({ json: data.detail }) })
+  await page.getByRole('button', { name: 'Questions', exact: true }).click()
+  await page.getByRole('button', { name: /Open thread:/ }).click()
+  await snapshot(page, answer, { state: 'streaming', text: 'Synthetic reopened live output.', persistence: 'saving', savedVersion: '6' })
+  const draft = page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })
+  await draft.fill('Keep the reopened follow-up draft.')
+  await page.getByRole('button', { name: 'Refresh saved thread', exact: true }).click()
+  await expect(page.locator('.answer-text')).toHaveText('Synthetic reopened live output.')
+  await snapshot(page, answer, { state: 'completed', text: 'Synthetic final retained output.', persistence: 'failed', savedVersion: '7' }, true)
+  await expect(page.getByRole('button', { name: 'Send follow-up', exact: true })).toBeDisabled()
+  await page.route(`**/answers/${answer.answerID}/save`, async (route): Promise<void> => { await route.fulfill({ json: { ...answer, state: 'completed', text: 'Synthetic final retained output.', persistence: 'saved', savedVersion: '8' } }) })
+  await page.getByRole('button', { name: 'Retry saving', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Send follow-up', exact: true })).toBeEnabled()
+  await expect(draft).toHaveValue('Keep the reopened follow-up draft.')
+  await page.getByRole('button', { name: 'Files changed (2)', exact: true }).click()
+  await expect(inline).toHaveValue('Keep the original inline draft.')
+  expect(f.answers).toHaveLength(0)
+  expect(f.followups).toHaveLength(0)
 })
 
 test('oversized admission responses are bounded and cannot invent a thread', async ({ page }): Promise<void> => {

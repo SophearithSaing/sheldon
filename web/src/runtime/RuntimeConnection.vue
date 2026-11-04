@@ -145,7 +145,7 @@ onUnmounted(disconnect)
     </div>
     <dialog ref="disconnectDialog" class="disconnect-dialog" aria-labelledby="disconnect-title" @cancel.prevent="keepConnected">
       <h2 id="disconnect-title">Disconnect this question workspace?</h2>
-      <p>This discards page-memory source, transcripts and drafts. It does not stop accepted execution. Use Stop and wait for confirmation if you need to interrupt an answer.</p>
+      <p>This discards page-memory source, transcripts and unsent drafts. Saved questions and answers can be reopened from Questions after reconnecting; drafts are not saved. It does not stop accepted execution. Use Stop and wait for confirmation if you need to interrupt an answer.</p>
       <div><UiButton autofocus @click="keepConnected">Keep connected</UiButton><UiButton @click="confirmDisconnect">Discard page state and disconnect</UiButton></div>
     </dialog>
   </section>

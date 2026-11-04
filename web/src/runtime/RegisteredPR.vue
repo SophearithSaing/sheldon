@@ -4,6 +4,7 @@ import WorkspaceShell from '../components/WorkspaceShell.vue'
 import ChangedFileTree from '../components/ChangedFileTree.vue'
 import SourceQuestions from './SourceQuestions.vue'
 import QuestionConversation from './QuestionConversation.vue'
+import SavedQuestions from './SavedQuestions.vue'
 import { useConversations } from './conversations'
 import UiButton from '../components/ui/UiButton.vue'
 import OpenPR from './OpenPR.vue'
@@ -30,6 +31,10 @@ const drafting = ref(false)
 const conversationOpen = ref(false)
 const conversations = useConversations((): RuntimeClient | null => props.client)
 const { threads, selectedID, current: currentThread } = conversations
+const { list: savedList, pending: historyPending, error: historyError } = conversations.history
+const view = ref<'files' | 'questions'>('files')
+const opening = ref('')
+let openEpoch = 0
 const initialSending = ref(false)
 const revisionBusy = computed((): string => diff.value ? initialSending.value ? 'A question is awaiting admission in this shared PR-revision session. Drafts stay editable.' : conversations.busy(diff.value.revisionID) : '')
 const currentBusy = computed((): string => currentThread.value ? conversations.busy(currentThread.value.turns[0]!.answer.revisionID) || (initialSending.value && currentThread.value.turns[0]!.answer.revisionID === diff.value?.revisionID ? 'Another question is awaiting admission in this shared PR-revision session.' : '') : '')
@@ -52,6 +57,9 @@ const lines = computed(displayLines)
 
 /** Clears only this tab's transient source and cancels requests on disconnection. */
 function reset(): void {
+  openEpoch++
+  opening.value = ''
+  view.value = 'files'
   controller?.abort()
   controller = undefined
   source.value = undefined
@@ -79,7 +87,13 @@ async function cancelSource(): Promise<void> {
     stale.value = true
     notice.value = 'Source request cancelled. The displayed pinned revision was not replaced.'
     source.value = displayed.value
-  } else reset()
+  } else {
+    controller?.abort()
+    controller = undefined
+    pending.value = false
+    source.value = undefined
+    error.value = ''
+  }
   await nextTick()
   sourcePane.value?.focus()
 }
@@ -149,6 +163,7 @@ function selectBase(): void {
  * @param id Revision-scoped changed file reference.
  */
 async function selectFile(id: string): Promise<void> {
+  openEpoch++
   if (drafting.value && id !== selected.value) { notice.value = 'Finish or discard the pinned question draft before changing files.'; return }
   selected.value = id
   await nextTick()
@@ -172,7 +187,7 @@ function displayLines(): DiffLine[] {
 }
 
 /**
- * Adds one validated admission and hands it to the runtime-only panel without claiming completion.
+ * Adds one validated admission without claiming completion or changing its source binding.
  * @param answer Exact submitted answer identity.
  * @param input Original question and pinned selection.
  */
@@ -198,9 +213,53 @@ function guardDraft(active: boolean): void {
  * @param trigger Marker control used for focus restoration.
  */
 function openAnswer(answer: QuestionAnswer, trigger: HTMLElement): void {
+  openEpoch++
   selectedID.value = answer.threadID
   void workspace.value?.openConversation(trigger)
 }
+
+/**
+ * Switches views without unmounting source, its inline draft or retained conversations.
+ * @param next Requested PR view.
+ */
+function changeView(next: 'files' | 'questions'): void {
+  openEpoch++
+  opening.value = ''
+  view.value = next
+  if (next === 'questions' && !savedList.value && !historyPending.value) void conversations.history.refreshList(props.reviewId)
+}
+
+/**
+ * Opens an exact saved thread only if its initiating selection and connection are still current.
+ * @param threadID Requested saved or local thread.
+ * @param trigger Row control used for focus recovery.
+ */
+async function openThread(threadID: string, trigger: HTMLElement): Promise<void> {
+  const epoch = ++openEpoch
+  const connection = props.client
+  const prID = props.reviewId
+  const previous = selectedID.value
+  const local = threads.value.find((thread): boolean => thread.id === threadID)
+  opening.value = threadID
+  /**
+   * Keeps a delayed open from replacing later source, thread or keyboard intent.
+   * @returns Whether the initiating row still owns the current open intent.
+   */
+  function currentOpen(): boolean { return epoch === openEpoch && connection === props.client && prID === props.reviewId && selectedID.value === previous && (document.activeElement === trigger || document.activeElement === document.body) }
+  const thread = local ?? await conversations.openSaved(prID, threadID, currentOpen)
+  if (epoch !== openEpoch || connection !== props.client || prID !== props.reviewId) return
+  opening.value = ''
+  if (!thread || selectedID.value !== previous || document.activeElement !== trigger && document.activeElement !== document.body) return
+  selectedID.value = thread.id
+  conversations.activate(thread)
+  await workspace.value?.openConversation(trigger)
+}
+
+/**
+ * Selects retained conversations without replacing their drafts or the displayed source.
+ * @param threadID Retained thread.
+ */
+function selectThread(threadID: string): void { openEpoch++; selectedID.value = threadID }
 /**
  * Reports only the presence of disposable question state, never transcript text or credentials.
  * @param present Whether disconnect needs an explicit discard decision.
@@ -214,27 +273,28 @@ onUnmounted(reset)
 
 <template>
   <div class="registered-pr">
-    <a class="skip-link" href="#review-content">Skip to PR content</a>
+    <a class="skip-link" :href="view === 'questions' ? '#saved-questions' : '#review-content'">Skip to PR content</a>
     <header class="review-header" aria-label="Sheldon navigation">
       <a href="/" aria-label="Sheldon — Open a PR">Sheldon</a><a href="/?preview=library">Sample UI previews</a>
       <span>Registered PR</span><OpenPR :client="client" /><slot name="runtime-trigger" />
     </header>
     <slot name="runtime-panel" />
-    <WorkspaceShell v-if="reviewState.status === 'registered' && pr" ref="workspace" v-model:conversation-open="conversationOpen" :has-file-rail="!!diff && files.length > 0" conversation-title="Question conversation">
+    <WorkspaceShell v-if="reviewState.status === 'registered' && pr" ref="workspace" v-model:conversation-open="conversationOpen" :has-file-rail="view === 'files' && !!diff && files.length > 0" conversation-title="Question conversation">
       <template #summary>
         <h1 class="pr-title">{{ pr.title ?? `Pull request #${pr.number}` }}</h1>
         <p class="fixture-meta"><span>{{ pr.owner }}/{{ pr.repository }} #{{ pr.number }}</span> · <span>{{ pr.author ? `Author: ${pr.author}` : 'Author unavailable' }}</span><span v-if="diff"> · {{ diff.revision.baseBranch }} · {{ diff.revision.mergeBaseSHA.slice(0, 8) }} → {{ diff.revision.headSHA.slice(0, 8) }}</span></p>
         <a class="github-link" :href="pr.url" target="_blank" rel="noreferrer">View on GitHub ↗</a>
       </template>
       <template #tabs>
-        <nav class="real-tabs" aria-label="PR views"><UiButton variant="quiet" aria-current="page">Files changed<span v-if="diff"> ({{ files.length }})</span></UiButton><UiButton v-for="label in ['Questions', 'Quiz', 'Semantic review']" :key="label" variant="quiet" disabled title="Not implemented for real PRs">{{ label }} — unavailable</UiButton><UiButton v-if="threads.length && !conversationOpen" variant="quiet" @click="workspace?.openConversation($event)">Open runtime conversation</UiButton></nav>
+        <nav class="real-tabs" aria-label="PR views"><UiButton variant="quiet" :aria-current="view === 'files' ? 'page' : undefined" @click="changeView('files')">Files changed<span v-if="diff"> ({{ files.length }})</span></UiButton><UiButton variant="quiet" :aria-current="view === 'questions' ? 'page' : undefined" @click="changeView('questions')">Questions</UiButton><UiButton v-for="label in ['Quiz', 'Semantic review']" :key="label" variant="quiet" disabled title="Not implemented for real PRs">{{ label }} — unavailable</UiButton><UiButton v-if="threads.length && !conversationOpen" variant="quiet" @click="workspace?.openConversation($event)">Open conversation</UiButton></nav>
       </template>
       <template #files><ChangedFileTree v-model="search" :files="treeFiles" :current="selected" :counts="questionCounts" :viewed="{}" real @select="selectFile" /></template>
       <template #conversation>
-        <QuestionConversation v-if="currentThread" :thread="currentThread" :threads="threads" :busy-reason="currentBusy" :displayed-revision="diff?.revisionID" @followup="conversations.followup" @stop="conversations.stop" @observe="conversations.observe" @save="conversations.save" @select="selectedID = $event" />
+        <QuestionConversation v-if="currentThread" :thread="currentThread" :threads="threads" :busy-reason="currentBusy" :displayed-revision="diff?.revisionID" :history-pending="historyPending" :history-error="historyError" @refresh="conversations.refreshSaved(currentThread)" @followup="conversations.followup" @stop="conversations.stop" @observe="conversations.observe" @save="conversations.save" @select="selectThread" />
       </template>
       <template #default>
-        <section id="review-content" ref="sourcePane" class="source-pane" tabindex="-1" :aria-busy="pending && !diff" aria-label="Pinned PR source">
+        <SavedQuestions v-show="view === 'questions'" :list="savedList" :threads="threads" :pending="historyPending" :error="historyError" :opening="opening" :selected="selectedID" :drafting="drafting" @refresh="conversations.history.refreshList(reviewId)" @open="openThread" />
+        <section v-show="view === 'files'" id="review-content" ref="sourcePane" class="source-pane" tabindex="-1" :aria-busy="pending && !diff" aria-label="Pinned PR source">
           <div v-if="diff" class="refresh-controls">
             <div class="refresh-actions"><UiButton :disabled="pending || !client" @click="refresh">Refresh source</UiButton><UiButton v-if="pending" variant="quiet" @click="cancelSource">Cancel source request</UiButton></div>
             <p v-if="pending" role="status">Refreshing source… The displayed revision remains readable until a complete response succeeds.</p>
@@ -270,7 +330,7 @@ onUnmounted(reset)
             <template v-else>
               <p v-if="error" role="alert">{{ error }}</p><UiButton v-if="error" @click="retry">Retry source loading</UiButton>
               <template v-if="!error && !source"><h2>PR registered. Source not loaded.</h2><p>Registration is saved independently. Load a pinned merge-base → head comparison using your existing GitHub CLI/Git authentication.</p><UiButton :disabled="!client" @click="load()">Load pinned source</UiButton></template>
-              <p>{{ pr.url }}</p><p>No question state is loaded in this page. Previously accepted questions may still be running; reconnecting does not cancel them.</p>
+              <p>{{ pr.url }}</p><p>Open Questions to read saved history without loading source. Previously accepted questions may still be running; reconnecting does not cancel them.</p>
             </template>
           </div>
         </section>

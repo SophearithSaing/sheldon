@@ -339,7 +339,7 @@ test('release source UI distinguishes metadata fallback, explicit selection and 
   await page.getByRole('button', { name: 'Load selected base', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'No changes in this comparison' })).toBeVisible()
   expect(calls).toBe(3)
-  await expect(page.getByRole('button', { name: 'Questions — unavailable' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Questions', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: 'Refresh source', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Cannot prepare source')
   await expect(page.getByRole('heading', { name: 'No changes in this comparison' })).toBeVisible()

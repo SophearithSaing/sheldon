@@ -300,8 +300,8 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
 }
 
 /**
- * Continues known saved identities through real HTTP after a standalone app/native-service restart.
- * @param page Actual application page; no saved-history UI is simulated.
+ * Reopens and continues saved identities through the UI after an app/native-service restart.
+ * @param page Actual application page without mocked application responses.
  * @param development Whether to exercise the real development proxy rather than embedded assets.
  */
 export async function questionReopenFlow(page: Page, development: boolean): Promise<void> {
@@ -348,9 +348,13 @@ export async function questionReopenFlow(page: Page, development: boolean): Prom
     for (const secret of [fixture.directory, discovery.token, '"native"', '"sessionID"', '"directory"', 'HIDDEN REASONING', 'RAW TOOL SECRET']) expect(JSON.stringify(detail)).not.toContain(secret)
     expect((await fixture.nativeAudit()).length).toBe(nativeBeforeRead)
     expect((await fixture.audit()).length).toBe(gitBeforeRead)
-    const continued = await page.request.post(`${origin}/api/reviews/${original.prID}/threads/${original.threadID}/answers`, { headers: { Authorization: `Bearer ${discovery.token}` }, data: { revisionID: original.revisionID, question: 'Synthetic new explicit question after restart.' } })
-    expect(continued.status()).toBe(202)
-    const answer = await continued.json() as QuestionAnswer
+    await page.getByRole('button', { name: 'Questions', exact: true }).click()
+    await page.getByRole('button', { name: 'Open thread: Synthetic original input before restart.', exact: true }).click()
+    await expect(page.locator('.answer-text')).toHaveCount(2)
+    await expect(page.locator('.session-status')).toContainText('verifies the original pinned source')
+    expect((await fixture.nativeAudit()).length).toBe(nativeBeforeRead)
+    expect((await fixture.audit()).length).toBe(gitBeforeRead)
+    const answer = await followup(page, 'Synthetic new explicit question after restart.')
     expect(answer.threadID).toBe(original.threadID)
     expect(answer.revisionID).toBe(original.revisionID)
     expect(answer.answerID).not.toBe(original.answerID)
@@ -358,6 +362,7 @@ export async function questionReopenFlow(page: Page, development: boolean): Prom
     expect((await prompts(fixture))[2]!.path).toBe(path)
     expect((await prompts(fixture))[2]!.body).toContain('Synthetic new explicit question after restart.')
     await fixture.answer(3, 'succeeded')
+    await expect(page.getByText('Current answer saved locally.', { exact: true })).toHaveCount(3)
     await expect.poll(async (): Promise<string> => (await savedAdmissions(fixture, original.prID)).threads[0]!.answers.at(-1)!.state).toBe('completed')
     const after = await savedAdmissions(fixture, original.prID)
     expect(after.bindings).toEqual(before.bindings)
@@ -368,6 +373,7 @@ export async function questionReopenFlow(page: Page, development: boolean): Prom
     expect(native.filter((entry): boolean => entry.method === 'POST' && entry.path === '/api/session')).toHaveLength(1)
     expect(native.filter((entry): boolean => !!entry.args)).toHaveLength(4)
     await expect(page.locator('[data-answer]')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Files changed', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'PR registered. Source not loaded.', exact: true })).toBeVisible()
   } finally { await fixture.close() }
 }
