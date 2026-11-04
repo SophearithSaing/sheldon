@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 var auditMu sync.Mutex
@@ -185,6 +186,23 @@ func main() {
 			}
 			session := map[string]any{"id": id, "location": input["location"], "permissions": input["permissions"], "model": input["model"]}
 			sessions[id] = session
+			if mode == "create-gated" {
+				os.WriteFile(os.Getenv("SHELDON_NATIVE_CONTROL")+".created", []byte("created"), 0600)
+				tick := time.NewTicker(10 * time.Millisecond)
+				waiting := true
+				for waiting {
+					select {
+					case <-r.Context().Done():
+						tick.Stop()
+						mu.Unlock()
+						return
+					case <-tick.C:
+						data, _ := os.ReadFile(os.Getenv("SHELDON_NATIVE_CONTROL"))
+						waiting = string(data) != "release-create"
+					}
+				}
+				tick.Stop()
+			}
 			switch mode {
 			case "session-default-variant", "model-default-variant":
 				session["model"] = map[string]string{"providerID": "fixture", "id": "chat", "variant": "default"}

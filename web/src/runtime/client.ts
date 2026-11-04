@@ -295,7 +295,7 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
           409: 'This shared revision session is busy or unavailable. Your draft was retained; retry only when it is safe.',
           410: 'The original pinned source is unavailable. No newer source was substituted.',
           422: 'The question or source exceeds backend limits. Your draft was retained.',
-          503: 'The original question runtime is unavailable. Your draft was retained.',
+          503: 'The question could not be admitted or saved. Your draft was retained; check the original runtime/session or local storage before retrying.',
         }
         const message = messages[response.status]
         throw new QuestionAdmissionError(message ?? 'Question delivery may be uncertain. Your draft was retained; do not resend automatically.', !message)

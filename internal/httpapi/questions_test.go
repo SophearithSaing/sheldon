@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,19 @@ type questionRegistryFixture struct {
 	answer question.Answer
 	calls  atomic.Int32
 	err    error
+}
+
+func TestQuestionPersistenceFailuresAreSafeAndDistinguishUncertainty(t *testing.T) {
+	for _, test := range []struct {
+		err    error
+		status int
+	}{{question.ErrPersistence, 503}, {question.ErrSaveUncertain, 500}} {
+		w := httptest.NewRecorder()
+		writeQuestionError(w, errors.Join(test.err, errors.New("RAW PRIVATE STORAGE /private/secret")))
+		if w.Code != test.status || strings.Contains(w.Body.String(), "PRIVATE") || strings.Contains(w.Body.String(), "/private") {
+			t.Fatal("unsafe or misleading persistence failure")
+		}
+	}
 }
 
 // AskQuestion returns synthetic admission state without starting native work.

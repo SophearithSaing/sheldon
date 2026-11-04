@@ -108,11 +108,12 @@ func newQuestionFixture(t *testing.T, mode string) questionFixture {
 }
 
 type questionAuditEntry struct {
-	Args      []string `json:"args"`
-	Directory string   `json:"directory"`
-	Method    string   `json:"method"`
-	Path      string   `json:"path"`
-	Body      string   `json:"body"`
+	AdmissionVerified bool     `json:"admissionVerified"`
+	Args              []string `json:"args"`
+	Directory         string   `json:"directory"`
+	Method            string   `json:"method"`
+	Path              string   `json:"path"`
+	Body              string   `json:"body"`
 }
 
 // nativeQuestionAudit reads only test-owned synthetic native metadata, never real credentials.
@@ -250,6 +251,10 @@ func TestConcurrentQuestionAdmissionCreatesOneNativeSession(t *testing.T) {
 	for turn := range turns {
 		turn.Finish(question.Completed, "Synthetic fixture result.")
 	}
+	saved, err := f.owner.readQuestions(f.pr.ID)
+	if err != nil || len(saved.Bindings) != 1 || len(saved.Threads) != 1 || len(saved.Threads[0].Answers) != 1 {
+		t.Fatalf("concurrent saved admission: %v", err)
+	}
 }
 
 // prepareQuestionRevision creates verified source for a separate offline revision/PR.
@@ -332,6 +337,13 @@ func TestQuestionBindingsSeparatePRsAndRevisionsIncludingSharedHead(t *testing.T
 	}
 	if sourceGit(t, f.realGit, filepath.Join(f.paths.Cache, "worktrees", f.pr.ID, f.head), "", "rev-parse", "HEAD") != f.head || strings.Contains(old.Prompt(), newHead) {
 		t.Fatal("head refresh rebound the original session/source")
+	}
+	saved, err := f.owner.readQuestions(f.pr.ID)
+	if err != nil || len(saved.Bindings) != 3 || len(saved.Threads) != 3 || len(saved.Threads[0].Answers) != 2 {
+		t.Fatalf("revision-bound saved history: %v", err)
+	}
+	if saved.Bindings[0].Native.Model.ID != "chat" || saved.Bindings[1].Native.Model.ID != "changed-default" || saved.Bindings[0].Native.Directory != saved.Bindings[1].Native.Directory {
+		t.Fatal("saved bindings lost original model or base-only shared head location")
 	}
 	old.Finish(question.Interrupted, "Synthetic original turn interrupted.")
 	newer.Finish(question.Completed, "Synthetic new revision answer.")

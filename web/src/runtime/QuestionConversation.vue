@@ -57,7 +57,7 @@ function shortcut(event: KeyboardEvent): void {
     </nav>
     <div class="thread-summary">
       <p>Shared PR-revision context · One active question per revision.</p>
-      <p>Runtime only — not saved; lost on restart. Reload/disconnect clears this page, not accepted execution. Execution is bounded to five minutes including recovery.</p>
+      <p>Runtime only conversation view. Submitted questions are recorded locally, but answers are not continuously saved and saved-thread reopening is not connected. Drafts are not saved. Reload/disconnect clears this page, not accepted execution. Execution is bounded to five minutes including recovery.</p>
     </div>
     <div class="thread-context"><strong>Pinned context</strong><p>{{ context }}</p><p v-if="displayedRevision !== thread.turns[0]!.answer.revisionID" class="thread-warning">Older context. This thread is not rebound to the displayed source revision.</p></div>
     <ScrollRegion label="Conversation messages" class="conversation-messages">

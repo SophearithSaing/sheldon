@@ -105,6 +105,8 @@ export default async function setup(): Promise<() => Promise<void>> {
       process.platform === 'win32' ? 'junction' : 'dir',
     )
     await writeFile(join(webRoot, 'instance.lock'), 'private fixture value', { mode: 0o600 })
+    await writeFile(join(webRoot, 'threads.json'), 'private fixture value', { mode: 0o600 })
+    await writeFile(join(webRoot, '.threads-fixture.tmp'), 'private fixture value', { mode: 0o600 })
     const binary = join(directory, process.platform === 'win32' ? 'backend.exe' : 'backend')
     await promisify(execFile)(
       'go',

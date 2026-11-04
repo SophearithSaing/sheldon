@@ -58,7 +58,7 @@ func (s *sourceRegistry) AskQuestion(ctx context.Context, prID string, input que
 	}
 	admitted := turn.Snapshot()
 	if err := turn.Start(); err != nil {
-		return question.Answer{}, err
+		return question.Answer{}, question.ErrSaveUncertain
 	}
 	return admitted, nil
 }
@@ -71,7 +71,7 @@ func (s *sourceRegistry) AskFollowup(ctx context.Context, prID, threadID string,
 	}
 	admitted := turn.Snapshot()
 	if err := turn.Start(); err != nil {
-		return question.Answer{}, err
+		return question.Answer{}, question.ErrSaveUncertain
 	}
 	return admitted, nil
 }

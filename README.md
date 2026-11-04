@@ -2,7 +2,7 @@
 
 **Don't just merge it. Understand it.**
 
-A local pull-request explainer. **Real pinned Files changed + streamed questions/follow-ups + separate Slate UI previews**—durable review saving remains unimplemented.
+A local pull-request explainer. **Real pinned Files changed + streamed questions/follow-ups + separate Slate UI previews**—question admissions are recorded locally; continuous answer saving and saved-thread reopening remain unimplemented.
 
 ## Toolchains
 
@@ -29,7 +29,9 @@ For a text diff, choose gutter line numbers (Shift extends on one side within on
 
 Successful admission adds one marker and opens its runtime-only conversation with streamed, escaped answer text, pinned context and **Stop this answer**. Admission and Stop acknowledgements are not completion proof. Follow-ups use **Enter to send / Shift+Enter for a newline**, respect IME composition, and retain each thread's own transcript and draft when switching threads/files. Model-written citations remain plain text, not trusted navigation links.
 
-The shared revision allows one active question; drafts stay editable while sending is unavailable. Backend busy rejection also covers other tabs; retry is explicit, not synchronized thread-library state or a cross-tab exactly-once guarantee. Rejected requests retain drafts without phantom messages. Uncertain admission disables resending. **Reconnect answer observation** only checks the original answer after stream loss—it never resubmits a question. Closing the panel does not stop execution. Disconnecting a question workspace asks whether to keep connected or explicitly discard page state; it never implies native cancellation. Reload/disconnect clears page-memory drafts, transcripts and markers, not accepted backend execution; restart loses all question state. Nothing is marked Saved.
+The shared revision allows one active question; drafts stay editable while sending is unavailable. Backend busy rejection also covers other tabs; retry is explicit, not synchronized thread-library state or a cross-tab exactly-once guarantee. Rejected requests retain drafts without phantom messages. Uncertain admission disables resending. **Reconnect answer observation** only checks the original answer after stream loss—it never resubmits a question. Closing the panel does not stop execution. Disconnecting a question workspace asks whether to keep connected or explicitly discard page state; it never implies native cancellation. Reload/disconnect clears page-memory drafts, transcripts and markers, not accepted backend execution. Nothing is marked Saved.
+
+Before sending a native prompt, Sheldon records its submitted question, pinned context and exact shared binding in private `reviews/<id>/threads.json` under the OS data directory. A later admission also records known terminal predecessors; the latest answer is not continuously saved yet. This is not full conversation persistence: drafts remain unsaved, and saved-thread reads/reopening are not connected. Restart loses the runtime conversation view and refuses to replace an existing revision's saved native binding. Failed or uncertain native initialization also stays unavailable rather than creating another session. No prompt is replayed to recover missing state.
 
 **Sample UI previews** opens the separate `/?preview=library` entry. Its Files changed, Questions, Quiz, Semantic review, All PRs and Configuration use fictional data and page-memory simulations, never real PR source or inference.
 
@@ -52,7 +54,7 @@ Choose **Refresh source** to fetch current tips for this tab only. The displayed
 
 Source uses OS cache storage (`~/.cache/sheldon` on Linux, `%LOCALAPPDATA%\sheldon\cache` on Windows), not the project directory. Worktrees and diffs are bounded; unsafe cache state, unavailable history or oversized comparisons produce errors rather than partial source. Existing credential helpers/SSH routes remain trusted. A worktree is not an agent sandbox.
 
-Question backend operations are explicit, authenticated and runtime-only; browsing never starts inference. Execution uses the pinned OpenCode 2.1.4 adapter and existing provider setup, without installing or configuring either. Browser disconnect stops observation, not execution. A worker has a 4m50s deadline plus up to 10s of reconciliation; Stop targets its active answer/session and is not completion proof. Native stream loss permits bounded history checks, never prompt replay. An unknown outcome blocks that shared revision session; shutdown cancels owned activity. Restart loses question state.
+Question backend operations are explicit and authenticated; browsing never starts inference. Execution uses the pinned OpenCode 2.1.4 adapter and existing provider setup, without installing or configuring either. Browser disconnect stops observation, not execution. A worker has a 4m50s deadline plus up to 10s of reconciliation; Stop targets its active answer/session and is not completion proof. Native stream loss permits bounded history checks, never prompt replay. An unknown outcome blocks that shared revision session; shutdown cancels owned activity. Durable admission is not native completion or restart-resume support.
 
 ## Check & build
 
@@ -87,7 +89,7 @@ Release browser checks build a disposable application-source copy without `refs/
 
 The native-source release test needs Go and Git to build disposable tools and local PR objects. It exercises two PRs, explicit Git-only base selection, refresh/retry, restart/cache reuse and active-fetch shutdown through the standalone CLI. Test-only `gh`, Git transport and desktop-opener fixtures stay offline; source HTTP responses are not mocked. No GitHub login, provider setup or live requests are needed.
 
-The question integration tests use actual browser actions, managed native Git source and production HTTP/SSE handlers, without browser HTTP mocks. A disposable Go executable simulates only the native OpenCode protocol/inference. Both development and clean-source release flows cover source-bound prompts, streaming, shared-session follow-ups, cross-tab busy rejection, separate PRs, targeted Stop, failure/recovery and shutdown/restart. Release application processes have no Node on PATH. Saved conversations/restart recovery remain future work; these tests explicitly prove runtime question state is lost while the Git cache is reused.
+The question integration tests use actual browser actions, managed native Git source and production HTTP/SSE handlers, without browser HTTP mocks. A disposable Go executable simulates only the native OpenCode protocol/inference. Both development and clean-source release flows cover source-bound prompts, streaming, shared-session follow-ups, cross-tab busy rejection, separate PRs, targeted Stop, failure/recovery and shutdown/restart. Release application processes have no Node on PATH. Saved-thread reopening/restart recovery remain future work; runtime conversation state is lost while the Git cache and private admission records survive.
 
 ## Layout
 
@@ -96,11 +98,11 @@ cmd/sheldon/          Go CLI + tests
 internal/platform/   OS storage paths
 internal/process/    Owned command execution + cancellation
 internal/httpapi/    Protected loopback PR/source and question/SSE/Stop API
-internal/app/        Writer lifecycle, PR index and source orchestration
+internal/app/        Writer lifecycle, PR index, private admissions and source orchestration
 internal/githubpr/   Canonical PR/revision contracts (no fetching)
 internal/github/     Optional gh target-branch resolution
 internal/git/        Managed fetch, pinned worktrees and unified diffs
-internal/question/   Runtime-only sessions, pinned context and answer execution/observation
+internal/question/   Durable admission contracts, pinned context and runtime answer execution
 internal/opencode/   Restricted native service/session, execution and history adapter
 internal/ui/         Embedded release shell / asset-free development fallback
 scripts/build.js     Frontend → embed copy → Go build

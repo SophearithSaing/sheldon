@@ -18,6 +18,11 @@ type BindingRecord struct {
 	Policy    int    `json:"policy"`
 }
 
+// Binding returns the private immutable identity of this already-validated native session.
+func (s *Session) Binding() BindingRecord {
+	return BindingRecord{SessionID: s.info.ID, Directory: s.info.Location.Directory, Model: s.info.Model, Version: SupportedVersion, Protocol: "sheldon-opencode-http-v1", Policy: 1}
+}
+
 // Validate checks the supported saved binding shape without contacting a native service.
 func (b BindingRecord) Validate() error {
 	if !validNativeID(b.SessionID) || len(b.Directory) > 4096 || !utf8.ValidString(b.Directory) || strings.ContainsRune(b.Directory, 0) || !filepath.IsAbs(b.Directory) || filepath.Clean(b.Directory) != b.Directory || !validModel(b.Model) || b.Version != SupportedVersion || b.Protocol != "sheldon-opencode-http-v1" || b.Policy != 1 {

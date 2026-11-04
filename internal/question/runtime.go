@@ -32,6 +32,8 @@ var (
 	ErrPromptLimit        = errors.New("question and thread history exceed the bounded prompt limit")
 	ErrAnswerState        = errors.New("invalid or conflicting question answer update")
 	ErrNotFound           = errors.New("question thread or answer not found in the requested scope")
+	ErrPersistence        = errors.New("question admission could not be saved; no prompt was sent")
+	ErrSaveUncertain      = errors.New("saved question admission is uncertain; do not resend automatically")
 )
 
 // State separates answer presentation from reader understanding and native session availability.
@@ -45,7 +47,7 @@ const (
 	Interrupted State = "interrupted"
 )
 
-// Answer is a runtime-only transcript snapshot, without native identifiers or paths.
+// Answer is a normalized transcript snapshot, without native identifiers or host paths.
 type Answer struct {
 	ID               string    `json:"answerID"`
 	ThreadID         string    `json:"threadID"`
@@ -79,10 +81,12 @@ type thread struct {
 // Runtime owns bounded in-memory conversations and one lazy native service for an app writer.
 type Runtime struct {
 	mu           sync.Mutex
+	persistMu    sync.Mutex
 	ctx          context.Context
 	cancel       context.CancelFunc
 	registry     Registry
 	cache        *git.Cache
+	store        Persistence
 	bindings     map[revisionKey]*binding
 	threads      map[string]*thread
 	answers      map[string]*Turn
@@ -116,7 +120,8 @@ type Turn struct {
 // New creates empty runtime state without starting a harness or loading source.
 func New(registry Registry, cache *git.Cache) *Runtime {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Runtime{ctx: ctx, cancel: cancel, registry: registry, cache: cache, bindings: make(map[revisionKey]*binding), threads: make(map[string]*thread), answers: make(map[string]*Turn), serviceReady: make(chan struct{})}
+	store, _ := registry.(Persistence)
+	return &Runtime{ctx: ctx, cancel: cancel, registry: registry, cache: cache, store: store, bindings: make(map[revisionKey]*binding), threads: make(map[string]*thread), answers: make(map[string]*Turn), serviceReady: make(chan struct{})}
 }
 
 // BeginQuestion reserves one revision slot and creates a thread only after verified admission.
@@ -222,8 +227,14 @@ func (r *Runtime) begin(ctx context.Context, prID string, input InitialRequest, 
 	if err != nil {
 		return nil, err
 	}
+	if err := r.prepareSavedBinding(source, b); err != nil {
+		return nil, err
+	}
 	service, err := r.nativeService(operation)
 	if err != nil {
+		r.mu.Lock()
+		b.broken = ErrSessionUnavailable
+		r.mu.Unlock()
 		return nil, errors.Join(ErrSessionUnavailable, err)
 	}
 	if b.session == nil {
@@ -238,6 +249,12 @@ func (r *Runtime) begin(ctx context.Context, prID string, input InitialRequest, 
 		if err != nil {
 			return nil, errors.Join(ErrSessionUnavailable, err)
 		}
+		if err := r.saveBoundSession(source, session); err != nil {
+			r.mu.Lock()
+			b.broken = err
+			r.mu.Unlock()
+			return nil, err
+		}
 	} else {
 		if b.directory != source.Directory {
 			return nil, ErrSessionUnavailable
@@ -249,27 +266,37 @@ func (r *Runtime) begin(ctx context.Context, prID string, input InitialRequest, 
 			return nil, errors.Join(ErrSessionUnavailable, err)
 		}
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		return nil, ErrRuntimeClosed
-	}
 	if err := operation.Err(); err != nil {
 		return nil, err
 	}
 	if err := service.Err(); err != nil {
 		return nil, errors.Join(ErrSessionUnavailable, err)
 	}
+	turn = &Turn{runtime: r, binding: b, source: source, prompt: prompt, answer: Answer{ID: answerID, ThreadID: threadID, PRID: prID, RevisionID: revisionID, Question: input.Question, State: Pending}}
+	turn.stop, turn.changed = make(chan struct{}), make(chan struct{})
+	turn.answer.Reference = Reference{RevisionID: source.RevisionID, Anchor: source.Anchor, OldPath: source.OldPath, NewPath: source.NewPath}
+	if err := r.saveAdmission(turn, existing != nil); err != nil {
+		if errors.Is(err, ErrSaveUncertain) {
+			r.mu.Lock()
+			b.broken = err
+			r.mu.Unlock()
+		}
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || operation.Err() != nil {
+		b.broken = ErrSaveUncertain
+		return nil, ErrSaveUncertain
+	}
 	if r.answers[answerID] != nil || existing == nil && r.threads[threadID] != nil {
-		return nil, errors.New("question identity collision; no question admitted")
+		b.broken = ErrSaveUncertain
+		return nil, ErrSaveUncertain
 	}
 	if existing == nil {
 		existing = &thread{context: ThreadContext{ID: threadID, Revision: source.Revision}, anchor: source.Anchor}
 		r.threads[threadID] = existing
 	}
-	turn = &Turn{runtime: r, binding: b, source: source, prompt: prompt, answer: Answer{ID: answerID, ThreadID: threadID, PRID: prID, RevisionID: revisionID, Question: input.Question, State: Pending}}
-	turn.stop, turn.changed = make(chan struct{}), make(chan struct{})
-	turn.answer.Reference = Reference{RevisionID: source.RevisionID, Anchor: source.Anchor, OldPath: source.OldPath, NewPath: source.NewPath}
 	b.active = turn
 	existing.answers = append(existing.answers, turn)
 	r.answers[answerID] = turn

@@ -1,6 +1,6 @@
 import { expect, type BrowserContext, type Page, type Response, type TestInfo } from '@playwright/test'
-import { access, readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, readdir, readFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { offlineCLI, type NativeAudit, type OfflineCLI } from '../release/offline'
 import type { SourceResponse } from '../../src/runtime/source'
 import type { QuestionAnswer } from '../../src/runtime/questions'
@@ -74,6 +74,16 @@ async function prompts(fixture: OfflineCLI): Promise<NativeAudit[]> {
 }
 
 /**
+ * Reads actual private admission records independently of browser rendering and native history.
+ * @param fixture Owned offline application controller.
+ * @param prID Registered PR identity.
+ * @returns Saved bindings and ordered admitted turns.
+ */
+async function savedAdmissions(fixture: OfflineCLI, prID: string): Promise<{ bindings: { state: string }[]; threads: { threadID: string; answers: QuestionAnswer[] }[] }> {
+  return JSON.parse(await readFile(join(dirname(fixture.stateFile), 'reviews', prID, 'threads.json'), 'utf8'))
+}
+
+/**
  * Probes only a PID recorded by this test's disposable native executable.
  * @param pid Owned native fixture PID.
  * @returns Whether the fixture is still running.
@@ -115,6 +125,11 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
     const admitted = await ask(page, 'Explain this actual selected source. Synthetic inference fixture only.')
     expect(admitted.status()).toBe(202)
     const original = await admitted.json() as QuestionAnswer
+    const submitted = await savedAdmissions(fixture, original.prID)
+    expect(submitted.bindings).toHaveLength(1)
+    expect(submitted.bindings[0]!.state).toBe('bound')
+    expect(submitted.threads).toHaveLength(1)
+    expect(submitted.threads[0]!.answers[0]).toMatchObject({ answerID: original.answerID, threadID: original.threadID, question: original.question, state: 'pending', text: '' })
     expect(original.reference.anchor).toMatchObject({ kind: 'lines', fileID: diff.files.find((file): boolean => file.newPath === 'shared.txt')!.id, side: 'new', start: 1, end: 1 })
     await expect(page.locator('.answer-text')).toHaveText('Synthetic fixture ')
     await expect(page.getByText('Answering', { exact: true })).toBeVisible()
@@ -135,6 +150,7 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
     await expect(tab.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('Retain this second-tab draft while the shared revision is busy.')
     await expect(tab.locator('[data-answer]')).toHaveCount(0)
     expect((await prompts(fixture)).length).toBe(1)
+    expect((await savedAdmissions(fixture, original.prID)).threads).toHaveLength(1)
     await tab.screenshot({ path: info.outputPath('native-question-busy.png') })
 
     const other = await context.newPage()
@@ -156,6 +172,7 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
     expect(continued.threadID).toBe(original.threadID)
     expect(continued.answerID).not.toBe(original.answerID)
     expect(continued.revisionID).toBe(original.revisionID)
+    expect((await savedAdmissions(fixture, original.prID)).threads[0]!.answers).toMatchObject([{ answerID: original.answerID, state: 'completed' }, { answerID: continued.answerID, state: 'pending' }])
     await expect(page.locator('.answer-text')).toHaveText(['Synthetic fixture answer <script>literal</script>.', 'Synthetic fixture '])
     await expect.poll(async (): Promise<number> => (await prompts(fixture)).length).toBe(3)
     const stop = response(page, '/stop')
@@ -239,6 +256,9 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
     await followup(tab, 'Remain active until owned application shutdown.')
     await expect.poll(async (): Promise<number> => (await prompts(fixture)).length).toBe(6)
     await expect(tab.getByText('Answering', { exact: true })).toBeVisible()
+    const beforeRestart = await savedAdmissions(fixture, original.prID)
+    expect(beforeRestart.threads).toHaveLength(2)
+    expect(beforeRestart.threads.flatMap((thread): QuestionAnswer[] => thread.answers)).toHaveLength(5)
     await fixture.stop()
     for (const entry of native.filter((entry): boolean => !!entry.args)) {
       expect(alive(entry.pid!)).toBe(false)
@@ -257,6 +277,14 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
     expect((await fixture.nativeAudit()).filter((entry): boolean => !!entry.args)).toHaveLength(native.filter((entry): boolean => !!entry.args).length)
     const missing = await reopenedPage.request.post(`${new URL(restarted).origin}/api/reviews/${original.prID}/threads/${original.threadID}/answers/${original.answerID}/events`, { headers: { Authorization: `Bearer ${nextDiscovery.token}` }, data: { revisionID: original.revisionID } })
     expect(missing.status()).toBe(503)
+    expect(await savedAdmissions(fixture, original.prID)).toEqual(beforeRestart)
+    await reopenedPage.getByRole('button', { name: 'shared.txt', exact: true }).click()
+    const blocked = await ask(reopenedPage, 'Do not replace this revision binding after restart.')
+    expect(blocked.status()).toBe(503)
+    await expect(reopenedPage.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('Do not replace this revision binding after restart.')
+    await expect(reopenedPage.locator('[data-answer]')).toHaveCount(0)
+    expect((await prompts(fixture)).length).toBe(6)
+    expect((await fixture.nativeAudit()).filter((entry): boolean => !!entry.args)).toHaveLength(native.filter((entry): boolean => !!entry.args).length)
     expect(traffic.every((url): boolean => new URL(url).hostname === '127.0.0.1')).toBe(true)
     expect(traffic.some((url): boolean => url.includes(initialDiscovery.token) || url.includes(nextDiscovery.token))).toBe(false)
     expect(errors).toEqual([])

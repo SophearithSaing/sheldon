@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -87,6 +89,10 @@ func (f *executionFixture) handle(w http.ResponseWriter, r *http.Request, body [
 			w.WriteHeader(400)
 			return true
 		}
+		if f.mode == "answer-admission-proof" && !savedAdmissionMatches(input.Text, session) {
+			w.WriteHeader(409)
+			return true
+		}
 		f.mu.Lock()
 		f.next++
 		n := f.next
@@ -110,6 +116,65 @@ func (f *executionFixture) handle(w http.ResponseWriter, r *http.Request, body [
 		}
 		json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"id": user, "sessionID": session}})
 		return true
+	}
+	return false
+}
+
+// savedAdmissionMatches checks real private disk state at the synthetic native dispatch boundary.
+func savedAdmissionMatches(prompt, session string) bool {
+	boundary := strings.Index(prompt, "\n\n")
+	if boundary < 0 {
+		return false
+	}
+	var input struct {
+		ThreadID, AnswerID, Question string
+		Source                       struct {
+			RevisionID string
+			Revision   struct{ PRID string }
+		}
+	}
+	var generic struct{ Source any }
+	if json.Unmarshal([]byte(prompt[boundary+2:]), &input) != nil || json.Unmarshal([]byte(prompt[boundary+2:]), &generic) != nil {
+		return false
+	}
+	prID := input.Source.Revision.PRID
+	if len(prID) != 64 || strings.Trim(prID, "0123456789abcdef") != "" {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(os.Getenv("SHELDON_NATIVE_SAVED_ROOT"), "reviews", prID, "threads.json"))
+	var saved struct {
+		Bindings []struct {
+			RevisionID, State string
+			Native            struct{ SessionID string }
+		}
+		Threads []struct {
+			ThreadID, RevisionID string
+			Context              any
+			Answers              []struct{ AnswerID, Question, State, Text string }
+		}
+	}
+	if err != nil || json.Unmarshal(data, &saved) != nil {
+		return false
+	}
+	bound := false
+	for _, b := range saved.Bindings {
+		if b.RevisionID == input.Source.RevisionID && b.State == "bound" && b.Native.SessionID == session {
+			bound = true
+		}
+	}
+	if !bound {
+		return false
+	}
+	for _, thread := range saved.Threads {
+		if thread.ThreadID != input.ThreadID || thread.RevisionID != input.Source.RevisionID || !reflect.DeepEqual(thread.Context, generic.Source) {
+			continue
+		}
+		for _, a := range thread.Answers {
+			if a.AnswerID == input.AnswerID && a.Question == input.Question && a.State == "pending" && a.Text == "" {
+				audit(map[string]any{"admissionVerified": true, "threadID": input.ThreadID, "answerID": input.AnswerID})
+				return true
+			}
+		}
 	}
 	return false
 }

@@ -18,8 +18,16 @@ import (
 var (
 	errQuestionStore    = errors.New("cannot read or save private question history; existing data was preserved")
 	errQuestionConflict = errors.New("saved question history changed; read it before updating")
-	errQuestionReplace  = errors.New("question history replacement is uncertain; read saved history before updating")
+	errQuestionReplace  = question.ErrSaveUncertain
 )
+
+// ReadQuestions supplies private saved snapshots to the question runtime, without native work.
+func (i *instance) ReadQuestions(prID string) (question.Saved, error) { return i.readQuestions(prID) }
+
+// SaveQuestions commits one checked predecessor generation before native prompt dispatch.
+func (i *instance) SaveQuestions(next question.Saved, expected uint64) error {
+	return i.saveQuestions(next, expected)
+}
 
 // readQuestions reads saved history without opening source caches or native services.
 func (i *instance) readQuestions(prID string) (question.Saved, error) {

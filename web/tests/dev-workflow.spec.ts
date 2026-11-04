@@ -258,7 +258,7 @@ test('HMR upgrades reject foreign origins, and private test state is outside Vit
   expect(response).toContain('403')
   const denied = await request('/@fs/' + process.env.SHELDON_TEST_STATE!)
   expect(denied.status).toBe(403)
-  for (const path of ['/instance.lock', '/%69nstance.lock?raw', '/instance.lock::$DATA', '/prs.json', '/%70rs.json?raw', '/prs.json::$DATA', '/.prs-example.tmp']) {
+  for (const path of ['/instance.lock', '/%69nstance.lock?raw', '/instance.lock::$DATA', '/prs.json', '/%70rs.json?raw', '/prs.json::$DATA', '/.prs-example.tmp', '/threads.json', '/reviews/private/threads.json?raw', '/%74hreads.json', '/threads.json::$DATA', '/.threads-example.tmp']) {
     const response = await request(path)
     expect(response.status).toBe(403)
     expect(response.body).not.toContain('private fixture value')

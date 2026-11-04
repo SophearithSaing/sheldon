@@ -231,6 +231,10 @@ func validAnswer(answer question.Answer, r *http.Request) bool {
 func writeQuestionError(w http.ResponseWriter, err error) {
 	status, message := 502, "question execution unavailable; no automatic retry was performed"
 	switch {
+	case errors.Is(err, question.ErrSaveUncertain):
+		status, message = 500, question.ErrSaveUncertain.Error()
+	case errors.Is(err, question.ErrPersistence):
+		status, message = 503, question.ErrPersistence.Error()
 	case errors.Is(err, question.ErrBusy):
 		status, message = 409, question.ErrBusy.Error()
 	case errors.Is(err, question.ErrUncertain):
