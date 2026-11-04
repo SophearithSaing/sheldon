@@ -290,11 +290,67 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
     await expect(reopenedPage.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('Do not replace this revision binding after restart.')
     await expect(reopenedPage.locator('[data-answer]')).toHaveCount(0)
     expect((await prompts(fixture)).length).toBe(6)
-    expect((await fixture.nativeAudit()).filter((entry): boolean => !!entry.args)).toHaveLength(native.filter((entry): boolean => !!entry.args).length)
+    expect((await fixture.nativeAudit()).filter((entry): boolean => !!entry.args)).toHaveLength(native.filter((entry): boolean => !!entry.args).length + 2)
     expect(traffic.every((url): boolean => new URL(url).hostname === '127.0.0.1')).toBe(true)
     expect(traffic.some((url): boolean => url.includes(initialDiscovery.token) || url.includes(nextDiscovery.token))).toBe(false)
     expect(errors).toEqual([])
     await tab.close()
     await other.close()
+  } finally { await fixture.close() }
+}
+
+/**
+ * Continues known saved identities through real HTTP after a standalone app/native-service restart.
+ * @param page Actual application page; no saved-history UI is simulated.
+ * @param development Whether to exercise the real development proxy rather than embedded assets.
+ */
+export async function questionReopenFlow(page: Page, development: boolean): Promise<void> {
+  const fixture = await offlineCLI({ development, questions: true, nativePersistence: true })
+  await preserveResponseBodies(page)
+  try {
+    await page.goto(await fixture.start('https://github.com/fixture/repo/pull/31'))
+    await source(page, 'Load pinned source')
+    await page.getByRole('button', { name: 'shared.txt', exact: true }).click()
+    const admitted = await ask(page, 'Synthetic original input before restart.')
+    expect(admitted.status()).toBe(202)
+    const original = await admitted.json() as QuestionAnswer
+    await expect.poll(async (): Promise<number> => (await prompts(fixture)).length).toBe(1)
+    await fixture.answer(1, 'succeeded')
+    await expect(page.getByText('Current answer saved locally.', { exact: true })).toBeVisible()
+    await followup(page, 'Synthetic explicit follow-up before restart.')
+    await expect.poll(async (): Promise<number> => (await prompts(fixture)).length).toBe(2)
+    await fixture.answer(2, 'succeeded')
+    await expect(page.getByText('Current answer saved locally.', { exact: true })).toHaveCount(2)
+    const path = (await prompts(fixture))[0]!.path!
+    const before = await savedAdmissions(fixture, original.prID)
+    await fixture.stop()
+    const restarted = await fixture.start('https://github.com/fixture/repo/pull/31')
+    const discovery = await fixture.discovery()
+    await page.goto('about:blank')
+    await page.goto(restarted)
+    await expect(page.getByRole('heading', { name: 'PR registered. Source not loaded.', exact: true })).toBeVisible()
+    expect((await prompts(fixture)).length).toBe(2)
+    const origin = new URL(restarted).origin
+    const continued = await page.request.post(`${origin}/api/reviews/${original.prID}/threads/${original.threadID}/answers`, { headers: { Authorization: `Bearer ${discovery.token}` }, data: { revisionID: original.revisionID, question: 'Synthetic new explicit question after restart.' } })
+    expect(continued.status()).toBe(202)
+    const answer = await continued.json() as QuestionAnswer
+    expect(answer.threadID).toBe(original.threadID)
+    expect(answer.revisionID).toBe(original.revisionID)
+    expect(answer.answerID).not.toBe(original.answerID)
+    await expect.poll(async (): Promise<number> => (await prompts(fixture)).length).toBe(3)
+    expect((await prompts(fixture))[2]!.path).toBe(path)
+    expect((await prompts(fixture))[2]!.body).toContain('Synthetic new explicit question after restart.')
+    await fixture.answer(3, 'succeeded')
+    await expect.poll(async (): Promise<string> => (await savedAdmissions(fixture, original.prID)).threads[0]!.answers.at(-1)!.state).toBe('completed')
+    const after = await savedAdmissions(fixture, original.prID)
+    expect(after.bindings).toEqual(before.bindings)
+    expect(after.threads[0]!.answers.slice(0, 2)).toEqual(before.threads[0]!.answers)
+    expect(after.threads[0]!.answers).toHaveLength(3)
+    const native = await fixture.nativeAudit()
+    expect(native.filter((entry): boolean => entry.path === '/api/model/default')).toHaveLength(1)
+    expect(native.filter((entry): boolean => entry.method === 'POST' && entry.path === '/api/session')).toHaveLength(1)
+    expect(native.filter((entry): boolean => !!entry.args)).toHaveLength(4)
+    await expect(page.locator('[data-answer]')).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'PR registered. Source not loaded.', exact: true })).toBeVisible()
   } finally { await fixture.close() }
 }

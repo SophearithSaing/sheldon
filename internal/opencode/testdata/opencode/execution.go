@@ -23,9 +23,21 @@ type executionFixture struct {
 	next    int
 }
 
+type savedExecution struct {
+	History map[string][]map[string]any `json:"history"`
+	Next    int                         `json:"next"`
+}
+
 // newExecutionFixture owns only synthetic native activity in the disposable executable.
 func newExecutionFixture(mode string, done <-chan struct{}) *executionFixture {
-	return &executionFixture{mode: mode, done: done, events: make(chan string, 256), history: make(map[string][]map[string]any), active: make(map[string]chan struct{})}
+	saved := savedExecution{History: make(map[string][]map[string]any)}
+	readFixtureState("execution", &saved)
+	return &executionFixture{mode: mode, done: done, events: make(chan string, 256), history: saved.History, next: saved.Next, active: make(map[string]chan struct{})}
+}
+
+// persistLocked retains native input/history boundaries across test-owned service restarts.
+func (f *executionFixture) persistLocked() {
+	writeFixtureState("execution", savedExecution{History: f.history, Next: f.next})
 }
 
 // event enqueues synthetic envelopes without writing hidden output into public answer fields.
@@ -46,12 +58,32 @@ func (f *executionFixture) handle(w http.ResponseWriter, r *http.Request, body [
 	session, action := parts[0], parts[1]
 	switch action {
 	case "inbox":
+		control, _ := os.ReadFile(os.Getenv("SHELDON_NATIVE_CONTROL"))
+		if string(control) == "inbox-busy" {
+			fmt.Fprint(w, `{"data":[{"id":"pending"}]}`)
+			return true
+		}
 		fmt.Fprint(w, `{"data":[]}`)
 		return true
 	case "message":
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		messages := f.history[session]
+		control, _ := os.ReadFile(os.Getenv("SHELDON_NATIVE_CONTROL"))
+		switch string(control) {
+		case "history-empty":
+			messages = nil
+		case "history-truncated":
+			if len(messages) > 1 {
+				messages = messages[1:]
+			}
+		case "history-busy":
+			if len(messages) > 0 {
+				messages = messages[:len(messages)-1]
+			}
+		case "history-foreign":
+			messages = append(append([]map[string]any{}, messages...), map[string]any{"id": "foreign_user", "type": "user", "text": "not a saved input"})
+		}
 		if messages == nil {
 			messages = []map[string]any{}
 		}
@@ -102,6 +134,7 @@ func (f *executionFixture) handle(w http.ResponseWriter, r *http.Request, body [
 		if f.mode != "answer-ambiguous-empty" {
 			f.history[session] = append(f.history[session], map[string]any{"id": user, "type": "user", "text": input.Text})
 		}
+		f.persistLocked()
 		f.mu.Unlock()
 		if f.mode == "answer-ambiguous-empty" {
 			conn, _, _ := w.(http.Hijacker).Hijack()
@@ -266,6 +299,7 @@ func (f *executionFixture) terminal(session, user, assistant, text, outcome stri
 	f.mu.Lock()
 	f.history[session] = append(f.history[session], map[string]any{"id": assistant, "type": "assistant", "content": []map[string]string{{"type": "reasoning", "text": "HIDDEN REASONING SECRET"}, {"type": "tool", "text": "RAW TOOL SECRET"}, {"type": "text", "text": text}}}, map[string]any{"id": "msg_idle_" + strconv.Itoa(n), "type": "idle", "outcome": outcome, "error": map[string]string{"message": "RAW PROVIDER SECRET"}})
 	delete(f.active, session)
+	f.persistLocked()
 	f.mu.Unlock()
 	kind := "session.execution.succeeded"
 	if outcome == "failed" {

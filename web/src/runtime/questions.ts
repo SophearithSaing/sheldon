@@ -14,7 +14,7 @@ export interface QuestionAnswer {
   executionUnknown: boolean
   persistence?: 'saved' | 'saving' | 'failed'
   savedVersion?: string
-  failureCode?: 'source-unavailable' | 'execution-failed' | 'answer-too-large' | 'execution-uncertain'
+  failureCode?: 'source-unavailable' | 'execution-failed' | 'answer-too-large' | 'execution-uncertain' | 'runtime-restarted'
   reference: { revisionID: string; anchor: QuestionAnchor; oldPath?: string; newPath?: string }
 }
 
@@ -66,7 +66,8 @@ export function parseQuestionAnswer(value: unknown, prID: string, revisionID: st
       answer.persistence !== undefined && (!['saved', 'saving', 'failed'].includes(answer.persistence) || typeof answer.savedVersion !== 'string' || !/^[1-9][0-9]{0,19}$/.test(answer.savedVersion) || BigInt(answer.savedVersion) > 18446744073709551615n) ||
       answer.persistence === undefined && answer.savedVersion !== undefined ||
       answer.state === 'completed' && (!answer.text.trim() || answer.executionUnknown) ||
-      answer.failureCode !== undefined && !['source-unavailable', 'execution-failed', 'answer-too-large', 'execution-uncertain'].includes(answer.failureCode) ||
+      answer.failureCode !== undefined && !['source-unavailable', 'execution-failed', 'answer-too-large', 'execution-uncertain', 'runtime-restarted'].includes(answer.failureCode) ||
+      answer.failureCode === 'runtime-restarted' && (answer.state !== 'interrupted' || !answer.executionUnknown) ||
       !answer.reference.anchor || !sameAnchor(input.anchor, answer.reference.anchor)) throw new QuestionAdmissionError('Unexpected admission response. Delivery may be uncertain; do not resend automatically.', true)
   return {
     answerID: answer.answerID!, threadID: answer.threadID!, prID, revisionID, question: input.question,

@@ -115,6 +115,14 @@ func (s *Service) CreateSession(ctx context.Context, directory string) (*Session
 	if err := s.ValidateSession(ctx, session); err != nil {
 		return nil, err
 	}
+	if err := s.verifyPermissions(ctx, session); err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+// verifyPermissions checks the effective investigation rules without changing native policy.
+func (s *Service) verifyPermissions(ctx context.Context, session *Session) error {
 	for _, probe := range []rule{
 		{"read", "__sheldon_policy_probe__.go", "allow"}, {"glob", "**/*.go", "allow"}, {"grep", "__sheldon_policy_probe__", "allow"},
 		{"read", "secrets.env", "deny"}, {"read", "secrets.env.local", "deny"}, {"external_directory", "*", "deny"},
@@ -128,17 +136,14 @@ func (s *Service) CreateSession(ctx context.Context, directory string) (*Session
 		}
 		if err := s.call(ctx, "POST", "/api/session/"+url.PathEscape(session.info.ID)+"/permission", map[string]any{"action": probe.Action, "resources": []string{probe.Resource}}, &response); err != nil {
 			s.cancel(ErrRestricted)
-			return nil, err
+			return err
 		}
 		if response.Data.Effect != probe.Effect {
 			s.cancel(ErrRestricted)
-			return nil, ErrRestricted
+			return ErrRestricted
 		}
 	}
-	if err := s.Err(); err != nil {
-		return nil, err
-	}
-	return session, nil
+	return s.Err()
 }
 
 // ValidateSession verifies exact native binding without consulting defaults or creating a replacement.

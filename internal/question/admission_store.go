@@ -49,31 +49,35 @@ func (r *Runtime) commitSaved(s Saved) error {
 	return nil
 }
 
-// prepareSavedBinding records initialization before native creation and refuses stored replacements.
-func (r *Runtime) prepareSavedBinding(source Context, b *binding) error {
+// prepareSavedBinding records initialization or returns the exact saved binding and expected native inputs.
+func (r *Runtime) prepareSavedBinding(source Context, b *binding) (*opencode.BindingRecord, []string, error) {
 	r.persistMu.Lock()
 	defer r.persistMu.Unlock()
 	s, err := r.saved(source.Revision.PRID)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	for _, saved := range s.Bindings {
 		if saved.RevisionID != source.RevisionID {
 			continue
 		}
-		if b.session == nil || saved.State != "bound" || saved.Native == nil || saved.Revision != source.Revision || *saved.Native != b.session.Binding() {
+		if saved.State != "bound" || saved.Native == nil || saved.Native.Validate() != nil || saved.Revision != source.Revision || saved.Native.Directory != source.Directory || b.session != nil && *saved.Native != b.session.Binding() {
 			r.mu.Lock()
 			b.broken = ErrSessionUnavailable
 			r.mu.Unlock()
-			return ErrSessionUnavailable
+			return nil, nil, ErrSessionUnavailable
 		}
-		return nil
+		if b.session != nil {
+			return saved.Native, nil, nil
+		}
+		prompts, err := savedPrompts(s, source.RevisionID)
+		return saved.Native, prompts, err
 	}
 	if b.session != nil {
-		return ErrPersistence
+		return nil, nil, ErrPersistence
 	}
 	if len(s.Bindings) >= maxBindings {
-		return ErrCapacity
+		return nil, nil, ErrCapacity
 	}
 	s.Bindings = append(s.Bindings, SavedBinding{Revision: source.Revision, RevisionID: source.RevisionID, State: "initializing"})
 	if err := r.commitSaved(s); err != nil {
@@ -82,9 +86,9 @@ func (r *Runtime) prepareSavedBinding(source Context, b *binding) error {
 			b.broken = err
 			r.mu.Unlock()
 		}
-		return err
+		return nil, nil, err
 	}
-	return nil
+	return nil, nil, nil
 }
 
 // saveBoundSession commits the exact created identity before any turn may be admitted.

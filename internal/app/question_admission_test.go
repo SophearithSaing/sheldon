@@ -103,8 +103,10 @@ func TestSavedBindingPreventsReplacementAfterAppRestart(t *testing.T) {
 	if turn, err := service.BeginQuestion(context.Background(), f.pr.ID, f.input); turn != nil || !errors.Is(err, question.ErrSessionUnavailable) {
 		t.Fatalf("stored binding replaced: %v", err)
 	}
-	if len(nativeQuestionAudit(t, f.audit)) != before {
-		t.Fatal("restart started native service or replacement session")
+	for _, entry := range nativeQuestionAudit(t, f.audit)[before:] {
+		if entry.Path == "/api/model/default" || entry.Path == "/api/session" || filepath.Base(entry.Path) == "prompt" {
+			t.Fatal("restart created a replacement or dispatched input")
+		}
 	}
 	saved, err := owner.readQuestions(f.pr.ID)
 	if err != nil || len(saved.Bindings) != 1 || len(saved.Threads) != 1 {

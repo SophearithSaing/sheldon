@@ -23,10 +23,20 @@ func (s *Session) Binding() BindingRecord {
 	return BindingRecord{SessionID: s.info.ID, Directory: s.info.Location.Directory, Model: s.info.Model, Version: SupportedVersion, Protocol: "sheldon-opencode-http-v1", Policy: 1}
 }
 
-// Validate checks the supported saved binding shape without contacting a native service.
+// Validate checks current adapter compatibility without contacting a native service.
 func (b BindingRecord) Validate() error {
-	if !validNativeID(b.SessionID) || len(b.Directory) > 4096 || !utf8.ValidString(b.Directory) || strings.ContainsRune(b.Directory, 0) || !filepath.IsAbs(b.Directory) || filepath.Clean(b.Directory) != b.Directory || !validModel(b.Model) || b.Version != SupportedVersion || b.Protocol != "sheldon-opencode-http-v1" || b.Policy != 1 {
+	if b.ValidateSaved() != nil || !validModel(b.Model) || b.Version != SupportedVersion || b.Protocol != "sheldon-opencode-http-v1" || b.Policy != 1 {
 		return errors.New("invalid or unsupported saved native binding")
+	}
+	return nil
+}
+
+// ValidateSaved checks bounded private record shape while keeping incompatible sessions' history readable.
+func (b BindingRecord) ValidateSaved() error {
+	model := b.Model
+	model.Variant = ""
+	if !validNativeID(b.SessionID) || len(b.Directory) > 4096 || !utf8.ValidString(b.Directory) || strings.ContainsRune(b.Directory, 0) || !filepath.IsAbs(b.Directory) || filepath.Clean(b.Directory) != b.Directory || !validModel(model) || b.Model.Variant != "" && !validNativeID(b.Model.Variant) || b.Version == "" || len(b.Version) > 64 || !utf8.ValidString(b.Version) || strings.ContainsRune(b.Version, 0) || !validNativeID(b.Protocol) || b.Policy <= 0 {
+		return errors.New("invalid saved native binding")
 	}
 	return nil
 }

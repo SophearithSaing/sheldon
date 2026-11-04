@@ -146,7 +146,11 @@ func (r *Runtime) BeginFollowup(ctx context.Context, prID, threadID string, inpu
 	existing := r.threads[threadID]
 	r.mu.Unlock()
 	if existing == nil {
-		return nil, ErrNotFound
+		var err error
+		existing, err = r.restoreThread(prID, threadID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := input.Validate(prID, threadID, r.registry, existing.context); err != nil {
 		return nil, errors.Join(ErrNotFound, err)
@@ -221,6 +225,9 @@ func (r *Runtime) begin(ctx context.Context, prID string, input InitialRequest, 
 	if err != nil {
 		return nil, err
 	}
+	if existing != nil && len(existing.answers) > 0 && !sameSavedSource(source, existing.answers[0].source) {
+		return nil, git.ErrQuestionSourceUnavailable
+	}
 	threadID, err := newQuestionID()
 	if err != nil {
 		return nil, err
@@ -238,7 +245,8 @@ func (r *Runtime) begin(ctx context.Context, prID string, input InitialRequest, 
 	if err != nil {
 		return nil, err
 	}
-	if err := r.prepareSavedBinding(source, b); err != nil {
+	record, prompts, err := r.prepareSavedBinding(source, b)
+	if err != nil {
 		return nil, err
 	}
 	service, err := r.nativeService(operation)
@@ -249,7 +257,12 @@ func (r *Runtime) begin(ctx context.Context, prID string, input InitialRequest, 
 		return nil, errors.Join(ErrSessionUnavailable, err)
 	}
 	if b.session == nil {
-		session, err := service.CreateSession(operation, source.Directory)
+		var session *opencode.Session
+		if record == nil {
+			session, err = service.CreateSession(operation, source.Directory)
+		} else {
+			session, err = service.ReopenSession(operation, *record, prompts)
+		}
 		r.mu.Lock()
 		if err != nil {
 			b.broken = ErrSessionUnavailable
@@ -260,11 +273,13 @@ func (r *Runtime) begin(ctx context.Context, prID string, input InitialRequest, 
 		if err != nil {
 			return nil, errors.Join(ErrSessionUnavailable, err)
 		}
-		if err := r.saveBoundSession(source, session); err != nil {
-			r.mu.Lock()
-			b.broken = err
-			r.mu.Unlock()
-			return nil, err
+		if record == nil {
+			if err := r.saveBoundSession(source, session); err != nil {
+				r.mu.Lock()
+				b.broken = err
+				r.mu.Unlock()
+				return nil, err
+			}
 		}
 	} else {
 		if b.directory != source.Directory {

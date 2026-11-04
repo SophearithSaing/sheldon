@@ -61,7 +61,7 @@ func TestSavedGraphRejectsInvalidState(t *testing.T) {
 		"version":           func(s *Saved) { s.Version = 0 },
 		"schema":            func(s *Saved) { s.SchemaVersion = 2 },
 		"pr":                func(s *Saved) { s.PRID = strings.Repeat("a", 64) },
-		"native":            func(s *Saved) { s.Bindings[0].Native.Policy = 2 },
+		"native":            func(s *Saved) { s.Bindings[0].Native.Policy = 0 },
 		"initializing":      func(s *Saved) { s.Bindings[0].State = "initializing" },
 		"duplicate binding": func(s *Saved) { s.Bindings = append(s.Bindings, s.Bindings[0]) },
 		"duplicate thread":  func(s *Saved) { s.Threads = append(s.Threads, s.Threads[0]) },
@@ -186,6 +186,20 @@ func TestSavedSharedBindingAndBusyInvariant(t *testing.T) {
 	s.Threads[0].Answers[0].ExecutionUnknown = true
 	if err := s.Validate(s.PRID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSavedUnknownAnswerRemainsHistoricalAfterExplicitContinuation(t *testing.T) {
+	s := savedFixture()
+	s.Threads[0].Answers[0].State = Interrupted
+	s.Threads[0].Answers[0].ExecutionUnknown = true
+	s.Threads[0].Answers[0].FailureCode = "runtime-restarted"
+	next := s.Threads[0].Answers[0]
+	next.ID = strings.Repeat("4", 64)
+	next.State, next.ExecutionUnknown, next.FailureCode, next.Text = Pending, false, "", ""
+	s.Threads[0].Answers = append(s.Threads[0].Answers, next)
+	if err := s.Validate(s.PRID); err != nil {
+		t.Fatal("historical execution uncertainty was treated as a permanent active native capability")
 	}
 }
 

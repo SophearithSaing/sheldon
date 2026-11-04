@@ -89,7 +89,7 @@ async function events<T>(path: string): Promise<T[]> {
  * @param options Optional real development CLI/Vite and synthetic native-answer tools.
  * @returns Isolated CLI controller with deterministic native PR source and explicit cleanup.
  */
-export async function offlineCLI(options: { development?: boolean; questions?: boolean } = {}): Promise<OfflineCLI> {
+export async function offlineCLI(options: { development?: boolean; questions?: boolean; nativePersistence?: boolean } = {}): Promise<OfflineCLI> {
   const realGit = await executable('git')
   const directory = await mkdtemp(join(tmpdir(), 'sheldon-source-cli-'))
   const tools = join(directory, 'tools')
@@ -121,6 +121,7 @@ export async function offlineCLI(options: { development?: boolean; questions?: b
     SHELDON_GIT_REAL: realGit, SHELDON_GIT_UPSTREAM: upstream, SHELDON_GIT_AUDIT: auditPath, SHELDON_GIT_MODE: '',
     SHELDON_SOURCE_METADATA: metadata, SHELDON_SOURCE_LAUNCHES: launches, SHELDON_SOURCE_GH_AUDIT: join(directory, 'gh-audit.jsonl'),
     SHELDON_NATIVE_MODE: 'answer-browser', SHELDON_NATIVE_AUDIT: nativeAuditPath, SHELDON_NATIVE_CONTROL: nativeControl,
+    SHELDON_NATIVE_STATE: options.nativePersistence ? join(directory, 'synthetic-native-state') : '',
     ...(frontend ? { SHELDON_DEV_ORIGIN: frontend, SHELDON_DEV_LISTEN: '127.0.0.1:0' } : {}),
   }
   let child: ChildProcess | undefined

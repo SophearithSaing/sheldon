@@ -468,7 +468,7 @@ func TestQuestionAdmissionDoesNotInitializeMissingSourceCache(t *testing.T) {
 	if _, err := os.Stat(paths.Cache); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("question recreated the missing cache root")
 	}
-	if _, err := service.BeginFollowup(context.Background(), pr.ID, strings.Repeat("e", 64), question.FollowupRequest{RevisionID: strings.Repeat("f", 64), Question: "Unknown thread."}); !errors.Is(err, question.ErrSessionUnavailable) {
+	if _, err := service.BeginFollowup(context.Background(), pr.ID, strings.Repeat("e", 64), question.FollowupRequest{RevisionID: strings.Repeat("f", 64), Question: "Unknown thread."}); !errors.Is(err, question.ErrNotFound) {
 		t.Fatal("unknown follow-up initialized runtime state")
 	}
 }

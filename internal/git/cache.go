@@ -45,6 +45,16 @@ type repositoryMarker struct {
 
 // Open creates cache ownership/control files, never durable review records or a checkout.
 func Open(paths platform.Paths) (*Cache, error) {
+	return openCache(paths, false)
+}
+
+// OpenExisting attaches only an already-owned cache; it never recreates missing source ownership or repositories.
+func OpenExisting(paths platform.Paths) (*Cache, error) {
+	return openCache(paths, true)
+}
+
+// openCache verifies ownership before creating only disposable Git invocation controls.
+func openCache(paths platform.Paths, existing bool) (*Cache, error) {
 	if err := paths.Validate(); err != nil {
 		return nil, err
 	}
@@ -68,12 +78,21 @@ func Open(paths platform.Paths) (*Cache, error) {
 	if err := physical.Validate(); err != nil {
 		return nil, err
 	}
-	if err := privateDirectory(paths.Cache); err != nil {
-		return nil, err
+	var rootErr error
+	if existing {
+		rootErr = checkEntry(paths.Cache, true)
+	} else {
+		rootErr = privateDirectory(paths.Cache)
+	}
+	if rootErr != nil {
+		return nil, rootErr
 	}
 	owner := cacheOwner{Version: 1, DataRoot: data}
 	ownerPath := filepath.Join(paths.Cache, "owner.json")
 	if _, err := os.Lstat(ownerPath); errors.Is(err, os.ErrNotExist) {
+		if existing {
+			return nil, ErrQuestionSourceUnavailable
+		}
 		entries, err := os.ReadDir(paths.Cache)
 		if err != nil {
 			return nil, err
@@ -91,8 +110,14 @@ func Open(paths platform.Paths) (*Cache, error) {
 	if readJSON(ownerPath, &saved) != nil || saved != owner {
 		return nil, errors.New("cache belongs to another data root or has invalid ownership metadata; use a separate cache")
 	}
-	if err := privateDirectory(filepath.Join(paths.Cache, "repositories")); err != nil {
-		return nil, err
+	repositories := filepath.Join(paths.Cache, "repositories")
+	if existing {
+		rootErr = checkEntry(repositories, true)
+	} else {
+		rootErr = privateDirectory(repositories)
+	}
+	if rootErr != nil {
+		return nil, rootErr
 	}
 	controls, err := os.MkdirTemp(paths.Cache, ".git-controls-")
 	if err != nil {

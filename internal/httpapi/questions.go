@@ -262,8 +262,11 @@ func validAnswer(answer question.Answer, r *http.Request) bool {
 		return false
 	}
 	switch answer.FailureCode {
-	case "", "source-unavailable", "execution-failed", "answer-too-large", "execution-uncertain":
+	case "", "source-unavailable", "execution-failed", "answer-too-large", "execution-uncertain", "runtime-restarted":
 	default:
+		return false
+	}
+	if answer.FailureCode == "runtime-restarted" && (answer.State != question.Interrupted || !answer.ExecutionUnknown) {
 		return false
 	}
 	if answer.State == question.Completed && (answer.Text == "" || answer.ExecutionUnknown) {

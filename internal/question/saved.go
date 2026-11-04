@@ -90,7 +90,7 @@ func (s Saved) Validate(prID string) error {
 			if b.Native != nil {
 				return invalid
 			}
-		} else if b.State != "bound" || b.Native == nil || b.Native.Validate() != nil || nativeIDs[b.Native.SessionID] {
+		} else if b.State != "bound" || b.Native == nil || b.Native.ValidateSaved() != nil || nativeIDs[b.Native.SessionID] {
 			return invalid
 		}
 		if b.Native != nil {
@@ -140,7 +140,7 @@ func (s Saved) Validate(prID string) error {
 			default:
 				return invalid
 			}
-			if answer.State == Pending || answer.State == Streaming || answer.ExecutionUnknown {
+			if answer.State == Pending || answer.State == Streaming {
 				if n != len(thread.Answers)-1 || active[thread.RevisionID] {
 					return invalid
 				}

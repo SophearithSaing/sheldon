@@ -349,7 +349,7 @@ test('remote busy rejection retains a follow-up and explicit recovery never crea
   expect(attempts).toBe(2)
 })
 
-test('unknown execution stays busy and wrong-scope stream text is never rendered', async ({ page }, testInfo): Promise<void> => {
+for (const reason of ['execution-uncertain', 'runtime-restarted'] as const) test(`unknown ${reason} execution stays busy and wrong-scope stream text is never rendered`, async ({ page }, testInfo): Promise<void> => {
   const f = await fixture(page, 724)
   await ask(page, 2, 'Synthetic unknown fixture.')
   const answer = f.answers[0]!
@@ -359,7 +359,7 @@ test('unknown execution stays busy and wrong-scope stream text is never rendered
   await expect(page.locator('.answer-text')).toHaveText('Synthetic retained text.')
   expect(await page.content()).not.toContain('WRONG SCOPE SECRET')
   await page.getByRole('button', { name: 'Reconnect answer observation', exact: true }).click()
-  await snapshot(page, answer, { state: 'interrupted', text: 'Synthetic retained text.', executionUnknown: true, failureCode: 'execution-uncertain' }, true)
+  await snapshot(page, answer, { state: 'interrupted', text: 'Synthetic retained text.', executionUnknown: true, failureCode: reason }, true)
   await expect(page.getByText('Interrupted / execution unknown', { exact: false })).toBeVisible()
   const draft = page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })
   await draft.fill('Editable but not sent.')
