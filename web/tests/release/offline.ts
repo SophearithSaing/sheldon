@@ -206,7 +206,7 @@ export async function offlineCLI(options: { development?: boolean; questions?: b
       })
     })
     current = await discovery()
-    if (output.includes(current.token)) throw new Error('CLI output exposed its launch credential.')
+    if (!output.includes(`API token: ${current.token}\n`) || output.replace(`API token: ${current.token}\n`, '').includes(current.token)) throw new Error('CLI startup token was missing or repeated outside its labeled line.')
     if (frontend) {
       await expect.poll((): boolean => output.includes('The backend remains running.')).toBe(true)
       vite = spawn(process.execPath, [join(repository, 'web/tests/development/vite-server.mjs')], {
@@ -272,7 +272,7 @@ export async function offlineCLI(options: { development?: boolean; questions?: b
       return
     }
     if (active.exitCode !== 0) throw new Error('Offline source CLI did not stop gracefully.')
-    if (current && output.includes(current.token)) throw new Error('CLI output exposed its credential.')
+    if (current && output.replace(`API token: ${current.token}\n`, '').includes(current.token)) throw new Error('CLI output exposed its credential outside the startup line.')
     if ((await readFile(stateFile)).subarray(1).toString().trim()) throw new Error('Shutdown retained instance credentials.')
     if (current && await fetch(current.url + '/api/health', { signal: AbortSignal.timeout(1000) }).catch((): undefined => undefined)) throw new Error('Shutdown retained a listener.')
   }
