@@ -26,6 +26,7 @@ export interface OfflineCLI {
   start(url: string, hangFetch?: boolean): Promise<string>
   open(url: string): Promise<string>
   stop(): Promise<void>
+  crash(): Promise<void>
   close(): Promise<void>
   discovery(): Promise<Discovery>
   git(dir: string, input: string, ...args: string[]): Promise<string>
@@ -238,8 +239,11 @@ export async function offlineCLI(options: { development?: boolean; questions?: b
     return launch(before)
   }
 
-  /** Stops the actual writer and verifies process, credential and listener cleanup. */
-  async function stop(): Promise<void> {
+  /**
+   * Stops the actual writer, checking orderly cleanup or intentionally bypassing shutdown.
+   * @param abrupt Whether to SIGKILL the writer and clean up only test-owned native children.
+   */
+  async function stop(abrupt = false): Promise<void> {
     if (vite?.pid && vite.exitCode === null && vite.signalCode === null) {
       const server = vite
       const done = new Promise<void>((resolve): void => { server.once('exit', (): void => resolve()) })
@@ -254,16 +258,27 @@ export async function offlineCLI(options: { development?: boolean; questions?: b
     if (active.pid && active.exitCode === null && active.signalCode === null) {
       const done = new Promise<void>((resolve): void => { active.once('exit', (): void => resolve()) })
       const timer = setTimeout((): void => { active.kill('SIGKILL') }, 5000)
-      active.kill('SIGTERM')
+      active.kill(abrupt ? 'SIGKILL' : 'SIGTERM')
       await done
       clearTimeout(timer)
     }
     child = undefined
+    if (abrupt) {
+      for (const entry of await events<NativeAudit>(nativeAuditPath)) {
+        if (!entry.pid || !entry.args?.includes('serve')) continue
+        try { process.kill(-entry.pid, 'SIGKILL') } catch (failure: unknown) { if ((failure as NodeJS.ErrnoException).code !== 'ESRCH') throw failure }
+      }
+      if (active.signalCode !== 'SIGKILL') throw new Error('Offline CLI crash did not bypass graceful shutdown.')
+      return
+    }
     if (active.exitCode !== 0) throw new Error('Offline source CLI did not stop gracefully.')
     if (current && output.includes(current.token)) throw new Error('CLI output exposed its credential.')
     if ((await readFile(stateFile)).subarray(1).toString().trim()) throw new Error('Shutdown retained instance credentials.')
     if (current && await fetch(current.url + '/api/health', { signal: AbortSignal.timeout(1000) }).catch((): undefined => undefined)) throw new Error('Shutdown retained a listener.')
   }
+
+  /** Kills only this fixture's writer without allowing application shutdown saves. */
+  async function crash(): Promise<void> { await stop(true) }
 
   /** Stops owned children and removes only this fixture's temporary directory. */
   async function close(): Promise<void> {
@@ -327,7 +342,7 @@ export async function offlineCLI(options: { development?: boolean; questions?: b
       await writeFile(nativeControl + '.next', JSON.stringify({ input, outcome }), { mode: 0o600 })
       await rename(nativeControl + '.next', nativeControl)
     }
-    return { directory, cache, stateFile, upstream, mergeBase, baseTip, firstHead, secondHead, start, open, stop, close, discovery, git, head, audit, nativeAudit, answer }
+    return { directory, cache, stateFile, upstream, mergeBase, baseTip, firstHead, secondHead, start, open, stop, crash, close, discovery, git, head, audit, nativeAudit, answer }
   } catch (failure: unknown) {
     await close()
     throw failure

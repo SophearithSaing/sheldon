@@ -1,5 +1,5 @@
 import { expect, type BrowserContext, type Page, type Response, type TestInfo } from '@playwright/test'
-import { access, readdir, readFile } from 'node:fs/promises'
+import { access, readdir, readFile, rename } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { offlineCLI, type NativeAudit, type OfflineCLI } from '../release/offline'
 import type { SourceResponse } from '../../src/runtime/source'
@@ -154,6 +154,12 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
     expect((await prompts(fixture)).length).toBe(1)
     expect((await savedAdmissions(fixture, original.prID)).threads).toHaveLength(1)
     await tab.screenshot({ path: info.outputPath('native-question-busy.png') })
+    await tab.getByRole('button', { name: 'Questions', exact: true }).click()
+    await tab.getByRole('button', { name: `Open thread: ${original.question}`, exact: true }).click()
+    await expect(tab.locator('.answer-text')).toHaveText('Synthetic fixture ')
+    expect((await prompts(fixture)).length).toBe(1)
+    await tab.getByRole('button', { name: /Files changed/, exact: false }).click()
+    await expect(tab.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('Retain this second-tab draft while the shared revision is busy.')
 
     const other = await context.newPage()
     await track(other)
@@ -198,7 +204,7 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
     await fixture.answer(4, 'failed')
     await expect(tab.getByText('Failed', { exact: true })).toBeVisible()
     await expect(tab.locator('.answer-text')).toHaveText('Synthetic fixture ')
-    await expect(tab.locator('[data-answer]')).toHaveCount(1)
+    await expect(tab.locator('[data-answer]')).toHaveCount(2)
     await expect(tab.getByRole('form', { name: 'New question', exact: true })).toHaveCount(0)
     await tab.screenshot({ path: info.outputPath('native-question-failed.png') })
     const recovery = await followup(tab, 'Explicit follow-up after the synthetic failure.')
@@ -207,6 +213,11 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
     await fixture.answer(5, 'succeeded')
     await expect(tab.getByText('Completed', { exact: true })).toBeVisible()
     await expect(tab.locator('.answer-text')).toHaveText(['Synthetic fixture ', 'Synthetic fixture answer <script>literal</script>.'])
+    await page.getByRole('button', { name: 'Questions', exact: true }).click()
+    await expect(page.getByRole('button', { name: /^Open thread:/ })).toHaveCount(2)
+    await expect(page.getByRole('button', { name: `Open thread: ${original.question}`, exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: `Open thread: ${separate.question}`, exact: true })).toBeVisible()
+    await page.getByRole('button', { name: /Files changed/, exact: false }).click()
     expect((await fixture.nativeAudit()).filter((entry): boolean => entry.method === 'POST' && entry.path === '/api/session')).toHaveLength(2)
     for (const index of [2, 3, 4]) expect((await prompts(fixture))[index]!.path).toBe(originalPath)
 
@@ -321,7 +332,26 @@ export async function questionReopenFlow(page: Page, development: boolean): Prom
     await expect.poll(async (): Promise<number> => (await prompts(fixture)).length).toBe(2)
     await fixture.answer(2, 'succeeded')
     await expect(page.getByText('Current answer saved locally.', { exact: true })).toHaveCount(2)
+    const siblingResponse = await ask(page, 'Synthetic sibling thread before restart.')
+    expect(siblingResponse.status()).toBe(202)
+    const sibling = await siblingResponse.json() as QuestionAnswer
+    expect(sibling.threadID).not.toBe(original.threadID)
+    expect(sibling.revisionID).toBe(original.revisionID)
+    await expect.poll(async (): Promise<number> => (await prompts(fixture)).length).toBe(3)
+    await fixture.answer(3, 'succeeded')
+    await expect(page.getByText('Current answer saved locally.', { exact: true })).toHaveCount(1)
+    const connected = await fixture.discovery()
+    await page.reload()
+    await expect(page.getByLabel('API token', { exact: true })).toHaveValue('')
+    await page.getByLabel('API token', { exact: true }).fill(connected.token)
+    await page.getByRole('button', { name: 'Connect backend', exact: true }).click()
+    await page.getByRole('button', { name: 'Questions', exact: true }).click()
+    await expect(page.getByRole('button', { name: /^Open thread:/ })).toHaveCount(2)
+    await page.getByRole('button', { name: 'Open thread: Synthetic original input before restart.', exact: true }).click()
+    await expect(page.locator('.answer-text')).toHaveCount(2)
+    expect((await prompts(fixture)).length).toBe(3)
     const path = (await prompts(fixture))[0]!.path!
+    expect((await prompts(fixture)).every((entry): boolean => entry.path === path)).toBe(true)
     const before = await savedAdmissions(fixture, original.prID)
     await fixture.stop()
     const restarted = await fixture.start('https://github.com/fixture/repo/pull/31')
@@ -329,7 +359,7 @@ export async function questionReopenFlow(page: Page, development: boolean): Prom
     await page.goto('about:blank')
     await page.goto(restarted)
     await expect(page.getByRole('heading', { name: 'PR registered. Source not loaded.', exact: true })).toBeVisible()
-    expect((await prompts(fixture)).length).toBe(2)
+    expect((await prompts(fixture)).length).toBe(3)
     const origin = new URL(restarted).origin
     const nativeBeforeRead = (await fixture.nativeAudit()).length
     const gitBeforeRead = (await fixture.audit()).length
@@ -338,7 +368,7 @@ export async function questionReopenFlow(page: Page, development: boolean): Prom
     expect(listResponse.headers()['cache-control']).toBe('no-store')
     const savedList = await listResponse.json() as { version: string; threads: { threadID: string }[] }
     expect(typeof savedList.version).toBe('string')
-    expect(savedList.threads.map((thread): string => thread.threadID)).toEqual([original.threadID])
+    expect(savedList.threads.map((thread): string => thread.threadID)).toEqual([original.threadID, sibling.threadID])
     const detailResponse = await page.request.get(`${origin}/api/reviews/${original.prID}/threads/${original.threadID}`, { headers: { Authorization: `Bearer ${discovery.token}` } })
     expect(detailResponse.status()).toBe(200)
     const detail = await detailResponse.json() as { answers: QuestionAnswer[]; context: { revisionID: string }; session: { state: string } }
@@ -358,16 +388,17 @@ export async function questionReopenFlow(page: Page, development: boolean): Prom
     expect(answer.threadID).toBe(original.threadID)
     expect(answer.revisionID).toBe(original.revisionID)
     expect(answer.answerID).not.toBe(original.answerID)
-    await expect.poll(async (): Promise<number> => (await prompts(fixture)).length).toBe(3)
-    expect((await prompts(fixture))[2]!.path).toBe(path)
-    expect((await prompts(fixture))[2]!.body).toContain('Synthetic new explicit question after restart.')
-    await fixture.answer(3, 'succeeded')
+    await expect.poll(async (): Promise<number> => (await prompts(fixture)).length).toBe(4)
+    expect((await prompts(fixture))[3]!.path).toBe(path)
+    expect((await prompts(fixture))[3]!.body).toContain('Synthetic new explicit question after restart.')
+    await fixture.answer(4, 'succeeded')
     await expect(page.getByText('Current answer saved locally.', { exact: true })).toHaveCount(3)
     await expect.poll(async (): Promise<string> => (await savedAdmissions(fixture, original.prID)).threads[0]!.answers.at(-1)!.state).toBe('completed')
     const after = await savedAdmissions(fixture, original.prID)
     expect(after.bindings).toEqual(before.bindings)
     expect(after.threads[0]!.answers.slice(0, 2)).toEqual(before.threads[0]!.answers)
     expect(after.threads[0]!.answers).toHaveLength(3)
+    expect(after.threads[1]).toEqual(before.threads[1])
     const native = await fixture.nativeAudit()
     expect(native.filter((entry): boolean => entry.path === '/api/model/default')).toHaveLength(1)
     expect(native.filter((entry): boolean => entry.method === 'POST' && entry.path === '/api/session')).toHaveLength(1)
@@ -375,5 +406,65 @@ export async function questionReopenFlow(page: Page, development: boolean): Prom
     await expect(page.locator('[data-answer]')).toHaveCount(0)
     await page.getByRole('button', { name: 'Files changed', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'PR registered. Source not loaded.', exact: true })).toBeVisible()
+  } finally { await fixture.close() }
+}
+
+/**
+ * Proves abrupt exit retains saved partial outcomes but never fabricates unsaved streaming output.
+ * @param page Actual application page without HTTP success mocks.
+ * @param info Screenshot destination.
+ * @param development Whether to use the protected Vite development proxy.
+ * @param loss Original state deliberately made unavailable after the crash.
+ */
+export async function questionCrashFlow(page: Page, info: TestInfo, development: boolean, loss: 'source' | 'native' | 'busy'): Promise<void> {
+  const fixture = await offlineCLI({ development, questions: true, nativePersistence: true })
+  await preserveResponseBodies(page)
+  try {
+    await page.goto(await fixture.start('https://github.com/fixture/repo/pull/31'))
+    await source(page, 'Load pinned source')
+    await page.getByRole('button', { name: 'shared.txt', exact: true }).click()
+    const admitted = await ask(page, 'Synthetic saved partial outcome before abrupt exit.')
+    expect(admitted.status()).toBe(202)
+    const original = await admitted.json() as QuestionAnswer
+    await expect.poll(async (): Promise<number> => (await prompts(fixture)).length).toBe(1)
+    await fixture.answer(1, 'failed')
+    await expect(page.getByText('Current answer saved locally.', { exact: true })).toBeVisible()
+    const active = await followup(page, 'Synthetic unfinished input; never replay after crash.')
+    await expect.poll(async (): Promise<number> => (await prompts(fixture)).length).toBe(2)
+    await expect(page.locator('.answer-text')).toHaveText(['Synthetic fixture ', 'Synthetic fixture '])
+    const before = await savedAdmissions(fixture, original.prID)
+    expect(before.threads[0]!.answers).toMatchObject([{ state: 'failed', text: 'Synthetic fixture ' }, { answerID: active.answerID, state: 'pending', text: '' }])
+    await fixture.crash()
+    expect(await savedAdmissions(fixture, original.prID)).toEqual(before)
+    if (loss === 'source') await rename(fixture.cache, fixture.cache + '-withheld-by-test')
+    if (loss === 'native') await rename(join(fixture.directory, 'synthetic-native-state'), join(fixture.directory, 'synthetic-native-state-withheld-by-test'))
+    const nativeBefore = await fixture.nativeAudit()
+    const gitBefore = await fixture.audit()
+    const restarted = await fixture.start('https://github.com/fixture/repo/pull/31')
+    page.once('dialog', async (dialog): Promise<void> => { await dialog.accept() })
+    await page.goto('about:blank')
+    await page.goto(restarted)
+    await page.getByRole('button', { name: 'Questions', exact: true }).click()
+    await page.getByRole('button', { name: `Open thread: ${original.question}`, exact: true }).click()
+    await expect(page.locator('.turn')).toHaveCount(2)
+    await expect(page.locator('.answer-text')).toHaveText(['Synthetic fixture '])
+    await expect(page.locator('.execution-status').last()).toContainText('Interrupted after restart')
+    const classified = await savedAdmissions(fixture, original.prID)
+    expect(classified.bindings).toEqual(before.bindings)
+    expect(classified.threads[0]!.answers[0]).toEqual(before.threads[0]!.answers[0])
+    expect(classified.threads[0]!.answers[1]).toMatchObject({ answerID: active.answerID, state: 'interrupted', text: '', executionUnknown: true, failureCode: 'runtime-restarted' })
+    expect(await fixture.nativeAudit()).toEqual(nativeBefore)
+    expect(await fixture.audit()).toEqual(gitBefore)
+    const draft = page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })
+    await draft.fill('New input must fail closed without original safe state.')
+    const rejected = response(page, '/answers')
+    await page.getByRole('button', { name: 'Send follow-up', exact: true }).click()
+    expect((await rejected).status()).toBe(loss === 'source' ? 410 : 503)
+    await expect(draft).toHaveValue('New input must fail closed without original safe state.')
+    await expect(page.locator('.answer-text')).toHaveText(['Synthetic fixture '])
+    expect((await prompts(fixture)).length).toBe(2)
+    expect((await fixture.nativeAudit()).filter((entry): boolean => entry.method === 'POST' && entry.path === '/api/session')).toHaveLength(1)
+    expect(await savedAdmissions(fixture, original.prID)).toEqual(classified)
+    await page.screenshot({ path: info.outputPath(`restart-unavailable-${loss}.png`), fullPage: true })
   } finally { await fixture.close() }
 }
