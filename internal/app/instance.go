@@ -22,6 +22,7 @@ type instance struct {
 	questions              *question.Runtime
 	questionStoreMu        sync.Mutex
 	questionStoreUncertain map[string]bool
+	questionsLoaded        map[string]bool
 	closing                bool
 	closeOnce              sync.Once
 	closeErr               error

@@ -286,6 +286,7 @@ export async function questionFlow(page: Page, context: BrowserContext, info: Te
     await reopenedPage.getByRole('button', { name: 'shared.txt', exact: true }).click()
     const blocked = await ask(reopenedPage, 'Do not replace this revision binding after restart.')
     expect(blocked.status()).toBe(503)
+    expect((await savedAdmissions(fixture, original.prID)).threads.flatMap((thread): QuestionAnswer[] => thread.answers).at(-1)).toMatchObject({ state: 'interrupted', text: '', executionUnknown: true, failureCode: 'runtime-restarted' })
     await expect(reopenedPage.getByRole('textbox', { name: 'Your question', exact: true })).toHaveValue('Do not replace this revision binding after restart.')
     await expect(reopenedPage.locator('[data-answer]')).toHaveCount(0)
     expect((await prompts(fixture)).length).toBe(6)

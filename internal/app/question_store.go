@@ -21,18 +21,42 @@ var (
 	errQuestionReplace  = question.ErrSaveUncertain
 )
 
-// ReadQuestions supplies private saved snapshots to the question runtime, without native work.
-func (i *instance) ReadQuestions(prID string) (question.Saved, error) { return i.readQuestions(prID) }
+// ReadQuestions lazily classifies previous-run unfinished answers without source or native work.
+func (i *instance) ReadQuestions(prID string) (question.Saved, error) {
+	i.questionStoreMu.Lock()
+	defer i.questionStoreMu.Unlock()
+	saved, err := i.readQuestionsLocked(prID)
+	if err != nil || i.questionsLoaded[prID] {
+		return saved, err
+	}
+	if next, changed := saved.InterruptUnfinished(); changed {
+		if saved.Version == ^uint64(0) {
+			return question.Saved{}, errQuestionStore
+		}
+		next.Version++
+		if err := i.saveQuestionsLocked(next, saved.Version); err != nil {
+			return question.Saved{}, err
+		}
+		saved = next
+	}
+	i.markQuestionsLoaded(prID)
+	return saved, nil
+}
 
-// SaveQuestions commits one checked predecessor generation before native prompt dispatch.
+// SaveQuestions commits a checked admission or terminal answer under writer ownership.
 func (i *instance) SaveQuestions(next question.Saved, expected uint64) error {
 	return i.saveQuestions(next, expected)
 }
 
-// readQuestions reads saved history without opening source caches or native services.
+// readQuestions reads raw private storage; history/runtime callers use ReadQuestions for restart classification.
 func (i *instance) readQuestions(prID string) (question.Saved, error) {
 	i.questionStoreMu.Lock()
 	defer i.questionStoreMu.Unlock()
+	return i.readQuestionsLocked(prID)
+}
+
+// readQuestionsLocked reads raw storage with the question store mutex already held.
+func (i *instance) readQuestionsLocked(prID string) (question.Saved, error) {
 	root, err := i.questionDirectory(prID, false)
 	if err != nil {
 		return question.Saved{}, err
@@ -52,6 +76,11 @@ func (i *instance) readQuestions(prID string) (question.Saved, error) {
 func (i *instance) saveQuestions(next question.Saved, expected uint64) error {
 	i.questionStoreMu.Lock()
 	defer i.questionStoreMu.Unlock()
+	return i.saveQuestionsLocked(next, expected)
+}
+
+// saveQuestionsLocked replaces a generation with the question store mutex already held.
+func (i *instance) saveQuestionsLocked(next question.Saved, expected uint64) error {
 	if i.questionStoreUncertain[next.PRID] {
 		return errQuestionReplace
 	}
@@ -85,6 +114,9 @@ func (i *instance) saveQuestions(next question.Saved, expected uint64) error {
 		defer root.Close()
 	}
 	err = replaceQuestionFile(root, append(data, '\n'))
+	if err == nil {
+		i.markQuestionsLoaded(next.PRID)
+	}
 	if errors.Is(err, errQuestionReplace) {
 		if i.questionStoreUncertain == nil {
 			i.questionStoreUncertain = make(map[string]bool)
@@ -92,6 +124,14 @@ func (i *instance) saveQuestions(next question.Saved, expected uint64) error {
 		i.questionStoreUncertain[next.PRID] = true
 	}
 	return err
+}
+
+// markQuestionsLoaded keeps this writer's new admissions out of restart classification.
+func (i *instance) markQuestionsLoaded(prID string) {
+	if i.questionsLoaded == nil {
+		i.questionsLoaded = make(map[string]bool)
+	}
+	i.questionsLoaded[prID] = true
 }
 
 // questionDirectory verifies writer membership and each private managed parent before access.

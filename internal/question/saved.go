@@ -48,6 +48,28 @@ func EmptySaved(prID string) Saved {
 	return Saved{SchemaVersion: 1, PRID: prID, Bindings: []SavedBinding{}, Threads: []SavedThread{}}
 }
 
+// InterruptUnfinished copies unfinished saved turns as restart interruptions, never native-idle proof.
+// The caller must validate the snapshot and persist a new generation before exposing changes.
+func (s Saved) InterruptUnfinished() (Saved, bool) {
+	next := s
+	changed := false
+	for n, thread := range s.Threads {
+		for k, answer := range thread.Answers {
+			if answer.State != Pending && answer.State != Streaming {
+				continue
+			}
+			if !changed {
+				next.Threads = append([]SavedThread(nil), s.Threads...)
+				changed = true
+			}
+			next.Threads[n].Answers = append([]Answer(nil), thread.Answers...)
+			answer.State, answer.ExecutionUnknown, answer.FailureCode = Interrupted, true, "runtime-restarted"
+			next.Threads[n].Answers[k] = answer
+		}
+	}
+	return next, changed
+}
+
 // Validate checks the complete saved graph without accessing Git or native history.
 func (s Saved) Validate(prID string) error {
 	invalid := errors.New("invalid saved question graph")
@@ -108,6 +130,9 @@ func (s Saved) Validate(prID string) error {
 				return invalid
 			}
 			if answer.State == Completed && (strings.TrimSpace(answer.Text) == "" || answer.ExecutionUnknown) || answer.ExecutionUnknown && answer.State != Interrupted {
+				return invalid
+			}
+			if answer.FailureCode == "runtime-restarted" && (answer.State != Interrupted || !answer.ExecutionUnknown) {
 				return invalid
 			}
 			switch answer.FailureCode {

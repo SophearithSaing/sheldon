@@ -284,19 +284,26 @@ func TestQuestionStoreRawReadersSeeWholeGenerations(t *testing.T) {
 	}
 }
 
-func TestQuestionStoreReopensTranscriptWithoutCacheOrNativeState(t *testing.T) {
-	paths := testPaths(t)
-	i := ownedPRInstance(t, paths.Data)
+// questionTranscriptFixture supplies saved quotes with a deliberately missing original worktree.
+func questionTranscriptFixture(t *testing.T, i *instance, cache string) question.Saved {
+	t.Helper()
 	s := questionStoreFixture(t, i)
 	b := &s.Bindings[0]
 	b.State = "bound"
-	b.Native = &opencode.BindingRecord{SessionID: "ses_fixture", Directory: filepath.Join(paths.Cache, "missing-worktree"), Model: opencode.Model{ProviderID: "fixture", ID: "chat"}, Version: "2.1.4", Protocol: "sheldon-opencode-http-v1", Policy: 1}
+	b.Native = &opencode.BindingRecord{SessionID: "ses_fixture", Directory: filepath.Join(cache, "missing-worktree"), Model: opencode.Model{ProviderID: "fixture", ID: "chat"}, Version: "2.1.4", Protocol: "sheldon-opencode-http-v1", Policy: 1}
 	anchor := question.Anchor{Kind: "hunk", FileID: strings.Repeat("c", 64), HunkID: strings.Repeat("d", 64)}
 	line := git.DiffLine{ID: strings.Repeat("e", 64), Sign: "+", Text: "<literal source>", NewLine: 1}
 	context := question.Context{Revision: b.Revision, RevisionID: b.RevisionID, Anchor: anchor, NewPath: "file.go", Selected: []git.DiffLine{line}, Surrounding: git.DiffHunk{ID: anchor.HunkID, Old: git.DiffRange{ID: strings.Repeat("f", 64)}, New: git.DiffRange{ID: strings.Repeat("1", 64), Start: 1, Count: 1}, Lines: []git.DiffLine{line}}}
 	thread := question.SavedThread{ID: strings.Repeat("2", 64), RevisionID: b.RevisionID, Context: context}
 	thread.Answers = []question.Answer{{ID: strings.Repeat("3", 64), ThreadID: thread.ID, PRID: s.PRID, RevisionID: b.RevisionID, Question: "Explain literal source", Text: "Partial fixture answer", State: question.Streaming, Reference: question.Reference{RevisionID: b.RevisionID, Anchor: anchor, NewPath: "file.go"}}}
 	s.Threads = append(s.Threads, thread)
+	return s
+}
+
+func TestQuestionStoreReopensTranscriptWithoutCacheOrNativeState(t *testing.T) {
+	paths := testPaths(t)
+	i := ownedPRInstance(t, paths.Data)
+	s := questionTranscriptFixture(t, i, paths.Cache)
 	if err := i.saveQuestions(s, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -308,12 +315,12 @@ func TestQuestionStoreReopensTranscriptWithoutCacheOrNativeState(t *testing.T) {
 	i.close()
 	i = ownedPRInstance(t, paths.Data)
 	t.Setenv("PATH", "")
-	got, err := i.readQuestions(s.PRID)
-	if err != nil || len(got.Threads) != 1 || got.Threads[0].Answers[0].Text != "Partial fixture answer" || got.Threads[0].Answers[0].State != question.Streaming {
+	got, err := i.ReadQuestions(s.PRID)
+	if err != nil || len(got.Threads) != 1 || got.Threads[0].Answers[0].Text != "Partial fixture answer" || got.Threads[0].Answers[0].State != question.Interrupted || !got.Threads[0].Answers[0].ExecutionUnknown || got.Threads[0].Answers[0].FailureCode != "runtime-restarted" {
 		t.Fatalf("cold transcript: %v", err)
 	}
 	got.Threads[0].Answers[0].Text = "caller mutation"
-	again, err := i.readQuestions(s.PRID)
+	again, err := i.ReadQuestions(s.PRID)
 	if err != nil || again.Threads[0].Answers[0].Text != "Partial fixture answer" {
 		t.Fatal("returned slices alias storage")
 	}
