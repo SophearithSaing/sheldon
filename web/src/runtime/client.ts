@@ -48,6 +48,13 @@ export interface RuntimeClient {
    * @returns Scoped Stop snapshot, not an assumption of termination.
    */
   stopAnswer(answer: QuestionAnswer, signal: AbortSignal): Promise<QuestionAnswer>
+  /**
+   * Retries only the exact answer's local save, never its question or native execution.
+   * @param answer Original routed answer snapshot.
+   * @param signal Save request cancellation signal.
+   * @returns Updated saving status and retained answer.
+   */
+  saveAnswer(answer: QuestionAnswer, signal: AbortSignal): Promise<QuestionAnswer>
 }
 
 export interface RegisteredPR {
@@ -343,5 +350,16 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
     }
     return parseObservedAnswer(await readBoundedJSON(response, 2 * 1024 * 1024), answer)
   }
-  return { openPR, source, askQuestion, askFollowup, observeAnswer, stopAnswer }
+  /**
+   * Writes retained text to disk without admitting or replaying a question.
+   * @param answer Exact answer identity and comparison.
+   * @param signal Save request lifetime.
+   * @returns Validated current answer and persistence status.
+   */
+  async function saveAnswer(answer: QuestionAnswer, signal: AbortSignal): Promise<QuestionAnswer> {
+    const response = await post(`/api/reviews/${answer.prID}/threads/${answer.threadID}/answers/${answer.answerID}/save`, { revisionID: answer.revisionID }, AbortSignal.any([signal, AbortSignal.timeout(10000)]))
+    if (!response.ok) { await response.body?.cancel().catch((): void => {}); throw new Error('Answer saving failed. No question was resent.') }
+    return parseObservedAnswer(await readBoundedJSON(response, 2 * 1024 * 1024), answer)
+  }
+  return { openPR, source, askQuestion, askFollowup, observeAnswer, stopAnswer, saveAnswer }
 }

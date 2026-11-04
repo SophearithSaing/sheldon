@@ -17,7 +17,8 @@ func (s Saved) admissionHeadroom() error {
 		size := len(data)
 		for _, answer := range thread.Answers {
 			if answer.State == Pending || answer.State == Streaming || answer.ExecutionUnknown {
-				reserve := 6*maxAnswerBytes + 1024
+				text, _ := json.Marshal(answer.Text)
+				reserve := 6*maxAnswerBytes - (len(text) - 2) + 1024
 				size += reserve
 				total += reserve
 			}

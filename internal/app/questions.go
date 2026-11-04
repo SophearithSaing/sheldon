@@ -103,3 +103,12 @@ func (s *sourceRegistry) StopAnswer(prID, threadID, answerID string, input quest
 	}
 	return runtime.StopAnswer(prID, threadID, answerID, input)
 }
+
+// SaveAnswer retries only local persistence for the exact retained answer; no prompt is sent.
+func (s *sourceRegistry) SaveAnswer(ctx context.Context, prID, threadID, answerID string, input question.AnswerRequest) (question.Answer, error) {
+	runtime, err := s.questionRuntime()
+	if err != nil {
+		return question.Answer{}, err
+	}
+	return runtime.SaveAnswer(ctx, prID, threadID, answerID, input)
+}

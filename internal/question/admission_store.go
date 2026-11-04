@@ -40,7 +40,6 @@ func (r *Runtime) commitSaved(s Saved) error {
 	}
 	previous := s.Version
 	s.Version++
-	r.mergeFinished(&s)
 	if s.Validate(s.PRID) != nil || s.admissionHeadroom() != nil {
 		return ErrCapacity
 	}
@@ -110,19 +109,6 @@ func (r *Runtime) saveBoundSession(source Context, session *opencode.Session) er
 	return ErrPersistence
 }
 
-// mergeFinished includes known terminal predecessors at the next explicit admission boundary.
-func (r *Runtime) mergeFinished(s *Saved) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for n := range s.Threads {
-		for k, a := range s.Threads[n].Answers {
-			if turn := r.answers[a.ID]; turn != nil && turn.finished && turn.answer.PRID == s.PRID && turn.answer.ThreadID == s.Threads[n].ID {
-				s.Threads[n].Answers[k] = turn.answer
-			}
-		}
-	}
-}
-
 // saveAdmission commits a new pending turn before runtime publication or native dispatch.
 func (r *Runtime) saveAdmission(turn *Turn, followup bool) error {
 	r.persistMu.Lock()
@@ -131,7 +117,6 @@ func (r *Runtime) saveAdmission(turn *Turn, followup bool) error {
 	if err != nil {
 		return err
 	}
-	r.mergeFinished(&s)
 	bound := false
 	for _, b := range s.Bindings {
 		if b.RevisionID == turn.answer.RevisionID && b.State == "bound" && b.Native != nil && *b.Native == turn.binding.session.Binding() {
@@ -161,5 +146,9 @@ func (r *Runtime) saveAdmission(turn *Turn, followup bool) error {
 		}
 		s.Threads = append(s.Threads, SavedThread{ID: turn.answer.ThreadID, RevisionID: turn.answer.RevisionID, Context: quoted, Answers: []Answer{turn.answer}})
 	}
-	return r.commitSaved(s)
+	if err := r.commitSaved(s); err != nil {
+		return err
+	}
+	turn.saveState, turn.savedVersion = "saved", s.Version+1
+	return nil
 }

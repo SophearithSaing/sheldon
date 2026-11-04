@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 	"unicode/utf8"
 
@@ -23,6 +24,11 @@ type QuestionProvider interface {
 	AskFollowup(context.Context, string, string, question.FollowupRequest) (question.Answer, error)
 	ObserveAnswer(context.Context, string, string, string, question.AnswerRequest, func(question.Answer) error) error
 	StopAnswer(string, string, string, question.AnswerRequest) (question.Answer, error)
+}
+
+// AnswerSaveProvider retries disk persistence independently of native question dispatch.
+type AnswerSaveProvider interface {
+	SaveAnswer(context.Context, string, string, string, question.AnswerRequest) (question.Answer, error)
 }
 
 // questionProvider verifies canonical routes and registered membership before any question work.
@@ -197,8 +203,52 @@ func (s *Server) stopAnswer(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, answer)
 }
 
+// saveAnswer explicitly retries one retained answer's private file write, never its prompt.
+func (s *Server) saveAnswer(w http.ResponseWriter, r *http.Request) {
+	provider, ok := s.questionProvider(w, r)
+	if !ok {
+		return
+	}
+	saver, ok := provider.(AnswerSaveProvider)
+	if !ok {
+		writeError(w, 503, "answer saving unavailable")
+		return
+	}
+	var input question.AnswerRequest
+	if !questionBody(w, r, 1024, &input) {
+		return
+	}
+	if !githubpr.ValidID(input.RevisionID) {
+		writeError(w, 400, "invalid answer revision")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	answer, err := saver.SaveAnswer(ctx, r.PathValue("id"), r.PathValue("thread"), r.PathValue("answer"), input)
+	if err != nil {
+		writeQuestionError(w, err)
+		return
+	}
+	if !validAnswer(answer, r) || answer.RevisionID != input.RevisionID {
+		writeError(w, 500, "invalid saved answer result")
+		return
+	}
+	writeJSON(w, http.StatusOK, answer)
+}
+
 // validAnswer checks public scope and bounds before any provider data is serialized.
 func validAnswer(answer question.Answer, r *http.Request) bool {
+	if answer.Persistence != "" {
+		if answer.Persistence != "saved" && answer.Persistence != "saving" && answer.Persistence != "failed" {
+			return false
+		}
+		version, err := strconv.ParseUint(answer.SavedVersion, 10, 64)
+		if err != nil || version == 0 || strconv.FormatUint(version, 10) != answer.SavedVersion {
+			return false
+		}
+	} else if answer.SavedVersion != "" {
+		return false
+	}
 	if answer.PRID != r.PathValue("id") || !githubpr.ValidID(answer.ThreadID) || !githubpr.ValidID(answer.ID) || !githubpr.ValidID(answer.RevisionID) || len(answer.Text) > 256<<10 || !utf8.ValidString(answer.Text) || !question.ValidText(answer.Question) {
 		return false
 	}
@@ -231,6 +281,8 @@ func validAnswer(answer question.Answer, r *http.Request) bool {
 func writeQuestionError(w http.ResponseWriter, err error) {
 	status, message := 502, "question execution unavailable; no automatic retry was performed"
 	switch {
+	case errors.Is(err, question.ErrAnswerSave):
+		status, message = 409, question.ErrAnswerSave.Error()
 	case errors.Is(err, question.ErrSaveUncertain):
 		status, message = 500, question.ErrSaveUncertain.Error()
 	case errors.Is(err, question.ErrPersistence):

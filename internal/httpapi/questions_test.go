@@ -62,6 +62,12 @@ func (f *questionRegistryFixture) StopAnswer(string, string, string, question.An
 	return f.answer, f.err
 }
 
+// SaveAnswer returns synthetic saving status without invoking native work.
+func (f *questionRegistryFixture) SaveAnswer(context.Context, string, string, string, question.AnswerRequest) (question.Answer, error) {
+	f.calls.Add(1)
+	return f.answer, f.err
+}
+
 func TestQuestionRoutesEnforceAuthenticationScopeAndBounds(t *testing.T) {
 	pr, _ := githubpr.ParseURL("https://github.com/owner/repo/pull/1")
 	revision := githubpr.Revision{PRID: pr.ID, BaseBranch: "main", BaseSource: githubpr.GitHubBase, BaseSHA: strings.Repeat("a", 40), HeadSHA: strings.Repeat("b", 40), MergeBaseSHA: strings.Repeat("a", 40)}
@@ -91,6 +97,7 @@ func TestQuestionRoutesEnforceAuthenticationScopeAndBounds(t *testing.T) {
 		{base + "/threads/" + f.answer.ThreadID + "/answers", `{"revisionID":"` + revisionID + `","question":"  "}`, s.APIToken(), "application/json", 400},
 		{answerPath + "/events", scope, s.APIToken(), "application/json", 200},
 		{answerPath + "/stop", scope, s.APIToken(), "application/json", 202},
+		{answerPath + "/save", scope, s.APIToken(), "application/json", 200},
 		{answerPath + "/stop", strings.Repeat("x", 1025), s.APIToken(), "application/json", 413},
 	} {
 		r := request(t, s, client, "POST", tt.path, tt.body, map[string]string{"Authorization": "Bearer " + tt.token, "Content-Type": tt.media})
@@ -104,11 +111,11 @@ func TestQuestionRoutesEnforceAuthenticationScopeAndBounds(t *testing.T) {
 			}
 		}
 	}
-	if f.calls.Load() != 3 {
+	if f.calls.Load() != 4 {
 		t.Fatal("invalid requests reached question provider")
 	}
 	r := request(t, s, client, "POST", base+"/questions", string(initial), map[string]string{"Authorization": "Bearer " + s.APIToken(), "Content-Type": "application/json", "Origin": "https://attacker.invalid"})
-	if r.StatusCode != http.StatusForbidden || f.calls.Load() != 3 {
+	if r.StatusCode != http.StatusForbidden || f.calls.Load() != 4 {
 		t.Fatal("foreign Origin invoked inference provider")
 	}
 	f.err = question.ErrBusy
@@ -135,7 +142,7 @@ func TestEveryQuestionRouteRejectsUntrustedRequestsBeforeProviderWork(t *testing
 	base := "/api/reviews/" + pr.ID
 	thread := base + "/threads/" + strings.Repeat("a", 64) + "/answers"
 	answer := thread + "/" + strings.Repeat("b", 64)
-	for _, path := range []string{base + "/questions", thread, answer + "/events", answer + "/stop"} {
+	for _, path := range []string{base + "/questions", thread, answer + "/events", answer + "/stop", answer + "/save"} {
 		for _, test := range []struct {
 			headers map[string]string
 			query   string

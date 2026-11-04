@@ -117,6 +117,43 @@ async function reconnect(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'src/file0000.ts', exact: true })).toBeVisible()
 }
 
+test('saving is separate from completion and retry writes only the exact retained answer', async ({ page }, testInfo): Promise<void> => {
+  const f = await fixture(page, 749)
+  await ask(page, 2, 'Synthetic saving question.')
+  const answer = f.answers[0]!
+  const draft = page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })
+  await draft.fill('Retained while saving')
+  const completed: Partial<QuestionAnswer> = { state: 'completed', text: 'Synthetic retained final text.', persistence: 'saving', savedVersion: '1' }
+  await snapshot(page, answer, completed)
+  await expect(page.getByText('Completed', { exact: true })).toBeVisible()
+  await expect(page.getByText('Saving latest answer…', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Send follow-up', exact: true })).toBeDisabled()
+  await snapshot(page, answer, { ...completed, persistence: 'failed' }, true)
+  await expect(page.locator('.saving-status')).toContainText('Not saved. Latest text is retained only in this runtime.')
+  await draft.press('Enter')
+  expect(f.followups).toHaveLength(0)
+  await page.screenshot({ path: testInfo.outputPath('answer-save-failed.png'), fullPage: true })
+  let saves = 0
+  await page.route(`**/answers/${answer.answerID}/save`, async (route): Promise<void> => {
+    saves++
+    expect(route.request().headers()['authorization']).toBe(`Bearer ${await token()}`)
+    expect(route.request().postDataJSON()).toEqual({ revisionID: answer.revisionID })
+    if (saves === 1) await route.fulfill({ status: 409, json: { error: 'Synthetic storage failure.' } })
+    else await route.fulfill({ json: { ...answer, ...completed, persistence: 'saved', savedVersion: '2' } })
+  })
+  await page.getByRole('button', { name: 'Retry saving', exact: true }).click()
+  await expect(page.getByText('Saving failed. Text is retained in this runtime; no question was resent.', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Retry saving', exact: true }).click()
+  await expect(page.getByText('Current answer saved locally.', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Send follow-up', exact: true })).toBeEnabled()
+  await expect(draft).toHaveValue('Retained while saving')
+  await expect(page.locator('.answer-text')).toHaveText('Synthetic retained final text.')
+  expect(saves).toBe(2)
+  expect(f.answers).toHaveLength(1)
+  expect(f.followups).toHaveLength(0)
+  await page.screenshot({ path: testInfo.outputPath('answer-saved.png'), fullPage: true })
+})
+
 test('real streamed snapshots stay escaped and do not steal source selection, focus or drafts', async ({ page }, testInfo): Promise<void> => {
   const f = await fixture(page, 720)
   await ask(page, 2, 'Synthetic first question.')
@@ -235,11 +272,13 @@ test('late Stop acknowledgements cannot regress a completed answer', async ({ pa
   })
   await page.getByRole('button', { name: 'Stop this answer', exact: true }).click()
   await expect.poll((): boolean => !!release).toBe(true)
-  await snapshot(page, answer, { state: 'completed', text: 'Synthetic completed before Stop acknowledgement.' }, true)
+  await snapshot(page, answer, { state: 'completed', text: 'Synthetic completed before Stop acknowledgement.', persistence: 'saving', savedVersion: '1' })
   release!()
   await expect(page.getByText('Stop check returned a terminal answer snapshot.', { exact: true })).toBeVisible()
   await expect(page.locator('.answer-text')).toHaveText('Synthetic completed before Stop acknowledgement.')
   await expect(page.getByText('Completed', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Send follow-up', exact: true })).toBeDisabled()
+  await snapshot(page, answer, { state: 'completed', text: 'Synthetic completed before Stop acknowledgement.', persistence: 'saved', savedVersion: '2' }, true)
   await expect(page.getByRole('button', { name: 'Send follow-up', exact: true })).toBeEnabled()
 })
 

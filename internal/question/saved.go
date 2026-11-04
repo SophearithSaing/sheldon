@@ -94,7 +94,7 @@ func (s Saved) Validate(prID string) error {
 		textBytes := 0
 		for n, answer := range thread.Answers {
 			count++
-			if count > maxAnswers || !githubpr.ValidID(answer.ID) || ids[answer.ID] || answer.PRID != prID || answer.ThreadID != thread.ID || answer.RevisionID != thread.RevisionID || !ValidText(answer.Question) || len(answer.Text) > maxAnswerBytes || !utf8.ValidString(answer.Text) || strings.ContainsRune(answer.Text, 0) || answer.Reference != (Reference{RevisionID: thread.RevisionID, Anchor: thread.Context.Anchor, OldPath: thread.Context.OldPath, NewPath: thread.Context.NewPath}) {
+			if count > maxAnswers || answer.Persistence != "" || answer.SavedVersion != "" || !githubpr.ValidID(answer.ID) || ids[answer.ID] || answer.PRID != prID || answer.ThreadID != thread.ID || answer.RevisionID != thread.RevisionID || !ValidText(answer.Question) || len(answer.Text) > maxAnswerBytes || !utf8.ValidString(answer.Text) || strings.ContainsRune(answer.Text, 0) || answer.Reference != (Reference{RevisionID: thread.RevisionID, Anchor: thread.Context.Anchor, OldPath: thread.Context.OldPath, NewPath: thread.Context.NewPath}) {
 				return invalid
 			}
 			ids[answer.ID] = true

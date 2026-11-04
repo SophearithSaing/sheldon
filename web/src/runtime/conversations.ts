@@ -8,6 +8,8 @@ export interface RuntimeTurn {
   observationError: string
   stopPending: boolean
   stopNotice: string
+  savePending: boolean
+  saveNotice: string
 }
 export interface RuntimeThread {
   id: string
@@ -28,6 +30,7 @@ interface Conversations {
   followup: (thread: RuntimeThread) => Promise<void>
   observe: (turn: RuntimeTurn) => Promise<void>
   stop: (turn: RuntimeTurn) => Promise<void>
+  save: (turn: RuntimeTurn) => Promise<void>
   clear: () => void
 }
 
@@ -51,8 +54,10 @@ export function useConversations(client: () => RuntimeClient | null): Conversati
    */
   function busy(revisionID: string): string {
     const scoped = threads.value.filter((thread): boolean => thread.turns[0]?.answer.revisionID === revisionID)
+    if (scoped.some((thread): boolean => thread.turns.some((turn): boolean => turn.answer.persistence === 'failed'))) return 'An answer is not saved. Retry saving before continuing; drafts stay editable and no question will be resent.'
     if (scoped.some((thread): boolean => thread.uncertain || thread.turns.some((turn): boolean => turn.answer.executionUnknown))) return 'Execution is uncertain in this shared PR-revision session. Drafts stay editable; sending remains unavailable.'
     if (scoped.some((thread): boolean => thread.pending || thread.turns.some((turn): boolean => activeAnswer(turn.answer)))) return 'A question is using this shared PR-revision session. Drafts stay editable until a terminal outcome is confirmed.'
+    if (scoped.some((thread): boolean => thread.turns.some((turn): boolean => turn.answer.persistence === 'saving'))) return 'Saving the latest answer. Drafts stay editable; sending waits for the save to finish.'
     return ''
   }
 
@@ -62,7 +67,22 @@ export function useConversations(client: () => RuntimeClient | null): Conversati
    * @returns Observable runtime turn.
    */
   function newTurn(answer: QuestionAnswer): RuntimeTurn {
-    return { answer, observation: 'connecting', observationError: '', stopPending: false, stopNotice: '' }
+    return { answer, observation: 'connecting', observationError: '', stopPending: false, stopNotice: '', savePending: false, saveNotice: '' }
+  }
+
+  /**
+   * Applies exact-answer status updates without regressing terminal text or saved generations.
+   * @param turn Original observable runtime turn.
+   * @param snapshot Scoped cumulative backend snapshot.
+   */
+  function update(turn: RuntimeTurn, snapshot: QuestionAnswer): void {
+    const current = turn.answer
+    if (current.savedVersion && (!snapshot.savedVersion || BigInt(snapshot.savedVersion) < BigInt(current.savedVersion))) return
+    if (!activeAnswer(current) && !current.executionUnknown && (snapshot.state !== current.state || snapshot.text !== current.text || snapshot.executionUnknown)) return
+    if (current.persistence === 'saved' && snapshot.persistence !== 'saved' && !activeAnswer(current) && snapshot.savedVersion === current.savedVersion) return
+    turn.answer = { ...snapshot, stopRequested: current.stopRequested || snapshot.stopRequested }
+    turn.observation = activeAnswer(snapshot) || snapshot.persistence === 'saving' ? 'watching' : 'done'
+    if (!activeAnswer(snapshot)) turn.stopNotice = ''
   }
 
   /**
@@ -82,10 +102,7 @@ export function useConversations(client: () => RuntimeClient | null): Conversati
     try {
       await connection.observeAnswer(turn.answer, controller.signal, (snapshot: QuestionAnswer): void => {
         if (controller.signal.aborted || epoch !== generation || client() !== connection || observers.get(id) !== controller) return
-        if (!activeAnswer(turn.answer) && !turn.answer.executionUnknown) return
-        turn.answer = { ...snapshot, stopRequested: turn.answer.stopRequested || snapshot.stopRequested }
-        turn.observation = activeAnswer(snapshot) ? 'watching' : 'done'
-        if (!activeAnswer(snapshot)) turn.stopNotice = ''
+        update(turn, snapshot)
       })
       if (!controller.signal.aborted && epoch === generation && client() === connection) turn.observation = 'done'
     } catch {
@@ -158,12 +175,11 @@ export function useConversations(client: () => RuntimeClient | null): Conversati
     try {
       const snapshot = await connection.stopAnswer(turn.answer, AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]))
       if (controller.signal.aborted || epoch !== generation || client() !== connection) return
-      if (activeAnswer(turn.answer)) {
+      if (activeAnswer(turn.answer) || turn.answer.persistence === 'saving') {
         if (!activeAnswer(snapshot)) {
-          turn.answer = snapshot
-          turn.observation = 'done'
+          update(turn, snapshot)
           turn.observationError = ''
-          observers.get(turn.answer.answerID)?.abort()
+          if (turn.answer.persistence !== 'saving') observers.get(turn.answer.answerID)?.abort()
         } else turn.answer = { ...turn.answer, stopRequested: turn.answer.stopRequested || snapshot.stopRequested }
       }
       turn.stopNotice = activeAnswer(turn.answer) ? turn.answer.stopRequested ? 'Stop requested. Termination is not yet confirmed.' : 'Stop was not confirmed. Execution may still be active.' : turn.answer.executionUnknown ? 'Execution remains unknown; the shared session is unavailable.' : 'Stop check returned a terminal answer snapshot.'
@@ -172,6 +188,31 @@ export function useConversations(client: () => RuntimeClient | null): Conversati
     } finally {
       requests.delete(controller)
       if (epoch === generation && client() === connection) turn.stopPending = false
+    }
+  }
+
+  /**
+   * Retries persistence only, retaining drafts and never sending the original question again.
+   * @param turn Exact turn whose current text was not saved.
+   */
+  async function save(turn: RuntimeTurn): Promise<void> {
+    const connection = client()
+    if (!connection || turn.savePending || turn.answer.persistence !== 'failed') return
+    const controller = new AbortController()
+    const epoch = generation
+    requests.add(controller)
+    turn.savePending = true
+    turn.saveNotice = ''
+    try {
+      const snapshot = await connection.saveAnswer(turn.answer, controller.signal)
+      if (controller.signal.aborted || epoch !== generation || client() !== connection) return
+      update(turn, snapshot)
+      if (activeAnswer(turn.answer) || snapshot.persistence === 'saving') void observe(turn)
+    } catch {
+      if (!controller.signal.aborted && epoch === generation && client() === connection) turn.saveNotice = 'Saving failed. Text is retained in this runtime; no question was resent.'
+    } finally {
+      requests.delete(controller)
+      if (epoch === generation && client() === connection) turn.savePending = false
     }
   }
 
@@ -191,9 +232,9 @@ export function useConversations(client: () => RuntimeClient | null): Conversati
    * @param event Browser document-navigation event.
    */
   function beforeLeave(event: BeforeUnloadEvent): void {
-    if (threads.value.some((thread): boolean => !!thread.draft || thread.pending || thread.uncertain)) { event.preventDefault(); event.returnValue = '' }
+    if (threads.value.some((thread): boolean => !!thread.draft || thread.pending || thread.uncertain || thread.turns.some((turn): boolean => turn.answer.persistence === 'failed' || turn.answer.persistence === 'saving'))) { event.preventDefault(); event.returnValue = '' }
   }
   window.addEventListener('beforeunload', beforeLeave)
   onUnmounted((): void => { clear(); window.removeEventListener('beforeunload', beforeLeave) })
-  return { threads, selectedID, current, add, busy, followup, observe, stop, clear }
+  return { threads, selectedID, current, add, busy, followup, observe, stop, save, clear }
 }

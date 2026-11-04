@@ -231,7 +231,7 @@ onUnmounted(reset)
       </template>
       <template #files><ChangedFileTree v-model="search" :files="treeFiles" :current="selected" :counts="questionCounts" :viewed="{}" real @select="selectFile" /></template>
       <template #conversation>
-        <QuestionConversation v-if="currentThread" :thread="currentThread" :threads="threads" :busy-reason="currentBusy" :displayed-revision="diff?.revisionID" @followup="conversations.followup" @stop="conversations.stop" @observe="conversations.observe" @select="selectedID = $event" />
+        <QuestionConversation v-if="currentThread" :thread="currentThread" :threads="threads" :busy-reason="currentBusy" :displayed-revision="diff?.revisionID" @followup="conversations.followup" @stop="conversations.stop" @observe="conversations.observe" @save="conversations.save" @select="selectedID = $event" />
       </template>
       <template #default>
         <section id="review-content" ref="sourcePane" class="source-pane" tabindex="-1" :aria-busy="pending && !diff" aria-label="Pinned PR source">

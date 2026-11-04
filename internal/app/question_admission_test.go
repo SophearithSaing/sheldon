@@ -40,8 +40,8 @@ func TestQuestionAdmissionIsSavedBeforeNativeDispatch(t *testing.T) {
 	if err != nil || len(saved.Bindings) != 1 || len(saved.Threads) != 2 || len(saved.Threads[0].Answers) != 2 {
 		t.Fatalf("saved admissions: %v", err)
 	}
-	if saved.Threads[0].Answers[0].State != question.Completed || saved.Threads[0].Answers[1].State != question.Completed || saved.Threads[1].Answers[0].State != question.Pending {
-		t.Fatal("admission-boundary predecessor snapshots were not preserved")
+	if saved.Threads[0].Answers[0].State != question.Completed || saved.Threads[0].Answers[1].State != question.Completed || saved.Threads[1].Answers[0].State != question.Completed {
+		t.Fatal("terminal snapshots were not saved independently of later admissions")
 	}
 	proofs, prompts := 0, 0
 	entries := nativeQuestionAudit(t, f.audit)

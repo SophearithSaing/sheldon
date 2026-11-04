@@ -34,6 +34,7 @@ var (
 	ErrNotFound           = errors.New("question thread or answer not found in the requested scope")
 	ErrPersistence        = errors.New("question admission could not be saved; no prompt was sent")
 	ErrSaveUncertain      = errors.New("saved question admission is uncertain; do not resend automatically")
+	ErrAnswerSave         = errors.New("answer saving failed; retry saving before continuing, no question will be resent")
 )
 
 // State separates answer presentation from reader understanding and native session availability.
@@ -60,16 +61,19 @@ type Answer struct {
 	ExecutionUnknown bool      `json:"executionUnknown"`
 	FailureCode      string    `json:"failureCode,omitempty"`
 	Reference        Reference `json:"reference"`
+	Persistence      string    `json:"persistence,omitempty"`
+	SavedVersion     string    `json:"savedVersion,omitempty"`
 }
 
 type revisionKey struct{ prID, revisionID string }
 
 type binding struct {
-	session   *opencode.Session
-	directory string
-	busy      bool
-	broken    error
-	active    *Turn
+	session    *opencode.Session
+	directory  string
+	busy       bool
+	broken     error
+	active     *Turn
+	saveFailed bool
 }
 
 type thread struct {
@@ -98,23 +102,27 @@ type Runtime struct {
 	serviceErr   error
 	work         sync.WaitGroup
 	closed       bool
+	drained      bool
 	closeOnce    sync.Once
 	closeErr     error
 }
 
 // Turn holds a backend-only admitted question; it does not dispatch native input.
 type Turn struct {
-	runtime    *Runtime
-	binding    *binding
-	source     Context
-	prompt     string
-	answer     Answer
-	finished   bool
-	uncertain  bool
-	started    bool
-	workerDone bool
-	stop       chan struct{}
-	changed    chan struct{}
+	runtime       *Runtime
+	binding       *binding
+	source        Context
+	prompt        string
+	answer        Answer
+	finished      bool
+	uncertain     bool
+	started       bool
+	stop          chan struct{}
+	changed       chan struct{}
+	sequence      uint64
+	savedSequence uint64
+	saveState     string
+	savedVersion  uint64
 }
 
 // New creates empty runtime state without starting a harness or loading source.
@@ -156,6 +164,9 @@ func (r *Runtime) reserve(key revisionKey, newThread bool) (*binding, error) {
 	b := r.bindings[key]
 	if b != nil && b.broken != nil {
 		return nil, b.broken
+	}
+	if b != nil && b.saveFailed {
+		return nil, ErrAnswerSave
 	}
 	if b != nil && b.busy {
 		return nil, ErrBusy
@@ -345,7 +356,7 @@ func (r *Runtime) ReadAnswer(prID, threadID, answerID string, input AnswerReques
 	if err := input.Validate(prID, threadID, answerID, r.registry, AnswerContext{ID: turn.answer.ID, Thread: thread.context}); err != nil {
 		return Answer{}, errors.Join(ErrNotFound, err)
 	}
-	return turn.answer, nil
+	return turn.snapshotLocked(), nil
 }
 
 // Close cancels owned startup/preparation and closes native resources before the app releases its writer.
@@ -361,12 +372,17 @@ func (r *Runtime) Close() error {
 		}
 		r.mu.Lock()
 		for _, b := range r.bindings {
-			if b.active != nil {
+			if b.active != nil && !b.active.finished && !b.active.uncertain {
 				b.active.answer.State = Interrupted
 				b.active.answer.ExecutionUnknown = true
+				b.active.uncertain = true
 				b.broken = ErrSessionUnavailable
-				b.active.notify()
+				b.active.dirtyLocked()
 			}
+		}
+		r.drained = true
+		for _, turn := range r.answers {
+			turn.notify()
 		}
 		r.mu.Unlock()
 	})
@@ -383,7 +399,7 @@ func (r *Runtime) GoString() string { return r.String() }
 func (t *Turn) Snapshot() Answer {
 	t.runtime.mu.Lock()
 	defer t.runtime.mu.Unlock()
-	return t.answer
+	return t.snapshotLocked()
 }
 
 // Prompt returns backend-only thread-specific input for later native dispatch, never browser output.
@@ -394,49 +410,58 @@ func (t *Turn) Prompt() string { return t.prompt }
 func (t *Turn) Finish(state State, text string) error {
 	r := t.runtime
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
+	if r.drained {
+		r.mu.Unlock()
 		return ErrRuntimeClosed
 	}
 	if state != Completed && state != Failed && state != Interrupted || len(text) > maxAnswerBytes || !utf8.ValidString(text) || strings.ContainsRune(text, 0) || state == Completed && strings.TrimSpace(text) == "" {
+		r.mu.Unlock()
 		return ErrAnswerState
 	}
 	if t.finished {
 		if t.answer.State == state && t.answer.Text == text {
+			r.mu.Unlock()
 			return nil
 		}
+		r.mu.Unlock()
 		return ErrAnswerState
 	}
 	if t.binding.active != t {
+		r.mu.Unlock()
 		return ErrAnswerState
 	}
 	t.answer.State, t.answer.Text, t.finished = state, text, true
 	t.answer.ExecutionUnknown = false
-	t.binding.busy, t.binding.active = false, nil
 	if t.uncertain {
 		t.binding.broken = nil
 		t.uncertain = false
 	}
-	t.notify()
-	return nil
+	t.dirtyLocked()
+	if r.store == nil {
+		t.binding.busy, t.binding.active = false, nil
+	}
+	r.mu.Unlock()
+	return t.flush(false)
 }
 
 // Uncertain retains the active slot when native execution cannot be confirmed idle.
 func (t *Turn) Uncertain() error {
 	r := t.runtime
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
+	if r.drained {
+		r.mu.Unlock()
 		return ErrRuntimeClosed
 	}
 	if t.finished || t.binding.active != t {
+		r.mu.Unlock()
 		return ErrAnswerState
 	}
 	t.answer.State, t.uncertain = Interrupted, true
 	t.answer.ExecutionUnknown = true
 	t.binding.broken = ErrUncertain
-	t.notify()
-	return nil
+	t.dirtyLocked()
+	r.mu.Unlock()
+	return t.flush(false)
 }
 
 // String keeps question text, source paths and native bindings out of diagnostics.

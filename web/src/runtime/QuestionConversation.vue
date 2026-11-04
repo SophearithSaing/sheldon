@@ -7,7 +7,7 @@ import { activeAnswer, type QuestionAnswer } from './questions'
 import type { RuntimeThread, RuntimeTurn } from './conversations'
 
 const props = defineProps<{ thread: RuntimeThread; threads: RuntimeThread[]; busyReason: string; displayedRevision?: string }>()
-const emit = defineEmits<{ followup: [thread: RuntimeThread]; stop: [turn: RuntimeTurn]; observe: [turn: RuntimeTurn]; select: [threadID: string] }>()
+const emit = defineEmits<{ followup: [thread: RuntimeThread]; stop: [turn: RuntimeTurn]; observe: [turn: RuntimeTurn]; save: [turn: RuntimeTurn]; select: [threadID: string] }>()
 const last = computed((): RuntimeTurn => props.thread.turns.at(-1)!)
 const context = computed((): string => {
   const anchor = props.thread.input.anchor
@@ -39,6 +39,18 @@ function failure(answer: QuestionAnswer): string {
 }
 
 /**
+ * Describes disk acknowledgement separately from model completion or unsaved drafts.
+ * @param answer Current scoped public answer.
+ * @returns Honest local saving feedback.
+ */
+function saving(answer: QuestionAnswer): string {
+  if (answer.persistence === 'failed') return 'Not saved. Latest text is retained only in this runtime. Restore local storage and retry saving; no question will be resent.'
+  if (answer.persistence === 'saving') return activeAnswer(answer) ? 'Question saved locally; answer will be saved when the response ends.' : 'Saving latest answer…'
+  if (answer.persistence === 'saved') return answer.state === 'pending' ? 'Question saved locally; answer pending.' : 'Current answer saved locally.'
+  return 'Saving status unavailable.'
+}
+
+/**
  * Sends on Enter while preserving Shift+Enter and IME composition as text input.
  * @param event Keyboard event from the follow-up textarea.
  */
@@ -57,7 +69,7 @@ function shortcut(event: KeyboardEvent): void {
     </nav>
     <div class="thread-summary">
       <p>Shared PR-revision context · One active question per revision.</p>
-      <p>Runtime only conversation view. Submitted questions are recorded locally, but answers are not continuously saved and saved-thread reopening is not connected. Drafts are not saved. Reload/disconnect clears this page, not accepted execution. Execution is bounded to five minutes including recovery.</p>
+      <p>Runtime only conversation view. Answer saving is confirmed separately below; saved-thread reopening is not connected yet. Drafts are not saved. Reload/disconnect clears this page, not accepted execution or backend saving. Execution is bounded to five minutes including recovery.</p>
     </div>
     <div class="thread-context"><strong>Pinned context</strong><p>{{ context }}</p><p v-if="displayedRevision !== thread.turns[0]!.answer.revisionID" class="thread-warning">Older context. This thread is not rebound to the displayed source revision.</p></div>
     <ScrollRegion label="Conversation messages" class="conversation-messages">
@@ -65,6 +77,9 @@ function shortcut(event: KeyboardEvent): void {
         <div class="thread-message user-message"><h3><span class="message-avatar" aria-hidden="true">Y</span>You</h3><p>{{ turn.answer.question }}</p></div>
         <div class="thread-message agent-message"><h3><span class="message-avatar" aria-hidden="true">✧</span>Agent</h3><p v-if="turn.answer.text" class="answer-text">{{ turn.answer.text }}</p><p v-else class="empty-answer">{{ activeAnswer(turn.answer) ? 'No visible answer text yet.' : 'No visible answer text is available.' }}</p></div>
         <p class="execution-status" role="status">{{ status(turn.answer) }}</p>
+        <p class="saving-status" role="status">{{ saving(turn.answer) }}</p>
+        <UiButton v-if="turn.answer.persistence === 'failed'" :busy="turn.savePending" :disabled="turn.savePending" @click="emit('save', turn)">{{ turn.savePending ? 'Retrying save…' : 'Retry saving' }}</UiButton>
+        <p v-if="turn.saveNotice" class="thread-warning" role="status">{{ turn.saveNotice }}</p>
         <p v-if="failure(turn.answer)" class="thread-warning">{{ failure(turn.answer) }}</p>
         <p v-if="turn.observation === 'connecting' && activeAnswer(turn.answer)" class="observation-notice">Connecting answer observation… Admission is not completion proof.</p>
         <p v-if="turn.observationError" class="thread-warning" role="status">{{ turn.observationError }}</p>
@@ -98,8 +113,8 @@ function shortcut(event: KeyboardEvent): void {
 .thread-message p { white-space: pre-wrap; }
 .user-message p { font-size: var(--text-prompt); }
 .message-avatar { display: inline-grid; place-items: center; width: 1.625rem; height: 1.625rem; border: 1px solid var(--color-border); border-radius: 50%; font-size: var(--text-small); background: var(--color-surface); }
-.empty-answer, .execution-status, .observation-notice, .thread-warning, .send-reason { font-family: var(--font-ui); font-size: var(--text-small); color: var(--color-muted); overflow-wrap: anywhere; }
-.execution-status, .observation-notice, .thread-warning, .turn > .ui-button { margin-top: var(--space-3); }
+.empty-answer, .execution-status, .saving-status, .observation-notice, .thread-warning, .send-reason { font-family: var(--font-ui); font-size: var(--text-small); color: var(--color-muted); overflow-wrap: anywhere; }
+.execution-status, .saving-status, .observation-notice, .thread-warning, .turn > .ui-button { margin-top: var(--space-3); }
 .execution-status { color: var(--color-accent); }
 .thread-warning { color: var(--color-warning); }
 .followup { display: grid; flex-shrink: 0; gap: var(--space-3); padding: var(--space-4); border-top: 1px solid var(--color-border); }
