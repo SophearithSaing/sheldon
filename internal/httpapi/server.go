@@ -83,6 +83,8 @@ func Listen(address, devOrigin string, prs PRRegistry) (*Server, error) {
 	s.mux.HandleFunc("GET /api/reviews/{id}", s.review)
 	s.mux.HandleFunc("POST /api/reviews/{id}/source", s.source)
 	s.mux.HandleFunc("POST /api/reviews/{id}/questions", s.askQuestion)
+	s.mux.HandleFunc("GET /api/reviews/{id}/threads", s.questionHistory)
+	s.mux.HandleFunc("GET /api/reviews/{id}/threads/{thread}", s.questionHistory)
 	s.mux.HandleFunc("POST /api/reviews/{id}/threads/{thread}/answers", s.askQuestion)
 	s.mux.HandleFunc("POST /api/reviews/{id}/threads/{thread}/answers/{answer}/events", s.answerEvents)
 	s.mux.HandleFunc("POST /api/reviews/{id}/threads/{thread}/answers/{answer}/stop", s.stopAnswer)

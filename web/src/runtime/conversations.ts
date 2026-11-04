@@ -1,5 +1,6 @@
 import { computed, onUnmounted, ref, type ComputedRef, type Ref } from 'vue'
 import type { RuntimeClient } from './client'
+import { useSavedThreads, type SavedThreads } from './history'
 import { activeAnswer, questionError, QuestionAdmissionError, type InitialQuestion, type QuestionAnswer } from './questions'
 
 export interface RuntimeTurn {
@@ -22,6 +23,7 @@ export interface RuntimeThread {
   error: string
 }
 interface Conversations {
+  history: SavedThreads
   threads: Ref<RuntimeThread[]>
   selectedID: Ref<string>
   current: ComputedRef<RuntimeThread | undefined>
@@ -40,6 +42,7 @@ interface Conversations {
  * @returns Runtime-only thread state and exact-answer operations.
  */
 export function useConversations(client: () => RuntimeClient | null): Conversations {
+  const history = useSavedThreads(client)
   const threads = ref<RuntimeThread[]>([])
   const selectedID = ref('')
   const current = computed((): RuntimeThread | undefined => threads.value.find((thread): boolean => thread.id === selectedID.value))
@@ -218,6 +221,7 @@ export function useConversations(client: () => RuntimeClient | null): Conversati
 
   /** Aborts browser observation/requests only; accepted native work remains app-owned. */
   function clear(): void {
+    history.clear()
     generation++
     for (const observer of observers.values()) observer.abort()
     for (const request of requests) request.abort()
@@ -236,5 +240,5 @@ export function useConversations(client: () => RuntimeClient | null): Conversati
   }
   window.addEventListener('beforeunload', beforeLeave)
   onUnmounted((): void => { clear(); window.removeEventListener('beforeunload', beforeLeave) })
-  return { threads, selectedID, current, add, busy, followup, observe, stop, save, clear }
+  return { threads, selectedID, current, add, busy, followup, observe, stop, save, clear, history }
 }

@@ -33,27 +33,7 @@ type AnswerSaveProvider interface {
 
 // questionProvider verifies canonical routes and registered membership before any question work.
 func (s *Server) questionProvider(w http.ResponseWriter, r *http.Request) (QuestionProvider, bool) {
-	if r.URL.RawQuery != "" || r.URL.EscapedPath() != r.URL.Path || !githubpr.ValidID(r.PathValue("id")) {
-		http.NotFound(w, r)
-		return nil, false
-	}
-	for _, key := range []string{"thread", "answer"} {
-		if value := r.PathValue(key); value != "" && !githubpr.ValidID(value) {
-			http.NotFound(w, r)
-			return nil, false
-		}
-	}
-	if s.prs == nil {
-		writeError(w, 503, "question registry unavailable")
-		return nil, false
-	}
-	pr, err := s.prs.ReadPR(r.PathValue("id"))
-	if errors.Is(err, os.ErrNotExist) {
-		writeError(w, 404, "PR is not registered")
-		return nil, false
-	}
-	if err != nil || pr.Validate() != nil || pr.ID != r.PathValue("id") {
-		writeError(w, 500, "cannot read registered PR")
+	if !s.questionRoute(w, r) {
 		return nil, false
 	}
 	provider, ok := s.prs.(QuestionProvider)
@@ -62,6 +42,34 @@ func (s *Server) questionProvider(w http.ResponseWriter, r *http.Request) (Quest
 		return nil, false
 	}
 	return provider, true
+}
+
+// questionRoute validates canonical registered scope independently of native execution capabilities.
+func (s *Server) questionRoute(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.RawQuery != "" || r.URL.ForceQuery || r.URL.EscapedPath() != r.URL.Path || !githubpr.ValidID(r.PathValue("id")) {
+		http.NotFound(w, r)
+		return false
+	}
+	for _, key := range []string{"thread", "answer"} {
+		if value := r.PathValue(key); value != "" && !githubpr.ValidID(value) {
+			http.NotFound(w, r)
+			return false
+		}
+	}
+	if s.prs == nil {
+		writeError(w, 503, "question registry unavailable")
+		return false
+	}
+	pr, err := s.prs.ReadPR(r.PathValue("id"))
+	if errors.Is(err, os.ErrNotExist) {
+		writeError(w, 404, "PR is not registered")
+		return false
+	}
+	if err != nil || pr.Validate() != nil || pr.ID != r.PathValue("id") {
+		writeError(w, 500, "cannot read registered PR")
+		return false
+	}
+	return true
 }
 
 // questionBody reads one bounded UTF-8 JSON object without tolerating extra fields or trailing values.

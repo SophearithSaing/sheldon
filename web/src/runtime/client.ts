@@ -1,9 +1,25 @@
 import { parseSourceResponse, pinnedID, type SourceRequest, type SourceResponse } from './source'
 import { parseQuestionAnswer, parseObservedAnswer, readAnswerEvents, readBoundedJSON, sameAnchor, questionError, QuestionAdmissionError, type InitialQuestion, type QuestionAnswer } from './questions'
+import { historyID, parseThreadList, parseThreadDetail, type ThreadList, type ThreadDetail } from './history'
 
 let launchToken = ''
 
 export interface RuntimeClient {
+  /**
+   * Reads saved navigation without source loading or inference.
+   * @param id Routed PR identity.
+   * @param signal Read lifetime.
+   * @returns Saved creation-ordered summaries and file generation.
+   */
+  listThreads(id: string, signal: AbortSignal): Promise<ThreadList>
+  /**
+   * Reads one saved transcript without dispatching or verifying native state.
+   * @param id Routed PR identity.
+   * @param threadID Exact saved thread.
+   * @param signal Read lifetime.
+   * @returns Saved transcript and separate current runtime feedback.
+   */
+  readThread(id: string, threadID: string, signal: AbortSignal): Promise<ThreadDetail>
   /**
    * Registers a PR and opens its independent route.
    * @param url Entered GitHub PR URL.
@@ -224,6 +240,35 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
     return fetch(path, { ...options, method: 'POST', headers: { ...options.headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   }
   /**
+   * Reads one protected finite saved-history response through the verified connection.
+   * @param id Routed PR.
+   * @param threadID Exact thread, or empty for navigation.
+   * @param signal Caller cancellation signal.
+   * @returns Bounded decoded response, subject to exact DTO validation.
+   */
+  async function history(id: string, threadID: string, signal: AbortSignal): Promise<unknown> {
+    if (!historyID(id) || threadID !== '' && !historyID(threadID) || lifetime.aborted || !credential) throw new Error('Saved history unavailable.')
+    const response = await fetch(`/api/reviews/${id}/threads${threadID ? `/${threadID}` : ''}`, authenticatedRequest(credential, AbortSignal.any([lifetime, signal, AbortSignal.timeout(10000)])))
+    if (!response.ok) { await response.body?.cancel().catch((): void => {}); throw new Error('Cannot read saved question history.') }
+    if (!response.headers.get('Content-Type')?.startsWith('application/json')) { await response.body?.cancel().catch((): void => {}); throw new Error('Unexpected saved history response.') }
+    return readBoundedJSON(response, threadID ? 8 << 20 : 2 << 20)
+  }
+  /**
+   * Validates explicit saved-list reads.
+   * @param id Routed PR.
+   * @param signal Read lifetime.
+   * @returns Scoped saved navigation.
+   */
+  async function listThreads(id: string, signal: AbortSignal): Promise<ThreadList> { return parseThreadList(await history(id, '', signal), id) }
+  /**
+   * Validates explicit saved-detail reads separately from pending admissions.
+   * @param id Routed PR.
+   * @param threadID Exact saved thread.
+   * @param signal Read lifetime.
+   * @returns Scoped saved transcript.
+   */
+  async function readThread(id: string, threadID: string, signal: AbortSignal): Promise<ThreadDetail> { return parseThreadDetail(await history(id, threadID, signal), id, threadID) }
+  /**
    * Registers one PR and transfers its credential through a cleared launch fragment.
    * @param url User-entered GitHub PR URL.
    * @param signal Action cancellation signal.
@@ -361,5 +406,5 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
     if (!response.ok) { await response.body?.cancel().catch((): void => {}); throw new Error('Answer saving failed. No question was resent.') }
     return parseObservedAnswer(await readBoundedJSON(response, 2 * 1024 * 1024), answer)
   }
-  return { openPR, source, askQuestion, askFollowup, observeAnswer, stopAnswer, saveAnswer }
+  return { openPR, source, askQuestion, askFollowup, observeAnswer, stopAnswer, saveAnswer, listThreads, readThread }
 }

@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import type { QuestionAnswer } from '../src/runtime/questions'
 import type { SourceResponse } from '../src/runtime/source'
 import { digest, registered, sourceFixture, token } from './runtime-fixture'
+import { historyFixture, installHistoryHarness, type HistoryHarness } from './history-fixture'
 
 test.use({ baseURL: 'http://127.0.0.1:5175' })
 
@@ -152,6 +153,33 @@ test('saving is separate from completion and retry writes only the exact retaine
   expect(f.answers).toHaveLength(1)
   expect(f.followups).toHaveLength(0)
   await page.screenshot({ path: testInfo.outputPath('answer-saved.png'), fullPage: true })
+})
+
+test('saved refresh never replaces live streaming text, drafts, focus or selected source', async ({ page }, testInfo): Promise<void> => {
+  const f = await fixture(page, 763)
+  await ask(page, 1, 'Synthetic current question.')
+  const answer = f.answers[0]!
+  await snapshot(page, answer, { state: 'streaming', text: 'Newer live text remains in memory.', persistence: 'saving', savedVersion: '8' })
+  const draft = page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })
+  await draft.fill('Keep this live draft')
+  const saved = historyFixture(f.source.pr)
+  saved.detail.threadID = answer.threadID
+  saved.detail.answers = [{ ...answer, reference: { ...answer.reference, oldPath: saved.detail.context.oldPath, newPath: saved.detail.context.newPath } }]
+  saved.detail.persistence = 'saving'
+  saved.detail.session = { state: 'busy', reason: 'question-active' }
+  await page.route(`**/api/reviews/${answer.prID}/threads/${answer.threadID}`, async (route): Promise<void> => { await route.fulfill({ json: saved.detail }) })
+  await installHistoryHarness(page)
+  await draft.focus()
+  await page.evaluate(async ({ prID, threadID }): Promise<void> => { await (window as unknown as { fixtureHistory: HistoryHarness }).fixtureHistory.state.refreshThread(prID, threadID) }, { prID: answer.prID, threadID: answer.threadID })
+  expect(await page.evaluate((): string => (window as unknown as { fixtureHistory: HistoryHarness }).fixtureHistory.state.error.value)).toBe('')
+  expect(await page.evaluate((threadID: string): string => (window as unknown as { fixtureHistory: HistoryHarness }).fixtureHistory.state.details.value[threadID]!.answers[0]!.text, answer.threadID)).toBe('')
+  await expect(page.locator('.answer-text')).toHaveText('Newer live text remains in memory.')
+  await expect(draft).toHaveValue('Keep this live draft')
+  await expect(draft).toBeFocused()
+  await expect(page.getByRole('heading', { name: 'src/file0000.ts', exact: true })).toBeVisible()
+  expect(f.answers).toHaveLength(1)
+  expect(f.followups).toHaveLength(0)
+  await page.screenshot({ path: testInfo.outputPath('saved-refresh-live-draft.png'), fullPage: true })
 })
 
 test('real streamed snapshots stay escaped and do not steal source selection, focus or drafts', async ({ page }, testInfo): Promise<void> => {

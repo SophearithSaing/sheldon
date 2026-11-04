@@ -331,6 +331,23 @@ export async function questionReopenFlow(page: Page, development: boolean): Prom
     await expect(page.getByRole('heading', { name: 'PR registered. Source not loaded.', exact: true })).toBeVisible()
     expect((await prompts(fixture)).length).toBe(2)
     const origin = new URL(restarted).origin
+    const nativeBeforeRead = (await fixture.nativeAudit()).length
+    const gitBeforeRead = (await fixture.audit()).length
+    const listResponse = await page.request.get(`${origin}/api/reviews/${original.prID}/threads`, { headers: { Authorization: `Bearer ${discovery.token}` } })
+    expect(listResponse.status()).toBe(200)
+    expect(listResponse.headers()['cache-control']).toBe('no-store')
+    const savedList = await listResponse.json() as { version: string; threads: { threadID: string }[] }
+    expect(typeof savedList.version).toBe('string')
+    expect(savedList.threads.map((thread): string => thread.threadID)).toEqual([original.threadID])
+    const detailResponse = await page.request.get(`${origin}/api/reviews/${original.prID}/threads/${original.threadID}`, { headers: { Authorization: `Bearer ${discovery.token}` } })
+    expect(detailResponse.status()).toBe(200)
+    const detail = await detailResponse.json() as { answers: QuestionAnswer[]; context: { revisionID: string }; session: { state: string } }
+    expect(detail.answers).toHaveLength(2)
+    expect(detail.context.revisionID).toBe(original.revisionID)
+    expect(detail.session.state).toBe('unverified')
+    for (const secret of [fixture.directory, discovery.token, '"native"', '"sessionID"', '"directory"', 'HIDDEN REASONING', 'RAW TOOL SECRET']) expect(JSON.stringify(detail)).not.toContain(secret)
+    expect((await fixture.nativeAudit()).length).toBe(nativeBeforeRead)
+    expect((await fixture.audit()).length).toBe(gitBeforeRead)
     const continued = await page.request.post(`${origin}/api/reviews/${original.prID}/threads/${original.threadID}/answers`, { headers: { Authorization: `Bearer ${discovery.token}` }, data: { revisionID: original.revisionID, question: 'Synthetic new explicit question after restart.' } })
     expect(continued.status()).toBe(202)
     const answer = await continued.json() as QuestionAnswer

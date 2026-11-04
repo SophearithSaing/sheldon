@@ -10,6 +10,9 @@ import (
 	"github.com/SophearithSaing/sheldon/internal/githubpr"
 )
 
+// ValidateSaved checks retained quote consistency without authorizing source access or continuation.
+func (c Context) ValidateSaved() error { return validateSavedContext(c) }
+
 // validateSavedContext checks quote consistency without treating saved text as verified source.
 func validateSavedContext(c Context) error {
 	invalid := errors.New("invalid saved question context")

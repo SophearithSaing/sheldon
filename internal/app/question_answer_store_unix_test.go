@@ -37,6 +37,11 @@ func TestCompletedAnswerSaveFailureRetainsTextUntilExplicitStorageRetry(t *testi
 	if err := os.Chmod(path, 0600); err != nil {
 		t.Fatal(err)
 	}
+	var history question.ThreadDetail
+	historyResponse := historyGET(t, s, "/api/reviews/"+a.PRID+"/threads/"+a.ThreadID)
+	if historyResponse.StatusCode != 200 || json.NewDecoder(historyResponse.Body).Decode(&history) != nil || history.Persistence != "failed" || history.Session.Reason != "answer-not-saved" || history.Answers[0].State != question.Pending || history.Answers[0].Text != "" {
+		t.Fatal("saved read hid the unsaved runtime result or fabricated saved terminal text")
+	}
 	before, err := f.owner.readQuestions(a.PRID)
 	if err != nil {
 		t.Fatal(err)
