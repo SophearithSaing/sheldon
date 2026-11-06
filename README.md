@@ -23,7 +23,7 @@ SHELDON_DEV_ORIGIN=http://127.0.0.1:5173 go run ./cmd/sheldon # terminal 2: Go
 
 UI: <http://127.0.0.1:5173> · backend: `127.0.0.1:7331`. Stop any existing standalone instance first. The CLI opens the authenticated UI; after reloading, rerun the CLI in another terminal to reconnect.
 
-Connect the runtime, choose **Open a PR**, then **Register and open PR**. Opening from an existing PR uses a separate browser tab; allow that tab to preserve the current pinned view. On the registered page choose **Load pinned source**. If GitHub metadata is unavailable, explicitly choose **Use Git-only fallback**, select a fetched upstream branch, then **Load selected base**. No default target is assumed. Registration and source errors are separate; retry is explicit. Real PR pages offer file filtering, a pinned unified diff and saved Questions. Split, Quiz and Semantic review remain unavailable.
+Connect the runtime, choose **Open a PR**, then **Register and open PR**. Opening from an existing PR uses a separate browser tab; allow that tab to preserve the current pinned view. On the registered page choose **Load pinned source**. If GitHub metadata is unavailable, explicitly choose **Use Git-only fallback**, select a fetched upstream branch, then **Load selected base**. No default target is assumed. Registration and source errors are separate; retry is explicit. Real PR pages offer file filtering, a pinned unified diff, saved Questions and Quiz. Split and Semantic review remain unavailable.
 
 For a text diff, choose gutter line numbers (Shift extends on one side within one hunk) or **Select hunk**, then **Ask about selection**. The inline composer is pinned to that file/side/range/revision. **Send question** or Ctrl/Cmd+Enter explicitly starts backend work; Enter inserts a newline. Cancel retains the draft; resume or explicitly discard it before changing files/selection or refreshing. Native text selection/copy never submits. Non-text changes have no line questions.
 
@@ -40,6 +40,10 @@ After an abrupt exit, reopen **Questions** to inspect what was actually saved. P
 Use **Refresh saved questions** or **Refresh saved thread** to read other tabs' submissions explicitly. Reads use authenticated, no-store `GET /api/reviews/<pr-id>/threads` and `GET /api/reviews/<pr-id>/threads/<thread-id>`, returning bounded saved data with decimal-string versions and separate current saving/session feedback—never native bindings, host paths or credentials. They start no source or native work. Opening an active/unsaved answer observes only its exact existing answer; it never resends input. Refresh retains live text, drafts and selection. Switching between Questions and Files changed retains the inline draft on its original selection.
 
 Type a **Follow up in this thread** to continue explicitly after restart. Sending verifies the original existing source, native session identity/location/model/restrictions, exact saved input history, terminal idle boundaries and an empty inbox before saving/sending the **new** question. Current model defaults are not consulted. Missing/incompatible source or native state, truncated history and uncertain execution block continuation without replacement, prompt replay or source repair. Saved transcripts and quotes remain readable. Historical Interrupted/unknown answers are not rewritten as completed merely because the session can now continue.
+
+Open **Quiz** to read the saved set without source loading or inference. With pinned source loaded, **Generate quiz** explicitly starts separate restricted agent work; **Regenerate quiz** asks before replacing the current saved set. Select an alternative, then **Check answer** to reveal only that question's saved key, explanation and original evidence, without more inference. Wrong selections stay selected. The current complete set is stored privately in `reviews/<id>/quiz.json`; selections/checks are page-memory only, not saved attempts. Leaving Quiz stops observation, not accepted generation. Cancellation does not promise rollback; after uncertain work use **Refresh saved quiz**, never automatic resend. Agent-generated questions can be inaccurate or ambiguous and never approve a PR or certify understanding.
+
+After reload/reconnect/restart, open **Quiz** again: the saved set reopens unchecked, even when its original cache or harness is unavailable. Generation/status are memory-only and are not resumed after restart. Failed generation/cancellation preserves the previous complete set; an uncertain save requires an explicit saved read before another mutation. Source refresh never retargets an older quiz or its checks. The UI labels older revisions and enables **View in original diff** only for matching loaded source. Checking/reopening writes no attempts and does not modify saved conversations. Keep `quiz.json` private: it contains answer keys, explanations and source quotes.
 
 **Sample UI previews** opens the separate `/?preview=library` entry. Its Files changed, Questions, Quiz, Semantic review, All PRs and Configuration use fictional data and page-memory simulations, never real PR source or inference.
 
@@ -87,6 +91,8 @@ npm run test:release # clean source build + isolated binary/browser checks (Linu
 npm run test --workspace=@sheldon/web -- --config playwright.release.config.ts release-source.spec.ts # native offline PR flow only
 npm run test --workspace=@sheldon/web -- development-question.spec.ts # actual Go/Vite/Git + synthetic native answers
 npm run test --workspace=@sheldon/web -- --config playwright.release.config.ts release-question.spec.ts # same flow through clean embedded release
+npm run test --workspace=@sheldon/web -- development-quiz.spec.ts # actual Git/API/private quiz save/check/restart
+npm run test --workspace=@sheldon/web -- --config playwright.release.config.ts release-quiz.spec.ts # same quiz flow through clean embedded release
 ```
 
 Run the frontend and release browser suites separately; they share Playwright's output directory.
@@ -99,18 +105,21 @@ The native-source release test needs Go and Git to build disposable tools and lo
 
 The question integration tests use actual browser actions, managed native Git source and production HTTP/SSE handlers, without browser HTTP mocks. A disposable Go executable simulates only the native OpenCode protocol/inference. Development and clean-source release flows cover shared-session threads/follow-ups, cross-tab observation/busy rejection, separate PRs, targeted Stop, failure/recovery, reload/reconnect and app/service restart. Saved rows reopen through the UI and explicitly continue the exact original session, without session replacement/default lookup/prompt replay. Abrupt-exit cases retain saved partial outcomes, classify unfinished turns honestly and fail closed with missing source/native state or unresolved execution. Release application processes have no Node on PATH. Real-provider restart compatibility remains unverified.
 
+The quiz integration flow also uses no application HTTP mocks. It verifies separate question/quiz native ownership, pre-check key withholding, correct/incorrect backend grading, unchanged conversation files, busy/stale rejection, failed/cancelled replacement, active shutdown and reopening/checking with the original cache and synthetic harness unavailable. Native/Git audits prove reads/checks/reload/restart do not dispatch prompts or load source. Release flows run only the binary plus offline tools, without Node or `refs/` at application runtime. These fixtures do not certify live-provider quiz quality, sandboxing, exactly-once dispatch, power-loss durability or non-Linux compatibility.
+
 ## Layout
 
 ```text
 cmd/sheldon/          Go CLI + tests
 internal/platform/   OS storage paths
 internal/process/    Owned command execution + cancellation
-internal/httpapi/    Protected loopback PR/source and question/SSE/Stop API
+internal/httpapi/    Protected loopback PR/source, question and quiz APIs
 internal/app/        Writer lifecycle, PR index, private admissions and source orchestration
 internal/githubpr/   Canonical PR/revision contracts (no fetching)
 internal/github/     Optional gh target-branch resolution
 internal/git/        Managed fetch, pinned worktrees and unified diffs
 internal/question/   Durable admission contracts, pinned context and runtime answer execution
+internal/quiz/       Pinned structured generation, private sets and public grading projections
 internal/opencode/   Restricted native service/session, execution and history adapter
 internal/ui/         Embedded release shell / asset-free development fallback
 scripts/build.js     Frontend → embed copy → Go build

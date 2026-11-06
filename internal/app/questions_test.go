@@ -33,6 +33,43 @@ type questionFixture struct {
 	audit, control, base, head string
 }
 
+var questionToolsOnce sync.Once
+var questionToolsDirectory string
+var questionToolsError error
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if questionToolsDirectory != "" {
+		os.RemoveAll(questionToolsDirectory)
+	}
+	os.Exit(code)
+}
+
+// questionToolDirectory builds immutable synthetic tools once, without using an installed harness.
+func questionToolDirectory(t *testing.T) string {
+	t.Helper()
+	questionToolsOnce.Do(func() {
+		questionToolsDirectory, questionToolsError = os.MkdirTemp("", "sheldon-app-tools-")
+		if questionToolsError != nil {
+			return
+		}
+		for name, path := range map[string]string{"git": "../git/testdata/git", "gh": "../github/testdata/gh", "opencode": "../opencode/testdata/opencode"} {
+			if runtime.GOOS == "windows" {
+				name += ".exe"
+			}
+			cmd := exec.Command("go", "build", "-o", filepath.Join(questionToolsDirectory, name), path)
+			if data, err := cmd.CombinedOutput(); err != nil {
+				questionToolsError = fmt.Errorf("synthetic tool build: %w %s", err, data)
+				return
+			}
+		}
+	})
+	if questionToolsError != nil {
+		t.Fatal(questionToolsError)
+	}
+	return questionToolsDirectory
+}
+
 // newQuestionFixture composes private app storage, real Git objects and fake native services offline.
 func newQuestionFixture(t *testing.T, mode string) questionFixture {
 	t.Helper()
@@ -45,13 +82,17 @@ func newQuestionFixture(t *testing.T, mode string) questionFixture {
 	if err := os.Mkdir(bin, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for name, path := range map[string]string{"git": "../git/testdata/git", "gh": "../github/testdata/gh", "opencode": "../opencode/testdata/opencode"} {
+	tools := questionToolDirectory(t)
+	for _, name := range []string{"git", "gh", "opencode"} {
 		if runtime.GOOS == "windows" {
 			name += ".exe"
 		}
-		cmd := exec.Command("go", "build", "-o", filepath.Join(bin, name), path)
-		if data, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("fixture build: %v %s", err, data)
+		data, err := os.ReadFile(filepath.Join(tools, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(bin, name), data, 0700); err != nil {
+			t.Fatal(err)
 		}
 	}
 	upstream := filepath.Join(root, "upstream.git")
@@ -116,7 +157,7 @@ type questionAuditEntry struct {
 	Body              string   `json:"body"`
 }
 
-// nativeQuestionAudit reads only test-owned synthetic native metadata, never real credentials.
+// nativeQuestionAudit reads complete test-owned audit entries while the fixture may still append.
 func nativeQuestionAudit(t *testing.T, path string) []questionAuditEntry {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -126,8 +167,12 @@ func nativeQuestionAudit(t *testing.T, path string) []questionAuditEntry {
 	if err != nil {
 		t.Fatal(err)
 	}
+	end := bytes.LastIndexByte(data, '\n')
+	if end < 0 {
+		return nil
+	}
 	var result []questionAuditEntry
-	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
+	for _, line := range bytes.Split(data[:end], []byte{'\n'}) {
 		var entry questionAuditEntry
 		if json.Unmarshal(line, &entry) != nil {
 			t.Fatal("malformed synthetic native audit")

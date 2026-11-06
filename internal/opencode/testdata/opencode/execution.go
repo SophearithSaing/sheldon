@@ -141,7 +141,7 @@ func (f *executionFixture) handle(w http.ResponseWriter, r *http.Request, body [
 			conn.Close()
 			return true
 		}
-		go f.answer(session, user, assistant, stop, n)
+		go f.answer(session, user, assistant, input.Text, stop, n)
 		if f.mode == "answer-ambiguous" {
 			conn, _, _ := w.(http.Hijacker).Hijack()
 			conn.Close()
@@ -213,12 +213,26 @@ func savedAdmissionMatches(prompt, session string) bool {
 }
 
 // answer produces labeled fixture text, hidden canaries, duplicate events and known terminal history.
-func (f *executionFixture) answer(session, user, assistant string, stop <-chan struct{}, n int) {
+func (f *executionFixture) answer(session, user, assistant, prompt string, stop <-chan struct{}, n int) {
 	f.event("evt_start_"+strconv.Itoa(n), "session.execution.started", session, assistant, "")
 	f.event("evt_foreign_"+strconv.Itoa(n), "session.text.delta", "ses_unrelated", "msg_foreign", "DO NOT DISPLAY FOREIGN TEXT")
 	f.event("evt_reasoning_"+strconv.Itoa(n), "session.reasoning.delta", session, assistant, "DO NOT DISPLAY HIDDEN REASONING")
 	text := "Synthetic fixture answer <script>literal</script>."
 	chunks := []string{"Synthetic fixture ", "answer <script>literal</script>."}
+	quizText, isQuiz := quizFixtureAnswer(prompt)
+	if isQuiz && strings.HasPrefix(f.mode, "quiz-") {
+		text = quizText
+		switch f.mode {
+		case "quiz-invalid":
+			text = `{"questions":[]}`
+		case "quiz-overflow":
+			text = strings.Repeat("x", 140<<10)
+		}
+		chunks = nil
+		for start := 0; start < len(text); start += 16 << 10 {
+			chunks = append(chunks, text[start:min(start+(16<<10), len(text))])
+		}
+	}
 	if f.mode == "answer-overflow" {
 		text = strings.Repeat("x", 300<<10)
 		chunks = []string{strings.Repeat("x", 65<<10)}
@@ -227,6 +241,16 @@ func (f *executionFixture) answer(session, user, assistant string, stop <-chan s
 	for i, chunk := range chunks {
 		partial += chunk
 		f.event(fmt.Sprintf("evt_text_%d_%d", n, i), "session.text.delta", session, assistant, chunk)
+		if i == 0 && isQuiz && (f.mode == "quiz-wait" || f.mode == "quiz-gated") {
+			outcome := f.browserOutcome(stop, n)
+			if outcome == "" {
+				return
+			}
+			if outcome != "succeeded" {
+				f.terminal(session, user, assistant, partial, outcome, n)
+				return
+			}
+		}
 		if i == 0 && f.mode == "answer-browser" {
 			outcome := f.browserOutcome(stop, n)
 			if outcome == "" {
@@ -241,6 +265,12 @@ func (f *executionFixture) answer(session, user, assistant string, stop <-chan s
 			f.event(fmt.Sprintf("evt_text_%d_%d", n, i), "session.text.delta", session, assistant, chunk)
 		}
 		if i == 0 && f.mode == "answer-feed-loss" {
+			select {
+			case f.events <- "close-feed":
+			case <-f.done:
+			}
+		}
+		if i == 0 && isQuiz && f.mode == "quiz-feed-loss" {
 			select {
 			case f.events <- "close-feed":
 			case <-f.done:
@@ -264,11 +294,66 @@ func (f *executionFixture) answer(session, user, assistant string, stop <-chan s
 			}
 		}
 	}
+	if isQuiz && f.mode == "quiz-overflow" {
+		outcome := f.browserOutcome(stop, n)
+		if outcome != "" {
+			f.terminal(session, user, assistant, partial, outcome, n)
+		}
+		return
+	}
 	outcome := "succeeded"
 	if f.mode == "answer-failed" {
 		outcome = "failed"
 	}
+	if isQuiz && f.mode == "quiz-failed" {
+		outcome = "failed"
+	}
 	f.terminal(session, user, assistant, text, outcome, n)
+}
+
+// quizFixtureAnswer derives synthetic structured references from the supplied test prompt only.
+func quizFixtureAnswer(prompt string) (string, bool) {
+	var input struct {
+		Instructions string `json:"instructions"`
+		Source       struct {
+			Complete bool `json:"complete"`
+			Files    []struct {
+				ID, Kind string
+				Hunks    []struct {
+					ID    string
+					Lines []struct {
+						Sign             string
+						OldLine, NewLine int
+					}
+				}
+			}
+		} `json:"source"`
+	}
+	if json.Unmarshal([]byte(prompt), &input) != nil || input.Instructions == "" || !input.Source.Complete {
+		return "", false
+	}
+	for _, file := range input.Source.Files {
+		if file.Kind != "text" {
+			continue
+		}
+		for _, hunk := range file.Hunks {
+			for _, line := range hunk.Lines {
+				side, coordinate := "new", line.NewLine
+				if line.Sign == "-" {
+					side, coordinate = "old", line.OldLine
+				} else if line.Sign != "+" {
+					continue
+				}
+				questions := []map[string]any{}
+				for i := range 5 {
+					questions = append(questions, map[string]any{"prompt": fmt.Sprintf("Synthetic quiz boundary %d?", i+1), "choices": []string{"First", "Second", "Third", "Fourth"}, "correctChoiceID": "b", "explanation": "Synthetic explanation, not live inference.", "evidence": []map[string]any{{"fileID": file.ID, "hunkID": hunk.ID, "side": side, "start": coordinate, "end": coordinate}}})
+				}
+				data, _ := json.Marshal(map[string]any{"questions": questions})
+				return string(data), true
+			}
+		}
+	}
+	return `{"questions":[]}`, true
 }
 
 // browserOutcome waits for explicit test-owned release, targeted Stop or owned-service shutdown.
