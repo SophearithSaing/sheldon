@@ -1,10 +1,12 @@
 import { parseSourceResponse, pinnedID, type SourceRequest, type SourceResponse } from './source'
 import { parseQuestionAnswer, parseObservedAnswer, readAnswerEvents, readBoundedJSON, sameAnchor, questionError, QuestionAdmissionError, type InitialQuestion, type QuestionAnswer } from './questions'
 import { historyID, parseThreadList, parseThreadDetail, type ThreadList, type ThreadDetail } from './history'
+import { parseQuizRead, parseQuizChecked, parseQuizStatus, quizVersion, type QuizClient, type QuizRead, type QuizStatus, type QuizChecked } from './quiz'
+import type { PinnedRevision } from './source'
 
 let launchToken = ''
 
-export interface RuntimeClient {
+export interface RuntimeClient extends QuizClient {
   /**
    * Reads saved navigation without source loading or inference.
    * @param id Routed PR identity.
@@ -406,5 +408,87 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
     if (!response.ok) { await response.body?.cancel().catch((): void => {}); throw new Error('Answer saving failed. No question was resent.') }
     return parseObservedAnswer(await readBoundedJSON(response, 2 * 1024 * 1024), answer)
   }
-  return { openPR, source, askQuestion, askFollowup, observeAnswer, stopAnswer, saveAnswer, listThreads, readThread }
+  /**
+   * Performs one bounded quiz request, never retrying ambiguous mutations.
+   * @param id Registered PR.
+   * @param suffix Validated quiz-relative path.
+   * @param body Mutation body, or undefined for a read.
+   * @param limit Encoded response ceiling.
+   * @param signal Request lifetime.
+   * @param expected Required success status.
+   * @returns Bounded decoded public response.
+   */
+  async function quizRequest(id: string, suffix: string, body: unknown, limit: number, signal: AbortSignal, expected = 200): Promise<unknown> {
+    if (!historyID(id) || lifetime.aborted || !credential) throw new Error('Quiz unavailable. Reconnect explicitly.')
+    const bounded = AbortSignal.any([lifetime, signal, AbortSignal.timeout(10000)])
+    const path = `/api/reviews/${id}/quiz${suffix}`
+    const response = body === undefined ? await fetch(path, authenticatedRequest(credential, bounded)) : await post(path, body, bounded)
+    if (!response.ok) {
+      await response.body?.cancel().catch((): void => {})
+      throw new Error(response.status === 409 ? 'Quiz changed, busy or uncertain. Refresh saved quiz before another action.' : response.status === 410 ? 'Original pinned source is unavailable. No newer source was substituted.' : 'Quiz request could not be confirmed. Refresh saved quiz before retrying; no automatic retry was made.')
+    }
+    if (!response.headers.get('Content-Type')?.startsWith('application/json')) { await response.body?.cancel().catch((): void => {}); throw new Error('Unexpected quiz response. Refresh saved quiz.') }
+    if (response.status !== expected) { await response.body?.cancel().catch((): void => {}); throw new Error('Unexpected quiz acknowledgement. Refresh saved quiz before another action.') }
+    return readBoundedJSON(response, limit)
+  }
+  /**
+   * Reads saved quiz data without dispatch.
+   * @param id Routed PR.
+   * @param signal Read lifetime.
+   * @returns Validated unanswered set.
+   */
+  async function readQuiz(id: string, signal: AbortSignal): Promise<QuizRead> { return parseQuizRead(await quizRequest(id, '', undefined, 256 << 10, signal), id) }
+  /**
+   * Admits one explicit revision-pinned quiz generation.
+   * @param id Routed PR.
+   * @param revision Displayed comparison.
+   * @param version Expected predecessor version.
+   * @param signal Request lifetime.
+   * @returns Pending scoped admission, never saved completion.
+   */
+  async function generateQuiz(id: string, revision: PinnedRevision, version: string, signal: AbortSignal): Promise<QuizStatus> {
+    if (revision.prID !== id || !quizVersion(version)) throw new Error('Invalid quiz generation context.')
+    const revisionID = await pinnedID(revision)
+    const status = parseQuizStatus(await quizRequest(id, '/generations', { revision, expectedVersion: version }, 4 << 10, signal, 202), id)
+    if (status.revisionID !== revisionID || status.state !== 'pending' || status.sequence !== '1' || status.cancelRequested) throw new Error('Quiz admission is uncertain. Refresh saved quiz; do not resend automatically.')
+    return status
+  }
+  /**
+   * Observes or cancels only the exact admitted generation.
+   * @param status Exact generation scope.
+   * @param signal Request lifetime.
+   * @param cancel Whether to request interruption.
+   * @returns Scoped feedback without assuming terminal cancellation.
+   */
+  async function quizGeneration(status: QuizStatus, signal: AbortSignal, cancel: boolean): Promise<QuizStatus> {
+    if (!historyID(status.generationID) || !historyID(status.revisionID)) throw new Error('Invalid quiz generation scope.')
+    return parseQuizStatus(await quizRequest(status.prID, `/generations/${status.generationID}${cancel ? '/cancel' : ''}`, cancel ? { revisionID: status.revisionID } : undefined, 4 << 10, signal, cancel ? 202 : 200), status.prID, status)
+  }
+  /**
+   * Reads one exact generation without dispatch.
+   * @param status Exact generation.
+   * @param signal Read lifetime.
+   * @returns Scoped current feedback.
+   */
+  function readQuizGeneration(status: QuizStatus, signal: AbortSignal): Promise<QuizStatus> { return quizGeneration(status, signal, false) }
+  /**
+   * Requests exact-attempt cancellation without retry.
+   * @param status Exact generation.
+   * @param signal Request lifetime.
+   * @returns Cancellation feedback, not idle proof.
+   */
+  function cancelQuizGeneration(status: QuizStatus, signal: AbortSignal): Promise<QuizStatus> { return quizGeneration(status, signal, true) }
+  /**
+   * Checks one saved question without inference or attempt persistence.
+   * @param read Original saved set.
+   * @param questionID Selected question.
+   * @param choiceID Explicit choice.
+   * @param signal Request lifetime.
+   * @returns Only that question's validated result.
+   */
+  async function checkQuiz(read: QuizRead, questionID: string, choiceID: string, signal: AbortSignal): Promise<QuizChecked> {
+    if (!read.quiz || !historyID(read.quiz.quizID) || !/^q[1-5]$/.test(questionID) || !/^[a-d]$/.test(choiceID)) throw new Error('Invalid quiz check context.')
+    return parseQuizChecked(await quizRequest(read.prID, `/${read.quiz.quizID}/questions/${questionID}/check`, { revisionID: read.quiz.revisionID, choiceID }, 512 << 10, signal), read, questionID, choiceID)
+  }
+  return { openPR, source, askQuestion, askFollowup, observeAnswer, stopAnswer, saveAnswer, listThreads, readThread, readQuiz, generateQuiz, readQuizGeneration, cancelQuizGeneration, checkQuiz }
 }

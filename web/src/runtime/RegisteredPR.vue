@@ -5,6 +5,8 @@ import ChangedFileTree from '../components/ChangedFileTree.vue'
 import SourceQuestions from './SourceQuestions.vue'
 import QuestionConversation from './QuestionConversation.vue'
 import SavedQuestions from './SavedQuestions.vue'
+import QuizView from './QuizView.vue'
+import type { QuizEvidence } from './quiz'
 import { useConversations } from './conversations'
 import UiButton from '../components/ui/UiButton.vue'
 import OpenPR from './OpenPR.vue'
@@ -32,7 +34,8 @@ const conversationOpen = ref(false)
 const conversations = useConversations((): RuntimeClient | null => props.client)
 const { threads, selectedID, current: currentThread } = conversations
 const { list: savedList, pending: historyPending, error: historyError } = conversations.history
-const view = ref<'files' | 'questions'>('files')
+const view = ref<'files' | 'questions' | 'quiz'>('files')
+const quizOpened = ref(false)
 const opening = ref('')
 let openEpoch = 0
 const initialSending = ref(false)
@@ -60,6 +63,7 @@ function reset(): void {
   openEpoch++
   opening.value = ''
   view.value = 'files'
+  quizOpened.value = false
   controller?.abort()
   controller = undefined
   source.value = undefined
@@ -222,11 +226,29 @@ function openAnswer(answer: QuestionAnswer, trigger: HTMLElement): void {
  * Switches views without unmounting source, its inline draft or retained conversations.
  * @param next Requested PR view.
  */
-function changeView(next: 'files' | 'questions'): void {
+function changeView(next: 'files' | 'questions' | 'quiz'): void {
   openEpoch++
   opening.value = ''
   view.value = next
+  if (next === 'quiz') quizOpened.value = true
   if (next === 'questions' && !savedList.value && !historyPending.value) void conversations.history.refreshList(props.reviewId)
+}
+
+/**
+ * Opens checked evidence only in its exact original displayed comparison.
+ * @param evidence Checked original quote and range.
+ * @param revisionID Original quiz comparison.
+ */
+async function quizSource(evidence: QuizEvidence, revisionID: string): Promise<void> {
+  if (drafting.value || diff.value?.revisionID !== revisionID) return
+  const file = diff.value.files.find((item): boolean => item.id === evidence.anchor.fileID)
+  const hunk = file?.hunks.find((item): boolean => item.id === evidence.anchor.hunkID)
+  if (!file || !hunk || !evidence.selected.every((line): boolean => hunk.lines.some((actual): boolean => actual.id === line.id && actual.text === line.text && actual.oldLine === line.oldLine && actual.newLine === line.newLine))) return
+  selected.value = file.id
+  changeView('files')
+  notice.value = `Quiz evidence: original ${evidence.anchor.side} lines ${evidence.anchor.start}–${evidence.anchor.end}. No draft or thread was created.`
+  await nextTick()
+  if (diff.value?.revisionID === revisionID && view.value === 'files') sourceHeading.value?.focus()
 }
 
 /**
@@ -273,7 +295,7 @@ onUnmounted(reset)
 
 <template>
   <div class="registered-pr">
-    <a class="skip-link" :href="view === 'questions' ? '#saved-questions' : '#review-content'">Skip to PR content</a>
+    <a class="skip-link" :href="view === 'questions' ? '#saved-questions' : view === 'quiz' ? '#real-quiz' : '#review-content'">Skip to PR content</a>
     <header class="review-header" aria-label="Sheldon navigation">
       <a href="/" aria-label="Sheldon — Open a PR">Sheldon</a><a href="/?preview=library">Sample UI previews</a>
       <span>Registered PR</span><OpenPR :client="client" /><slot name="runtime-trigger" />
@@ -286,13 +308,14 @@ onUnmounted(reset)
         <a class="github-link" :href="pr.url" target="_blank" rel="noreferrer">View on GitHub ↗</a>
       </template>
       <template #tabs>
-        <nav class="real-tabs" aria-label="PR views"><UiButton variant="quiet" :aria-current="view === 'files' ? 'page' : undefined" @click="changeView('files')">Files changed<span v-if="diff"> ({{ files.length }})</span></UiButton><UiButton variant="quiet" :aria-current="view === 'questions' ? 'page' : undefined" @click="changeView('questions')">Questions</UiButton><UiButton v-for="label in ['Quiz', 'Semantic review']" :key="label" variant="quiet" disabled title="Not implemented for real PRs">{{ label }} — unavailable</UiButton><UiButton v-if="threads.length && !conversationOpen" variant="quiet" @click="workspace?.openConversation($event)">Open conversation</UiButton></nav>
+        <nav class="real-tabs" aria-label="PR views"><UiButton variant="quiet" :aria-current="view === 'files' ? 'page' : undefined" @click="changeView('files')">Files changed<span v-if="diff"> ({{ files.length }})</span></UiButton><UiButton variant="quiet" :aria-current="view === 'questions' ? 'page' : undefined" @click="changeView('questions')">Questions</UiButton><UiButton variant="quiet" :aria-current="view === 'quiz' ? 'page' : undefined" @click="changeView('quiz')">Quiz</UiButton><UiButton variant="quiet" disabled title="Not implemented for real PRs">Semantic review — unavailable</UiButton><UiButton v-if="threads.length && !conversationOpen" variant="quiet" @click="workspace?.openConversation($event)">Open conversation</UiButton></nav>
       </template>
       <template #files><ChangedFileTree v-model="search" :files="treeFiles" :current="selected" :counts="questionCounts" :viewed="{}" real @select="selectFile" /></template>
       <template #conversation>
         <QuestionConversation v-if="currentThread" :thread="currentThread" :threads="threads" :busy-reason="currentBusy" :displayed-revision="diff?.revisionID" :history-pending="historyPending" :history-error="historyError" @refresh="conversations.refreshSaved(currentThread)" @followup="conversations.followup" @stop="conversations.stop" @observe="conversations.observe" @save="conversations.save" @select="selectThread" />
       </template>
       <template #default>
+        <QuizView v-if="quizOpened" v-show="view === 'quiz'" :pr-i-d="reviewId" :client="client" :active="view === 'quiz'" :diff="diff" :drafting="drafting" @source="quizSource" />
         <SavedQuestions v-show="view === 'questions'" :list="savedList" :threads="threads" :pending="historyPending" :error="historyError" :opening="opening" :selected="selectedID" :drafting="drafting" @refresh="conversations.history.refreshList(reviewId)" @open="openThread" />
         <section v-show="view === 'files'" id="review-content" ref="sourcePane" class="source-pane" tabindex="-1" :aria-busy="pending && !diff" aria-label="Pinned PR source">
           <div v-if="diff" class="refresh-controls">
