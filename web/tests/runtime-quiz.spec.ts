@@ -1,26 +1,9 @@
 import { expect, test, type Page } from '@playwright/test'
-import { digest, registered, sourceFixture, token } from './runtime-fixture'
-import type { RegisteredPR } from '../src/runtime/client'
-import type { QuizRead, QuizChecked, QuizStatus } from '../src/runtime/quiz'
-import type { SourceResponse } from '../src/runtime/source'
+import { digest, registered, token } from './runtime-fixture'
+import { quizFixture as fixture } from './quiz-fixture'
+import type { QuizStatus } from '../src/runtime/quiz'
 
 test.use({ baseURL: 'http://127.0.0.1:5175' })
-
-/**
- * Builds explicit public renderer fixtures, never an actual generated success claim.
- * @param pr Registered fixture PR.
- * @returns Unanswered set, one checked result and scoped generation.
- */
-function fixture(pr: RegisteredPR): { source: SourceResponse; read: QuizRead; checked: QuizChecked; status: QuizStatus } {
-  const source = sourceFixture(pr, 1)
-  const diff = source.diff!
-  const read: QuizRead = { prID: pr.id, version: '1', generation: null, quiz: { quizID: digest(`${pr.id}/quiz`), revision: diff.revision, revisionID: diff.revisionID, questions: Array.from({ length: 5 }, (_, i): NonNullable<QuizRead['quiz']>['questions'][number] => ({ questionID: `q${i+1}`, prompt: `Renderer question ${i+1}: <literal question>`, choices: ['First alternative', 'Second alternative', 'Third alternative', 'Fourth alternative'].map((text, j): { choiceID: string; text: string } => ({ choiceID: 'abcd'[j]!, text })) })) } }
-  const file = diff.files[0]!
-  const hunk = file.hunks[0]!
-  const checked: QuizChecked = { prID: pr.id, version: '1', quizID: read.quiz!.quizID, revisionID: diff.revisionID, questionID: 'q1', choiceID: 'a', correct: false, correctChoiceID: 'b', explanation: '<script>literal agent explanation</script> Verify the original changed boundary.', evidence: [{ anchor: { fileID: file.id, hunkID: hunk.id, side: 'new', start: 1, end: 1 }, oldPath: file.oldPath, newPath: file.newPath, selected: [hunk.lines[0]!], surrounding: hunk }] }
-  const status: QuizStatus = { prID: pr.id, generationID: digest(`${pr.id}/generation`), quizID: digest(`${pr.id}/replacement`), revisionID: diff.revisionID, sequence: '1', state: 'pending', cancelRequested: false, executionUnknown: false }
-  return { source, read, checked, status }
-}
 
 /**
  * Enters the real destination without touching the fictional preview.

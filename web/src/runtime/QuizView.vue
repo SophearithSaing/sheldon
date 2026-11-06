@@ -35,6 +35,7 @@ const outdated = computed((): boolean => !!quiz.value && !!props.diff && quiz.va
 let epoch = 0
 let readRequest: AbortController | undefined
 let pollRequest: AbortController | undefined
+let checkRequest: AbortController | undefined
 let timer: ReturnType<typeof setTimeout> | undefined
 const mutations = new Set<AbortController>()
 
@@ -47,6 +48,7 @@ function reset(): void {
   stopPolling()
   readRequest?.abort()
   readRequest = undefined
+  checkRequest = undefined
   for (const request of mutations) request.abort()
   mutations.clear()
   saved.value = undefined
@@ -68,7 +70,13 @@ function reset(): void {
  * @param next Scoped current feedback.
  */
 function acceptStatus(next: QuizStatus): void {
-  if (status.value?.generationID === next.generationID && BigInt(next.sequence) < BigInt(status.value.sequence)) return
+  const previous = status.value
+  if (previous?.generationID === next.generationID) {
+    if (next.quizID !== previous.quizID || next.revisionID !== previous.revisionID) throw new Error('Changed quiz generation scope.')
+    if (BigInt(next.sequence) < BigInt(previous.sequence)) return
+    const unchanged = JSON.stringify(next) === JSON.stringify(previous)
+    if ((next.sequence === previous.sequence || !quizActive(previous)) && !unchanged || previous.cancelRequested && !next.cancelRequested) throw new Error('Inconsistent quiz generation feedback.')
+  }
   status.value = next
 }
 
@@ -82,7 +90,7 @@ function schedule(): void {
 async function poll(): Promise<void> {
   const currentStatus = status.value
   const client = props.client
-  if (!props.active || !client || !currentStatus || pollRequest || !working.value || needsRead.value) return
+  if (!props.active || !client || !currentStatus || pollRequest || reading.value || !working.value || needsRead.value) return
   const request = new AbortController()
   const scope = epoch
   pollRequest = request
@@ -101,7 +109,7 @@ async function poll(): Promise<void> {
 /** Reads saved bytes on entry or explicit refresh without creating an attempt or starting inference. */
 async function refresh(): Promise<void> {
   const client = props.client
-  if (!client || reading.value || sending.value || cancelling.value || checking.value) return
+  if (!client || !props.active || reading.value || sending.value || cancelling.value) return
   stopPolling()
   const request = new AbortController()
   const scope = epoch
@@ -113,10 +121,18 @@ async function refresh(): Promise<void> {
     const result = await client.readQuiz(props.prID, request.signal)
     if (request.signal.aborted || readRequest !== request || scope !== epoch || client !== props.client) return
     if (saved.value && (BigInt(result.version) < BigInt(saved.value.version) || result.version === saved.value.version && result.quiz?.quizID !== saved.value.quiz?.quizID)) throw new Error('Regressing saved quiz.')
-    if (result.quiz?.quizID !== quiz.value?.quizID) { selections.value = {}; checks.value = {}; position.value = 0 }
-    saved.value = result
+    if (saved.value && result.quiz && quiz.value && (result.version === saved.value.version ? JSON.stringify(result.quiz) !== JSON.stringify(quiz.value) : result.quiz.quizID === quiz.value.quizID)) throw new Error('Changed immutable quiz.')
+    if (!result.generation && status.value || result.generation?.state === 'completed' && result.generation.savedVersion === result.version && result.generation.quizID !== result.quiz?.quizID) throw new Error('Inconsistent saved quiz feedback.')
     if (result.generation) acceptStatus(result.generation)
-    else status.value = null
+    if (result.quiz?.quizID !== quiz.value?.quizID) {
+      checkRequest?.abort()
+      checkRequest = undefined
+      checking.value = ''
+      selections.value = {}
+      checks.value = {}
+      position.value = 0
+    }
+    saved.value = result
     needsRead.value = false
     if (status.value?.state === 'completed' && BigInt(status.value.savedVersion!) > BigInt(result.version)) { needsRead.value = true; error.value = 'Saving completed after this read. Refresh saved quiz to load the acknowledged set.' }
   } catch {
@@ -176,13 +192,13 @@ async function cancel(): Promise<void> {
  * Selects without checking or changing a previously checked choice.
  * @param choiceID Explicit native radio alternative.
  */
-function choose(choiceID: string): void { if (question.value && !checked.value && !checking.value) selections.value[question.value.questionID] = choiceID }
+function choose(choiceID: string): void { if (question.value && !checked.value && checking.value !== question.value.questionID) selections.value[question.value.questionID] = choiceID }
 
 /**
  * Preserves read-only radio selection while retaining native focusability.
  * @param event Keyboard activation of a frozen group.
  */
-function guardRadio(event: KeyboardEvent): void { if ((checked.value || checking.value) && [' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) event.preventDefault() }
+function guardRadio(event: KeyboardEvent): void { if ((checked.value || checking.value === question.value?.questionID) && [' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) event.preventDefault() }
 
 /** Checks the explicit selected question once, never by inference or local key calculation. */
 async function check(): Promise<void> {
@@ -193,18 +209,19 @@ async function check(): Promise<void> {
   if (!client || !read?.quiz || !q || !choiceID || checked.value || checking.value || reading.value || needsRead.value) return
   const request = new AbortController()
   const scope = epoch
+  checkRequest = request
   checking.value = q.questionID
   mutations.add(request)
   error.value = ''
   try {
     const result = await client.checkQuiz(read, q.questionID, choiceID, request.signal)
-    if (request.signal.aborted || scope !== epoch || client !== props.client || saved.value?.version !== read.version || quiz.value?.quizID !== read.quiz.quizID || selections.value[q.questionID] !== choiceID) return
+    if (request.signal.aborted || checkRequest !== request || scope !== epoch || client !== props.client || saved.value?.version !== read.version || quiz.value?.quizID !== read.quiz.quizID || selections.value[q.questionID] !== choiceID) return
     checks.value = { ...checks.value, [q.questionID]: result }
   } catch {
-    if (!request.signal.aborted && scope === epoch) { needsRead.value = true; error.value = 'Answer check could not be confirmed. Your selection was retained. Refresh saved quiz before checking again.' }
+    if (!request.signal.aborted && checkRequest === request && scope === epoch) { needsRead.value = true; error.value = 'Answer check could not be confirmed. Your selection was retained. Refresh saved quiz before checking again.' }
   } finally {
     mutations.delete(request)
-    if (scope === epoch) checking.value = ''
+    if (checkRequest === request) { checking.value = ''; checkRequest = undefined }
   }
 }
 
@@ -213,10 +230,13 @@ async function check(): Promise<void> {
  * @param index Question position.
  */
 async function go(index: number): Promise<void> {
-  if (!quiz.value || index < 0 || index >= quiz.value.questions.length || checking.value) return
+  if (!quiz.value || index < 0 || index >= quiz.value.questions.length) return
+  const scope = epoch
+  const quizID = quiz.value.quizID
+  const trigger = document.activeElement
   position.value = index
   await nextTick()
-  if (props.active) legend.value?.focus()
+  if (props.active && scope === epoch && quiz.value?.quizID === quizID && position.value === index && (document.activeElement === trigger || document.activeElement === document.body)) legend.value?.focus()
 }
 
 /**
@@ -240,14 +260,23 @@ function navigable(quote: QuizEvidence): boolean {
 }
 
 watch((): readonly [string, RuntimeClient | null] => [props.prID, props.client], (): void => { reset(); if (props.active) void refresh() }, { flush: 'sync' })
-watch((): boolean => props.active, (active: boolean): void => { if (active) void refresh(); else { confirming.value = false; stopPolling() } }, { immediate: true, flush: 'sync' })
+watch((): boolean => props.active, (active: boolean): void => {
+  if (active) void refresh()
+  else {
+    confirming.value = false
+    stopPolling()
+    readRequest?.abort()
+    readRequest = undefined
+    reading.value = false
+  }
+}, { immediate: true, flush: 'sync' })
 onUnmounted(reset)
 </script>
 
 <template>
   <section id="real-quiz" class="real-quiz" aria-label="PR quiz">
     <ScrollRegion label="Quiz questions and generation" class="quiz-main">
-      <header class="quiz-heading"><h2 tabindex="-1">PR quiz</h2><div class="quiz-actions"><UiButton :disabled="reading || sending || cancelling || !!checking || !client" @click="refresh">Refresh saved quiz</UiButton><UiButton v-if="quiz" :disabled="unavailable" @click="confirming = true">Regenerate quiz</UiButton></div></header>
+      <header class="quiz-heading"><h2 tabindex="-1">PR quiz</h2><div class="quiz-actions"><UiButton :disabled="reading || sending || cancelling || !client" @click="refresh">Refresh saved quiz</UiButton><UiButton v-if="quiz" :disabled="unavailable" @click="confirming = true">Regenerate quiz</UiButton></div></header>
       <p class="quiz-scope">Agent-generated questions may be inaccurate or ambiguous. Answers never approve a PR, certify understanding, create a thread or mark anything Understood/Viewed. Selections and checks are page-memory only; reload starts unchecked.</p>
       <p v-if="reading" role="status">Reading saved quiz… No inference is started.</p>
       <p v-if="sending" role="status">Requesting generation admission… This is not saved completion.</p>
@@ -258,15 +287,15 @@ onUnmounted(reset)
       <template v-if="quiz && question">
         <p class="quiz-revision">Saved version {{ saved?.version }} · {{ quiz.revision.baseBranch }} · {{ quiz.revision.mergeBaseSHA.slice(0, 8) }} → {{ quiz.revision.headSHA.slice(0, 8) }}</p>
         <p v-if="outdated" role="status">Older revision: this quiz does not match the displayed source. Checks still use its original saved key.</p><p v-else-if="!diff">Original revision retained; currentness is unverified until source is loaded.</p>
-        <div class="quiz-progress"><nav aria-label="Quiz questions"><UiButton v-for="(q, index) in quiz.questions" :key="q.questionID" :aria-current="position === index ? 'step' : undefined" :aria-label="`Quiz question ${index + 1}, ${checks[q.questionID] ? 'checked' : 'not checked'}`" :disabled="!!checking" @click="go(index)">{{ index + 1 }}</UiButton></nav><p>{{ count }} of 5 checked in this page</p></div>
+        <div class="quiz-progress"><nav aria-label="Quiz questions"><UiButton v-for="(q, index) in quiz.questions" :key="q.questionID" :aria-current="position === index ? 'step' : undefined" :aria-label="`Quiz question ${index + 1}, ${checks[q.questionID] ? 'checked' : 'not checked'}`" @click="go(index)">{{ index + 1 }}</UiButton></nav><p>{{ count }} of 5 checked in this page</p></div>
         <form class="quiz-question" aria-label="Check quiz answer" @submit.prevent="check">
           <p>Question {{ position + 1 }} / 5 · Single answer</p>
           <fieldset :key="`${quiz.quizID}-${position}`" :aria-describedby="`${id}-check-hint`"><legend ref="legend" tabindex="-1">{{ question.prompt }}</legend>
-            <label v-for="c in question.choices" :key="c.choiceID" class="quiz-option" :class="{ 'is-selected': selected === c.choiceID, 'is-correct': checked?.correctChoiceID === c.choiceID, 'is-wrong': checked && !checked.correct && selected === c.choiceID }"><input type="radio" :name="`${id}-${question.questionID}`" :value="c.choiceID" :checked="selected === c.choiceID" :aria-disabled="!!checked || !!checking || undefined" @change="choose(c.choiceID)" @click="(checked || checking) && $event.preventDefault()" @keydown="guardRadio" /><span>{{ c.choiceID.toUpperCase() }}</span><span class="quiz-copy">{{ c.text }}</span><span v-if="checked?.correctChoiceID === c.choiceID">✓ Correct answer{{ selected === c.choiceID ? ' · Your answer' : '' }}</span><span v-else-if="checked && selected === c.choiceID">× Your answer</span></label>
+            <label v-for="c in question.choices" :key="c.choiceID" class="quiz-option" :class="{ 'is-selected': selected === c.choiceID, 'is-correct': checked?.correctChoiceID === c.choiceID, 'is-wrong': checked && !checked.correct && selected === c.choiceID }"><input type="radio" :name="`${id}-${question.questionID}`" :value="c.choiceID" :checked="selected === c.choiceID" :aria-disabled="!!checked || checking === question.questionID || undefined" @change="choose(c.choiceID)" @click="(checked || checking === question.questionID) && $event.preventDefault()" @keydown="guardRadio" /><span>{{ c.choiceID.toUpperCase() }}</span><span class="quiz-copy">{{ c.text }}</span><span v-if="checked?.correctChoiceID === c.choiceID">✓ Correct answer{{ selected === c.choiceID ? ' · Your answer' : '' }}</span><span v-else-if="checked && selected === c.choiceID">× Your answer</span></label>
           </fieldset>
           <p :id="`${id}-check-hint`">{{ checked ? 'Your checked selection is read-only in this page.' : 'Select one alternative, then Check answer. Selection alone reveals no solution.' }}</p>
           <p v-if="checked" role="status">{{ checked.correct ? 'Matches the saved agent-generated key.' : 'Incorrect against the saved key. Your selected answer is retained.' }}</p>
-          <div class="quiz-actions"><UiButton :disabled="position === 0 || !!checking" @click="go(position - 1)">Previous</UiButton><UiButton v-if="!checked" type="submit" variant="primary" :disabled="!selected || !!checking || reading || needsRead || !client">{{ checking ? 'Checking…' : 'Check answer' }}</UiButton><UiButton :disabled="position === 4 || !!checking" @click="go(position + 1)">Next question</UiButton></div>
+          <div class="quiz-actions"><UiButton :disabled="position === 0" @click="go(position - 1)">Previous</UiButton><UiButton v-if="!checked" type="submit" variant="primary" :disabled="!selected || !!checking || reading || needsRead || !client">{{ checking ? 'Checking…' : 'Check answer' }}</UiButton><UiButton :disabled="position === 4" @click="go(position + 1)">Next question</UiButton></div>
         </form>
       </template>
       <div v-else-if="saved && !reading" class="quiz-empty"><h3>No saved quiz</h3><p>Generate five questions explicitly from the displayed pinned source. Entering Quiz never generates automatically.</p><UiButton variant="primary" :disabled="unavailable" @click="generate">Generate quiz</UiButton></div>

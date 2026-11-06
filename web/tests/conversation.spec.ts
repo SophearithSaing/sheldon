@@ -3,6 +3,7 @@ import type { QuestionAnswer } from '../src/runtime/questions'
 import type { SourceResponse } from '../src/runtime/source'
 import { digest, registered, sourceFixture, token } from './runtime-fixture'
 import { historyFixture, installHistoryHarness, type HistoryHarness } from './history-fixture'
+import { quizFixture } from './quiz-fixture'
 
 test.use({ baseURL: 'http://127.0.0.1:5175' })
 
@@ -550,6 +551,55 @@ test('two tabs share backend busy feedback but never share drafts', async ({ pag
     expect(await tab.content()).not.toContain(credential)
     expect(await tab.evaluate((): string => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }))).not.toContain(credential)
   }
+})
+
+test('quiz failure and replacement preserve live question streams, both drafts, source selection and saved history', async ({ page }): Promise<void> => {
+  const f = await fixture(page, 974)
+  const q = quizFixture(f.source.pr)
+  const history = historyFixture(f.source.pr)
+  let current = q.read
+  let quizMutations = 0
+  await page.route(`**/api/reviews/${q.read.prID}/quiz`, async (route): Promise<void> => { await route.fulfill({ json: current }) })
+  await page.route(`**/api/reviews/${q.read.prID}/quiz/generations`, async (route): Promise<void> => { quizMutations++; await route.fulfill({ status: 500, json: { error: 'PRIVATE QUIZ FAILURE' } }) })
+  await page.route(`**/api/reviews/${q.read.prID}/threads`, async (route): Promise<void> => { await route.fulfill({ json: history.list }) })
+  await ask(page, 2, 'Independent active question')
+  const answer = f.answers[0]!
+  await snapshot(page, answer, { state: 'streaming', text: 'Question streaming before Quiz.' })
+  const followup = page.getByRole('textbox', { name: 'Follow up in this thread', exact: true })
+  await followup.fill('Retain follow-up draft during Quiz')
+  await page.getByRole('button', { name: 'Select head line 4', exact: true }).click()
+  await page.getByRole('button', { name: 'Ask about selection', exact: true }).click()
+  const inline = page.getByRole('textbox', { name: 'Your question', exact: true })
+  await inline.fill('Retain inline source draft during Quiz')
+  await expect(page.getByRole('button', { name: 'Send question', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: 'Questions', exact: true }).click()
+  await expect(page.getByText('Synthetic saved question.', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Quiz', exact: true }).click()
+  await page.getByRole('radio').first().check()
+  await page.getByRole('button', { name: 'Regenerate quiz', exact: true }).click()
+  await page.getByRole('button', { name: 'Generate replacement', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Generation admission could not be confirmed')
+  await snapshot(page, answer, { state: 'streaming', text: 'Question still streaming during Quiz.' })
+  await expect(page.locator('.answer-text')).toHaveText('Question still streaming during Quiz.')
+  await expect(followup).toHaveValue('Retain follow-up draft during Quiz')
+  current = { ...q.read, version: '2', quiz: { ...q.read.quiz!, quizID: q.status.quizID } }
+  await page.getByRole('button', { name: 'Refresh saved quiz', exact: true }).click()
+  await expect(page.locator('.quiz-revision')).toContainText('Saved version 2')
+  await expect(page.getByRole('radio').first()).not.toBeChecked()
+  await page.getByRole('button', { name: 'Files changed', exact: false }).click()
+  await expect(inline).toHaveValue('Retain inline source draft during Quiz')
+  await expect(page.getByRole('button', { name: 'Send question', exact: true })).toBeDisabled()
+  await expect(followup).toHaveValue('Retain follow-up draft during Quiz')
+  await expect(page.getByRole('form', { name: 'New question', exact: true }).getByText(`src/file0000.ts · head L4–4 · revision ${f.source.diff!.revisionID.slice(0, 8)}`, { exact: true })).toBeVisible()
+  await snapshot(page, answer, { state: 'completed', text: 'Question completed independently of Quiz.' }, true)
+  await expect(page.locator('.answer-text')).toHaveText('Question completed independently of Quiz.')
+  await expect(page.getByRole('button', { name: 'Send question', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Questions', exact: true }).click()
+  await expect(page.getByText('Synthetic saved question.', { exact: true })).toBeVisible()
+  expect(f.answers).toHaveLength(1)
+  expect(f.followups).toHaveLength(0)
+  expect(quizMutations).toBe(1)
+  expect(await page.content()).not.toContain('PRIVATE QUIZ FAILURE')
 })
 
 test('Questions preserves inline drafts and observes a reopened active answer through save failure and retry', async ({ page }): Promise<void> => {
