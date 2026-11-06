@@ -157,7 +157,7 @@ type questionAuditEntry struct {
 	Body              string   `json:"body"`
 }
 
-// nativeQuestionAudit reads only test-owned synthetic native metadata, never real credentials.
+// nativeQuestionAudit reads complete test-owned audit entries while the fixture may still append.
 func nativeQuestionAudit(t *testing.T, path string) []questionAuditEntry {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -167,8 +167,12 @@ func nativeQuestionAudit(t *testing.T, path string) []questionAuditEntry {
 	if err != nil {
 		t.Fatal(err)
 	}
+	end := bytes.LastIndexByte(data, '\n')
+	if end < 0 {
+		return nil
+	}
 	var result []questionAuditEntry
-	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
+	for _, line := range bytes.Split(data[:end], []byte{'\n'}) {
 		var entry questionAuditEntry
 		if json.Unmarshal(line, &entry) != nil {
 			t.Fatal("malformed synthetic native audit")

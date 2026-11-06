@@ -177,6 +177,17 @@ func (r *Runtime) Read(prID, generationID string) (Status, error) {
 	return g.status, nil
 }
 
+// Latest returns detached current feedback without starting work or exposing private execution state.
+func (r *Runtime) Latest(prID string) *Status {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if g := r.generations[prID]; g != nil {
+		status := g.status
+		return &status
+	}
+	return nil
+}
+
 // Cancel requests only this exact generation's interruption; acknowledgement is not idle proof.
 func (r *Runtime) Cancel(prID, generationID, revisionID string) (Status, error) {
 	r.mu.Lock()

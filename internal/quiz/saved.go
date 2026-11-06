@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/SophearithSaing/sheldon/internal/git"
 	"github.com/SophearithSaing/sheldon/internal/githubpr"
-	"github.com/SophearithSaing/sheldon/internal/question"
 )
 
 var (
@@ -85,8 +86,7 @@ func (c Content) validate() error {
 			if j > 0 && a == item.Evidence[0].Anchor || a.End-a.Start >= maxEvidenceLines || len(evidence.Selected) > maxEvidenceLines {
 				return ErrStore
 			}
-			context := question.Context{Revision: c.Revision, RevisionID: id, Anchor: question.Anchor{Kind: "lines", FileID: a.FileID, HunkID: a.HunkID, Side: a.Side, Start: a.Start, End: a.End}, OldPath: evidence.OldPath, NewPath: evidence.NewPath, Selected: evidence.Selected, Surrounding: evidence.Surrounding}
-			if context.ValidateSaved() != nil {
+			if validateEvidence(evidence) != nil {
 				return ErrStore
 			}
 			size := evidenceBytes(evidence)
@@ -105,6 +105,66 @@ func (c Content) validate() error {
 			}
 			hunks[key] = evidence.Surrounding
 		}
+	}
+	return nil
+}
+
+// validateEvidence checks literal retained ranges without source access or revision substitution.
+func validateEvidence(e Evidence) error {
+	a, h := e.Anchor, e.Surrounding
+	if !githubpr.ValidID(a.FileID) || !githubpr.ValidID(a.HunkID) || a.Side != "old" && a.Side != "new" || a.Start <= 0 || a.End < a.Start || a.End > 1_000_100_000 || a.End-a.Start >= maxEvidenceLines || h.ID != a.HunkID || !githubpr.ValidID(h.Old.ID) || !githubpr.ValidID(h.New.ID) || h.Old.Start < 0 || h.New.Start < 0 || h.Old.Start > 1_000_100_000 || h.New.Start > 1_000_100_000 || h.Old.Count < 0 || h.New.Count < 0 || h.Old.Count > 100_000 || h.New.Count > 100_000 || len(h.Lines) > 100_000 || len(e.Selected) == 0 || len(e.Selected) > maxEvidenceLines || e.OldPath == "" && e.NewPath == "" || evidenceBytes(e) > maxEvidenceBytes {
+		return ErrStore
+	}
+	for _, text := range []string{e.OldPath, e.NewPath, h.Section} {
+		if !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
+			return ErrStore
+		}
+	}
+	old, next := h.Old.Start, h.New.Start
+	oldCount, newCount := 0, 0
+	selected := []git.DiffLine{}
+	ids := map[string]bool{}
+	changed := false
+	for _, line := range h.Lines {
+		if !githubpr.ValidID(line.ID) || ids[line.ID] || !utf8.ValidString(line.Text) || strings.ContainsAny(line.Text, "\x00\n") {
+			return ErrStore
+		}
+		ids[line.ID] = true
+		switch line.Sign {
+		case " ":
+			if line.OldLine != old || line.NewLine != next || old <= 0 || next <= 0 {
+				return ErrStore
+			}
+			old++
+			next++
+			oldCount++
+			newCount++
+		case "-":
+			if line.OldLine != old || line.NewLine != 0 || old <= 0 {
+				return ErrStore
+			}
+			old++
+			oldCount++
+		case "+":
+			if line.NewLine != next || line.OldLine != 0 || next <= 0 {
+				return ErrStore
+			}
+			next++
+			newCount++
+		default:
+			return ErrStore
+		}
+		coordinate := line.NewLine
+		if a.Side == "old" {
+			coordinate = line.OldLine
+		}
+		if coordinate >= a.Start && coordinate <= a.End {
+			selected = append(selected, line)
+			changed = changed || a.Side == "new" && line.Sign == "+" || a.Side == "old" && line.Sign == "-"
+		}
+	}
+	if !changed || oldCount != h.Old.Count || newCount != h.New.Count || old > 1_000_100_001 || next > 1_000_100_001 || len(selected) != a.End-a.Start+1 || !reflect.DeepEqual(selected, e.Selected) {
+		return ErrStore
 	}
 	return nil
 }

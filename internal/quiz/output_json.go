@@ -63,8 +63,19 @@ func outputKey(name string) bool {
 		return true
 	case "schemaVersion", "prID", "version", "quizID", "revision", "revisionID", "baseBranch", "baseSource", "baseSHA", "headSHA", "mergeBaseSHA", "questionID", "choiceID", "text", "anchor", "oldPath", "newPath", "selected", "surrounding", "id", "old", "new", "count", "section", "lines", "sign", "oldLine", "newLine", "noNewline":
 		return true
+	case "expectedVersion":
+		return true
 	}
 	return false
+}
+
+// DecodeRequest strictly decodes one supported quiz request object without returning raw errors.
+func DecodeRequest(data []byte, out any) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' || !decodeOutput(data, out) {
+		return ErrInvalid
+	}
+	return nil
 }
 
 // validEscapes refuses unpaired UTF-16 surrogates that encoding/json would silently replace.
