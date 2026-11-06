@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"strconv"
 	"sync"
@@ -21,17 +20,17 @@ var (
 	ErrUnknown  = errors.New("quiz execution or session creation is uncertain; do not resend")
 	ErrClosed   = errors.New("quiz runtime is closed")
 	ErrNotFound = errors.New("quiz generation not found in the requested scope")
-	ErrNotReady = errors.New("quiz result is not validated; nothing was saved")
 )
 
-// State describes generation only; Validated does not mean a quiz was saved.
+// State distinguishes execution/validation from acknowledged saved completion.
 type State string
 
 const (
 	Pending    State = "pending"
 	Generating State = "generating"
 	Validating State = "validating"
-	Validated  State = "validated"
+	Saving     State = "saving"
+	Completed  State = "completed"
 	Failed     State = "failed"
 	Cancelled  State = "cancelled"
 	Unknown    State = "unknown"
@@ -48,16 +47,18 @@ type Status struct {
 	CancelRequested  bool   `json:"cancelRequested"`
 	ExecutionUnknown bool   `json:"executionUnknown"`
 	FailureCode      string `json:"failureCode,omitempty"`
+	SavedVersion     string `json:"savedVersion,omitempty"`
 }
 
 type generation struct {
-	status   Status
-	revision githubpr.Revision
-	sequence uint64
-	stop     chan struct{}
-	stopped  bool
-	finished bool
-	content  Content
+	status     Status
+	revision   githubpr.Revision
+	sequence   uint64
+	stop       chan struct{}
+	stopped    bool
+	finished   bool
+	expected   uint64
+	committing bool
 }
 
 // Runtime owns independent quiz activity and a lazy restricted service, not question context.
@@ -67,6 +68,7 @@ type Runtime struct {
 	cancel       context.CancelFunc
 	registry     Registry
 	cache        *git.Cache
+	store        Persistence
 	generations  map[string]*generation
 	serviceOnce  sync.Once
 	serviceReady chan struct{}
@@ -81,11 +83,12 @@ type Runtime struct {
 // New creates empty quiz state without source loading, native startup or disk access.
 func New(registry Registry, cache *git.Cache) *Runtime {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Runtime{ctx: ctx, cancel: cancel, registry: registry, cache: cache, generations: make(map[string]*generation), serviceReady: make(chan struct{})}
+	store, _ := registry.(Persistence)
+	return &Runtime{ctx: ctx, cancel: cancel, registry: registry, cache: cache, store: store, generations: make(map[string]*generation), serviceReady: make(chan struct{})}
 }
 
 // Begin reserves one PR slot and starts explicit app-owned generation, not durable admission.
-func (r *Runtime) Begin(ctx context.Context, prID string, revision githubpr.Revision) (Status, error) {
+func (r *Runtime) Begin(ctx context.Context, prID string, revision githubpr.Revision, expected uint64) (Status, error) {
 	if !githubpr.ValidID(prID) || revision.Validate(prID) != nil || r.registry == nil || r.cache == nil {
 		return Status{}, ErrSource
 	}
@@ -97,34 +100,58 @@ func (r *Runtime) Begin(ctx context.Context, prID string, revision githubpr.Revi
 		return Status{}, err
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		return Status{}, ErrClosed
+	previous, err := r.availableLocked(prID)
+	r.mu.Unlock()
+	if err != nil {
+		return Status{}, err
 	}
+	if r.store == nil {
+		return Status{}, ErrStore
+	}
+	if err := r.store.CheckQuiz(prID, expected); err != nil {
+		return Status{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return Status{}, err
 	}
-	previous := r.generations[prID]
-	if previous != nil {
-		if previous.status.ExecutionUnknown {
-			return Status{}, ErrUnknown
-		}
-		if !previous.finished {
-			return Status{}, ErrBusy
-		}
-	} else if len(r.generations) >= maxGenerationPRs {
-		return Status{}, ErrLimit
+	current, err := r.availableLocked(prID)
+	if err != nil {
+		return Status{}, err
+	}
+	if current != previous {
+		return Status{}, ErrConflict
 	}
 	ids := make([]byte, 64)
 	if _, err := rand.Read(ids); err != nil {
 		return Status{}, ErrClosed
 	}
 	revisionID, _ := revision.ID()
-	g := &generation{status: Status{PRID: prID, GenerationID: hex.EncodeToString(ids[:32]), QuizID: hex.EncodeToString(ids[32:]), RevisionID: revisionID, Sequence: "1", State: Pending}, revision: revision, sequence: 1, stop: make(chan struct{})}
+	g := &generation{status: Status{PRID: prID, GenerationID: hex.EncodeToString(ids[:32]), QuizID: hex.EncodeToString(ids[32:]), RevisionID: revisionID, Sequence: "1", State: Pending}, revision: revision, sequence: 1, stop: make(chan struct{}), expected: expected}
 	r.generations[prID] = g
 	r.work.Add(1)
 	go r.execute(g)
 	return g.status, nil
+}
+
+// availableLocked refuses contention/uncertainty without locking across storage operations.
+func (r *Runtime) availableLocked(prID string) (*generation, error) {
+	if r.closed {
+		return nil, ErrClosed
+	}
+	g := r.generations[prID]
+	if g != nil {
+		if g.status.ExecutionUnknown {
+			return nil, ErrUnknown
+		}
+		if !g.finished {
+			return nil, ErrBusy
+		}
+	} else if len(r.generations) >= maxGenerationPRs {
+		return nil, ErrLimit
+	}
+	return g, nil
 }
 
 // lookupLocked verifies exact retained scope with the runtime mutex held.
@@ -161,34 +188,12 @@ func (r *Runtime) Cancel(prID, generationID, revisionID string) (Status, error) 
 	if r.closed {
 		return Status{}, ErrClosed
 	}
-	if !g.finished && !g.status.CancelRequested {
+	if !g.finished && !g.committing && !g.status.CancelRequested {
 		g.status.CancelRequested = true
 		g.stopLocked()
 		g.advanceLocked()
 	}
 	return g.status, nil
-}
-
-// Content returns a detached private validated result, never a saved or unanswered public DTO.
-func (r *Runtime) Content(prID, generationID string) (Content, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	g, err := r.lookupLocked(prID, generationID)
-	if err != nil {
-		return Content{}, err
-	}
-	if g.status.State != Validated || r.closed {
-		return Content{}, ErrNotReady
-	}
-	data, err := json.Marshal(g.content)
-	if err != nil {
-		return Content{}, ErrNotReady
-	}
-	var content Content
-	if json.Unmarshal(data, &content) != nil {
-		return Content{}, ErrNotReady
-	}
-	return content, nil
 }
 
 // advanceLocked advances finite status snapshots without retaining an event history.
@@ -235,7 +240,7 @@ func (r *Runtime) nativeService(ctx context.Context) (*opencode.Service, error) 
 	}
 }
 
-// Close cancels/drains owned generation and service resources without writes or retries.
+// Close drains owned work and entered commits without initiating shutdown saves or retries.
 func (r *Runtime) Close() error {
 	r.closeOnce.Do(func() {
 		r.mu.Lock()

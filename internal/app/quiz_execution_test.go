@@ -31,7 +31,7 @@ func waitQuiz(t *testing.T, runtime *quiz.Runtime, admitted quiz.Status) quiz.St
 		}
 		assertQuizStatus(t, latest)
 		switch latest.State {
-		case quiz.Validated, quiz.Failed, quiz.Cancelled, quiz.Unknown:
+		case quiz.Completed, quiz.Failed, quiz.Cancelled, quiz.Unknown:
 			return latest
 		}
 		select {
@@ -49,7 +49,10 @@ func assertQuizStatus(t *testing.T, status quiz.Status) {
 	if err != nil || len(data) > 4096 || !githubpr.ValidID(status.GenerationID) || !githubpr.ValidID(status.QuizID) || status.GenerationID == status.QuizID {
 		t.Fatal("invalid bounded generation snapshot")
 	}
-	for _, private := range []string{"correctChoiceID", "explanation", "evidence", "HIDDEN", "RAW", "ses_fixture", "sheldon-opencode-", "Synthetic quiz", "completed", "savedVersion"} {
+	if status.State == quiz.Completed && status.SavedVersion == "" || status.State != quiz.Completed && status.SavedVersion != "" {
+		t.Fatal("execution status disagrees with saved acknowledgement")
+	}
+	for _, private := range []string{"correctChoiceID", "explanation", "evidence", "HIDDEN", "RAW", "ses_fixture", "sheldon-opencode-", "Synthetic quiz"} {
 		if bytes.Contains(data, []byte(private)) {
 			t.Fatalf("generation status exposed private/success data: %s", private)
 		}
@@ -87,29 +90,29 @@ func awaitQuizPrompts(t *testing.T, f questionFixture, count int) {
 	}
 }
 
-func TestQuizGenerationIsPrivateValidatedAndExplicitlyUnsaved(t *testing.T) {
+func TestQuizGenerationCompletesOnlyAfterPrivateSaving(t *testing.T) {
 	f := newQuestionFixture(t, "quiz-valid")
 	runtime, err := f.owner.openQuizzes(f.paths)
 	if err != nil || len(nativeQuestionAudit(t, f.audit)) != 0 {
 		t.Fatal("opening runtime started native work")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	admitted, err := f.service.GenerateQuiz(ctx, f.pr.ID, f.input.Revision)
+	admitted, err := f.service.GenerateQuiz(ctx, f.pr.ID, f.input.Revision, 0)
 	cancel()
 	if err != nil || admitted.State != quiz.Pending || admitted.Sequence != "1" {
 		t.Fatalf("quiz admission: %v", err)
 	}
 	latest := waitQuiz(t, runtime, admitted)
-	if latest.State != quiz.Validated || latest.ExecutionUnknown || latest.CancelRequested || quizPromptCount(t, f) != 1 {
-		t.Fatalf("expected validated unsaved result: %+v", latest)
+	if latest.State != quiz.Completed || latest.SavedVersion != "1" || latest.ExecutionUnknown || latest.CancelRequested || quizPromptCount(t, f) != 1 {
+		t.Fatalf("expected completed saved result: %+v", latest)
 	}
-	content, err := runtime.Content(f.pr.ID, admitted.GenerationID)
+	content, err := f.owner.ReadQuiz(f.pr.ID)
 	if err != nil || len(content.Questions) != 5 || content.Questions[0].Evidence[0].Selected[0].Text != "old literal" {
 		t.Fatalf("validated private result: %v", err)
 	}
 	content.Questions[0].Evidence[0].Selected[0].Text = "local edit"
 	content.Questions[0].Choices[0].Text = "local edit"
-	again, err := runtime.Content(f.pr.ID, admitted.GenerationID)
+	again, err := f.owner.ReadQuiz(f.pr.ID)
 	if err != nil || again.Questions[0].Evidence[0].Selected[0].Text == "local edit" || again.Questions[0].Choices[0].Text == "local edit" {
 		t.Fatal("private candidate aliases caller data")
 	}
@@ -123,14 +126,14 @@ func TestQuizGenerationIsPrivateValidatedAndExplicitlyUnsaved(t *testing.T) {
 	if len(nativeQuestionAudit(t, f.audit)) != nativeBefore {
 		t.Fatal("read/late Cancel started native work")
 	}
-	second, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision)
+	second, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision, 1)
 	if err != nil || second.GenerationID == admitted.GenerationID || second.QuizID == admitted.QuizID {
 		t.Fatalf("explicit generation did not create fresh identities: %v", err)
 	}
 	if _, err := runtime.Cancel(f.pr.ID, admitted.GenerationID, admitted.RevisionID); !errors.Is(err, quiz.ErrNotFound) {
 		t.Fatal("retired attempt could cancel newer generation")
 	}
-	if waitQuiz(t, runtime, second).State != quiz.Validated || quizPromptCount(t, f) != 2 {
+	if waitQuiz(t, runtime, second).State != quiz.Completed || quizPromptCount(t, f) != 2 {
 		t.Fatal("fresh explicit generation did not validate once")
 	}
 	creates, defaults := 0, 0
@@ -145,10 +148,11 @@ func TestQuizGenerationIsPrivateValidatedAndExplicitlyUnsaved(t *testing.T) {
 	if creates != 2 || defaults != 2 || f.owner.questions != nil {
 		t.Fatal("quiz reused a question/session binding or consulted defaults during reads")
 	}
-	for _, name := range []string{"quiz.json", "threads.json"} {
-		if _, err := os.Lstat(filepath.Join(f.paths.Data, "reviews", f.pr.ID, name)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("unsaved quiz wrote %s", name)
-		}
+	if saved, err := f.owner.ReadQuiz(f.pr.ID); err != nil || saved.Version != 2 || saved.QuizID != second.QuizID {
+		t.Fatal("replacement was not saved")
+	}
+	if _, err := os.Lstat(filepath.Join(f.paths.Data, "reviews", f.pr.ID, "threads.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("quiz changed question storage")
 	}
 }
 
@@ -164,7 +168,7 @@ func TestQuizBusyAcrossRevisionsConcurrentPRsAndTargetedCancelLeaveQuestionsInta
 	if err != nil {
 		t.Fatal(err)
 	}
-	admitted, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision)
+	admitted, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +178,7 @@ func TestQuizBusyAcrossRevisionsConcurrentPRsAndTargetedCancelLeaveQuestionsInta
 	errorsSeen := make(chan error, 12)
 	for range 12 {
 		work.Go(func() {
-			_, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision)
+			_, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision, 0)
 			errorsSeen <- err
 		})
 	}
@@ -187,7 +191,7 @@ func TestQuizBusyAcrossRevisionsConcurrentPRsAndTargetedCancelLeaveQuestionsInta
 	}
 	different := f.input.Revision
 	different.BaseSHA = strings.Repeat("d", 40)
-	if _, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, different); !errors.Is(err, quiz.ErrBusy) {
+	if _, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, different, 0); !errors.Is(err, quiz.ErrBusy) {
 		t.Fatal("different revision escaped the per-PR replacement gate")
 	}
 	if _, err := runtime.Cancel(f.pr.ID, admitted.GenerationID, strings.Repeat("e", 64)); !errors.Is(err, quiz.ErrNotFound) {
@@ -198,7 +202,7 @@ func TestQuizBusyAcrossRevisionsConcurrentPRsAndTargetedCancelLeaveQuestionsInta
 		t.Fatal(err)
 	}
 	otherInput := prepareQuestionRevision(t, f, other, f.input.Revision.BaseSHA, f.head)
-	otherGeneration, err := f.service.GenerateQuiz(context.Background(), other.ID, otherInput.Revision)
+	otherGeneration, err := f.service.GenerateQuiz(context.Background(), other.ID, otherInput.Revision, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +255,7 @@ func TestQuizGenerationFailureRecoveryNeverReplaysOrPublishesInvalidContent(t *t
 	for _, mode := range []string{"quiz-invalid", "quiz-failed", "quiz-overflow", "quiz-feed-loss", "version-wrong", "model-missing", "answer-ambiguous-empty"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newQuestionFixture(t, mode)
-			admitted, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision)
+			admitted, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -264,7 +268,7 @@ func TestQuizGenerationFailureRecoveryNeverReplaysOrPublishesInvalidContent(t *t
 			case "quiz-overflow":
 				code = "output-too-large"
 			case "quiz-feed-loss":
-				want, code = quiz.Validated, ""
+				want, code = quiz.Completed, ""
 			case "version-wrong", "model-missing":
 				code, prompts = "native-unavailable", 0
 			case "answer-ambiguous-empty":
@@ -282,9 +286,9 @@ func TestQuizGenerationFailureRecoveryNeverReplaysOrPublishesInvalidContent(t *t
 					t.Fatal("output limit did not request a targeted internal interruption")
 				}
 			}
-			if want != quiz.Validated {
-				if content, err := runtime.Content(f.pr.ID, admitted.GenerationID); !errors.Is(err, quiz.ErrNotReady) || len(content.Questions) != 0 {
-					t.Fatal("failure exposed a private candidate")
+			if want != quiz.Completed {
+				if content, err := f.owner.ReadQuiz(f.pr.ID); err != nil || content.Version != 0 || len(content.Questions) != 0 {
+					t.Fatal("failure saved a private candidate")
 				}
 			}
 			if want == quiz.Unknown {
@@ -292,7 +296,7 @@ func TestQuizGenerationFailureRecoveryNeverReplaysOrPublishesInvalidContent(t *t
 					t.Fatal("unknown admission lost uncertainty")
 				}
 				runtime.Cancel(f.pr.ID, admitted.GenerationID, admitted.RevisionID)
-				if _, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision); !errors.Is(err, quiz.ErrUnknown) || quizPromptCount(t, f) != 1 {
+				if _, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision, 0); !errors.Is(err, quiz.ErrUnknown) || quizPromptCount(t, f) != 1 {
 					t.Fatal("unknown outcome allowed replacement/replay")
 				}
 			}
@@ -310,7 +314,7 @@ func TestQuizConcurrentAdmissionHasOneWinnerAndOneNativePrompt(t *testing.T) {
 	results := make(chan attempt, 16)
 	for range 16 {
 		work.Go(func() {
-			status, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision)
+			status, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision, 0)
 			results <- attempt{status, err}
 		})
 	}
@@ -348,7 +352,7 @@ func TestQuizUnexpectedApprovalCannotInvalidateQuestionService(t *testing.T) {
 	path := filepath.Join(f.paths.Data, "reviews", f.pr.ID, "threads.json")
 	before, _ := os.ReadFile(path)
 	t.Setenv("SHELDON_NATIVE_MODE", "approval")
-	admitted, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision)
+	admitted, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +373,7 @@ func TestQuizUnexpectedApprovalCannotInvalidateQuestionService(t *testing.T) {
 
 func TestQuizActiveWriterCloseDrainsWithoutSavingAndRetainsHonestStatus(t *testing.T) {
 	f := newQuestionFixture(t, "quiz-wait")
-	admitted, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision)
+	admitted, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +383,7 @@ func TestQuizActiveWriterCloseDrainsWithoutSavingAndRetainsHonestStatus(t *testi
 		t.Fatal(err)
 	}
 	final := waitQuiz(t, runtime, admitted)
-	if final.State == quiz.Validated || final.State != quiz.Unknown && final.State != quiz.Cancelled {
+	if final.State == quiz.Completed || final.State != quiz.Unknown && final.State != quiz.Cancelled {
 		t.Fatalf("shutdown fabricated successful generation: %+v", final)
 	}
 	if final.State == quiz.Unknown && !final.ExecutionUnknown {
@@ -404,7 +408,7 @@ func TestQuizRevalidatesSourceAfterNativeCreationAndDrainsOnWriterClose(t *testi
 	for _, action := range []string{"change source", "close writer", "cancel creation"} {
 		t.Run(action, func(t *testing.T) {
 			f := newQuestionFixture(t, "create-gated")
-			admitted, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision)
+			admitted, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, f.input.Revision, 0)
 			if err != nil {
 				t.Fatal(err)
 			}

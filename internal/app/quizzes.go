@@ -25,8 +25,8 @@ func (i *instance) openQuizzes(paths platform.Paths) (*quiz.Runtime, error) {
 	return i.quizzes, nil
 }
 
-// GenerateQuiz explicitly starts runtime-only generation; there is no durable quiz admission yet.
-func (s *sourceRegistry) GenerateQuiz(ctx context.Context, prID string, revision githubpr.Revision) (quiz.Status, error) {
+// GenerateQuiz explicitly starts generation against a checked saved predecessor, not durable admission.
+func (s *sourceRegistry) GenerateQuiz(ctx context.Context, prID string, revision githubpr.Revision, expected uint64) (quiz.Status, error) {
 	if err := ctx.Err(); err != nil {
 		return quiz.Status{}, err
 	}
@@ -36,6 +36,9 @@ func (s *sourceRegistry) GenerateQuiz(ctx context.Context, prID string, revision
 	if _, err := s.ReadPR(prID); err != nil {
 		return quiz.Status{}, quiz.ErrSource
 	}
+	if err := s.CheckQuiz(prID, expected); err != nil {
+		return quiz.Status{}, err
+	}
 	if _, err := s.openExistingCache(s.paths); err != nil {
 		return quiz.Status{}, quiz.ErrSource
 	}
@@ -43,5 +46,5 @@ func (s *sourceRegistry) GenerateQuiz(ctx context.Context, prID string, revision
 	if err != nil {
 		return quiz.Status{}, err
 	}
-	return runtime.Begin(ctx, prID, revision)
+	return runtime.Begin(ctx, prID, revision, expected)
 }

@@ -33,7 +33,7 @@ func TestRuntimeRejectsClosedBusyUnknownAndCapacityWithoutStartingWork(t *testin
 			ctx, revision := context.Background(), g.revision
 			switch name {
 			case "unknown":
-				r.finish(g, Unknown, "execution-uncertain", Content{})
+				r.finish(g, Unknown, "execution-uncertain")
 				want = ErrUnknown
 			case "closed":
 				r.Close()
@@ -56,7 +56,7 @@ func TestRuntimeRejectsClosedBusyUnknownAndCapacityWithoutStartingWork(t *testin
 				r.registry = fixtureRegistry{err: errors.New("private registry diagnostic")}
 				want = ErrSource
 			}
-			status, err := r.Begin(ctx, g.status.PRID, revision)
+			status, err := r.Begin(ctx, g.status.PRID, revision, 0)
 			if !errors.Is(err, want) || status != (Status{}) || r.service != nil || strings.Contains(err.Error(), "diagnostic") {
 				t.Fatalf("refusal started work/leaked diagnostics: %v", err)
 			}
@@ -80,13 +80,10 @@ func TestRuntimeExactScopeCancellationAndUnknownRemainSeparate(t *testing.T) {
 	if err != nil || !stopped.CancelRequested || stopped.State != Pending || stopped.Sequence != "2" || stopped.ExecutionUnknown {
 		t.Fatal("acknowledgement became terminal/unknown proof")
 	}
-	r.finish(g, Unknown, "session-uncertain", Content{})
+	r.finish(g, Unknown, "session-uncertain")
 	stopped, err = r.Cancel(g.status.PRID, g.status.GenerationID, g.status.RevisionID)
 	if err != nil || stopped.State != Unknown || !stopped.ExecutionUnknown || stopped.Sequence != "3" {
 		t.Fatal("late Cancel erased uncertain creation/execution")
-	}
-	if _, err := r.Content(g.status.PRID, g.status.GenerationID); !errors.Is(err, ErrNotReady) {
-		t.Fatal("unknown generation exposed a candidate")
 	}
 	if _, err := r.Read(g.status.PRID, "../invalid"); !errors.Is(err, ErrNotFound) {
 		t.Fatal("invalid read scope accepted")
@@ -98,8 +95,8 @@ func TestRuntimeCancellationBeforeValidationDiscardsContent(t *testing.T) {
 	if _, err := r.Cancel(g.status.PRID, g.status.GenerationID, g.status.RevisionID); err != nil {
 		t.Fatal(err)
 	}
-	r.finish(g, Validated, "", Content{Questions: []Question{{Prompt: "private discarded result"}}})
-	if g.status.State != Cancelled || len(g.content.Questions) != 0 || !g.finished {
+	r.save(g, Content{Questions: []Question{{Prompt: "private discarded result"}}})
+	if g.status.State != Cancelled || !g.finished {
 		t.Fatal("cancelled candidate was published")
 	}
 	if r.proceed(g, Generating) {

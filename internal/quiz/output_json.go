@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-// decodeOutput rejects malformed, ambiguous or unsupported native JSON before typed decoding.
+// decodeOutput rejects malformed or ambiguous quiz JSON before strict typed decoding.
 func decodeOutput(data []byte, out any) bool {
 	if !utf8.Valid(data) || !json.Valid(data) || !validEscapes(data) {
 		return false
@@ -56,10 +56,12 @@ func outputValue(d *json.Decoder, depth int) bool {
 	return err == nil && (delim == '{' && end == json.Delim('}') || delim == '[' && end == json.Delim(']'))
 }
 
-// outputKey permits exact native field spellings, not encoding/json's case-insensitive aliases.
+// outputKey permits canonical native/saved spellings, not case-insensitive field aliases.
 func outputKey(name string) bool {
 	switch name {
 	case "questions", "prompt", "choices", "correctChoiceID", "explanation", "evidence", "fileID", "hunkID", "side", "start", "end":
+		return true
+	case "schemaVersion", "prID", "version", "quizID", "revision", "revisionID", "baseBranch", "baseSource", "baseSHA", "headSHA", "mergeBaseSHA", "questionID", "choiceID", "text", "anchor", "oldPath", "newPath", "selected", "surrounding", "id", "old", "new", "count", "section", "lines", "sign", "oldLine", "newLine", "noNewline":
 		return true
 	}
 	return false

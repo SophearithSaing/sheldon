@@ -3,6 +3,7 @@ package quiz
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/SophearithSaing/sheldon/internal/opencode"
@@ -35,9 +36,9 @@ func (r *Runtime) execute(g *generation) {
 	session, err := service.CreateSession(ctx, source.Directory())
 	if err != nil {
 		if errors.Is(err, opencode.ErrModelUnavailable) {
-			r.finish(g, Failed, "native-unavailable", Content{})
+			r.finish(g, Failed, "native-unavailable")
 		} else {
-			r.finish(g, Unknown, "session-uncertain", Content{})
+			r.finish(g, Unknown, "session-uncertain")
 		}
 		return
 	}
@@ -59,11 +60,11 @@ func (r *Runtime) execute(g *generation) {
 		}
 	})
 	if !result.Idle {
-		r.finish(g, Unknown, "execution-uncertain", Content{})
+		r.finish(g, Unknown, "execution-uncertain")
 		return
 	}
 	if overflow || len(result.Text) > MaxOutputBytes || errors.Is(result.Err, opencode.ErrAnswerLimit) {
-		r.finish(g, Failed, "output-too-large", Content{})
+		r.finish(g, Failed, "output-too-large")
 		return
 	}
 	if !r.proceed(g, Validating) {
@@ -74,7 +75,7 @@ func (r *Runtime) execute(g *generation) {
 		return
 	}
 	if result.State != "completed" || result.Err != nil {
-		r.finish(g, Failed, "execution-failed", Content{})
+		r.finish(g, Failed, "execution-failed")
 		return
 	}
 	content, err := verified.Parse([]byte(result.Text))
@@ -83,14 +84,14 @@ func (r *Runtime) execute(g *generation) {
 		if errors.Is(err, ErrLimit) {
 			code = "output-too-large"
 		}
-		r.finish(g, Failed, code, Content{})
+		r.finish(g, Failed, code)
 		return
 	}
 	if ctx.Err() != nil {
 		r.failPreparation(g, ctx, ctx.Err())
 		return
 	}
-	r.finish(g, Validated, "", content)
+	r.save(g, content)
 }
 
 // proceed handles known pre-dispatch/idle cancellation and publishes content-free progress.
@@ -122,18 +123,49 @@ func (r *Runtime) failPreparation(g *generation, ctx context.Context, err error)
 	if ctx.Err() != nil {
 		code = "generation-timeout"
 	}
-	r.finish(g, Failed, code, Content{})
+	r.finish(g, Failed, code)
 }
 
-// finish retains only validated private content and serializes cancellation against publication.
-func (r *Runtime) finish(g *generation, state State, code string, content Content) {
+// finish publishes a terminal outcome without reclassifying already-started commit operations.
+func (r *Runtime) finish(g *generation, state State, code string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if state != Unknown && (g.status.CancelRequested || r.closed) {
-		state, code, content = Cancelled, "", Content{}
+	if !g.committing && state != Unknown && (g.status.CancelRequested || r.closed) {
+		state, code = Cancelled, ""
 	}
 	g.status.State, g.status.FailureCode = state, code
 	g.status.ExecutionUnknown = state == Unknown
-	g.content, g.finished = content, true
+	g.finished = true
 	g.advanceLocked()
+}
+
+// save serializes Cancel/shutdown against commit entry, then saves without holding runtime locks.
+func (r *Runtime) save(g *generation, content Content) {
+	r.mu.Lock()
+	if g.status.CancelRequested || r.closed {
+		g.status.State, g.finished = Cancelled, true
+		g.advanceLocked()
+		r.mu.Unlock()
+		return
+	}
+	g.status.State, g.committing = Saving, true
+	g.advanceLocked()
+	r.mu.Unlock()
+	next := Saved{SchemaVersion: 1, PRID: g.status.PRID, QuizID: g.status.QuizID, Version: g.expected + 1, Content: content}
+	err := r.store.SaveQuiz(next, g.expected)
+	if err != nil {
+		code := "save-failed"
+		if errors.Is(err, ErrConflict) {
+			code = "quiz-changed"
+		} else if errors.Is(err, ErrSaveUncertain) {
+			code = "save-uncertain"
+		}
+		r.finish(g, Failed, code)
+		return
+	}
+	r.mu.Lock()
+	g.status.SavedVersion = strconv.FormatUint(next.Version, 10)
+	g.status.State, g.finished = Completed, true
+	g.advanceLocked()
+	r.mu.Unlock()
 }

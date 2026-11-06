@@ -22,6 +22,8 @@ type instance struct {
 	cacheRoot              string
 	questions              *question.Runtime
 	quizzes                *quiz.Runtime
+	quizStoreMu            sync.Mutex
+	quizStoreUncertain     map[string]bool
 	questionStoreMu        sync.Mutex
 	questionStoreUncertain map[string]bool
 	questionsLoaded        map[string]bool
@@ -112,6 +114,8 @@ func (i *instance) close() error {
 		if questions != nil {
 			i.closeErr = errors.Join(i.closeErr, questions.Close())
 		}
+		i.quizStoreMu.Lock()
+		defer i.quizStoreMu.Unlock()
 		i.questionStoreMu.Lock()
 		defer i.questionStoreMu.Unlock()
 		i.mu.Lock()
