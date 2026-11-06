@@ -87,7 +87,7 @@ func main() {
 			return
 		}
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-		audit(map[string]any{"method": r.Method, "path": r.URL.Path, "body": string(body), "directory": r.URL.Query().Get("location[directory]")})
+		audit(map[string]any{"method": r.Method, "path": r.URL.Path, "body": string(body), "directory": r.URL.Query().Get("location[directory]"), "pid": os.Getpid()})
 		w.Header().Set("Content-Type", "application/json")
 		if execution.handle(w, r, body) {
 			return

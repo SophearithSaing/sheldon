@@ -10,6 +10,7 @@ import (
 
 	"github.com/SophearithSaing/sheldon/internal/git"
 	"github.com/SophearithSaing/sheldon/internal/question"
+	"github.com/SophearithSaing/sheldon/internal/quiz"
 )
 
 // instance holds one stable OS-locked discovery file per data root.
@@ -20,6 +21,7 @@ type instance struct {
 	cache                  *git.Cache
 	cacheRoot              string
 	questions              *question.Runtime
+	quizzes                *quiz.Runtime
 	questionStoreMu        sync.Mutex
 	questionStoreUncertain map[string]bool
 	questionsLoaded        map[string]bool
@@ -96,15 +98,19 @@ func (i *instance) read() (record, error) {
 	return r, nil
 }
 
-// close drains owned questions/cache before clearing discovery and releasing the OS lock.
+// close drains owned questions/quizzes before cache/discovery and writer release.
 func (i *instance) close() error {
 	i.closeOnce.Do(func() {
 		i.mu.Lock()
 		i.closing = true
 		questions := i.questions
+		quizzes := i.quizzes
 		i.mu.Unlock()
+		if quizzes != nil {
+			i.closeErr = quizzes.Close()
+		}
 		if questions != nil {
-			i.closeErr = questions.Close()
+			i.closeErr = errors.Join(i.closeErr, questions.Close())
 		}
 		i.questionStoreMu.Lock()
 		defer i.questionStoreMu.Unlock()
