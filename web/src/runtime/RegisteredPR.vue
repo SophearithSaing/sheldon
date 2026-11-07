@@ -6,6 +6,7 @@ import SourceQuestions from './SourceQuestions.vue'
 import QuestionConversation from './QuestionConversation.vue'
 import SavedQuestions from './SavedQuestions.vue'
 import QuizView from './QuizView.vue'
+import SemanticView from './SemanticView.vue'
 import type { QuizEvidence } from './quiz'
 import { useConversations } from './conversations'
 import UiButton from '../components/ui/UiButton.vue'
@@ -34,8 +35,9 @@ const conversationOpen = ref(false)
 const conversations = useConversations((): RuntimeClient | null => props.client)
 const { threads, selectedID, current: currentThread } = conversations
 const { list: savedList, pending: historyPending, error: historyError } = conversations.history
-const view = ref<'files' | 'questions' | 'quiz'>('files')
+const view = ref<'files' | 'questions' | 'quiz' | 'semantic'>('files')
 const quizOpened = ref(false)
+const semanticOpened = ref(false)
 const opening = ref('')
 let openEpoch = 0
 const initialSending = ref(false)
@@ -64,6 +66,7 @@ function reset(): void {
   opening.value = ''
   view.value = 'files'
   quizOpened.value = false
+  semanticOpened.value = false
   controller?.abort()
   controller = undefined
   source.value = undefined
@@ -226,11 +229,12 @@ function openAnswer(answer: QuestionAnswer, trigger: HTMLElement): void {
  * Switches views without unmounting source, its inline draft or retained conversations.
  * @param next Requested PR view.
  */
-function changeView(next: 'files' | 'questions' | 'quiz'): void {
+function changeView(next: 'files' | 'questions' | 'quiz' | 'semantic'): void {
   openEpoch++
   opening.value = ''
   view.value = next
   if (next === 'quiz') quizOpened.value = true
+  if (next === 'semantic') semanticOpened.value = true
   if (next === 'questions' && !savedList.value && !historyPending.value) void conversations.history.refreshList(props.reviewId)
 }
 
@@ -295,7 +299,7 @@ onUnmounted(reset)
 
 <template>
   <div class="registered-pr">
-    <a class="skip-link" :href="view === 'questions' ? '#saved-questions' : view === 'quiz' ? '#real-quiz' : '#review-content'">Skip to PR content</a>
+    <a class="skip-link" :href="view === 'questions' ? '#saved-questions' : view === 'quiz' ? '#real-quiz' : view === 'semantic' ? '#real-semantic' : '#review-content'">Skip to PR content</a>
     <header class="review-header" aria-label="Sheldon navigation">
       <a href="/" aria-label="Sheldon — Open a PR">Sheldon</a><a href="/?preview=library">Sample UI previews</a>
       <span>Registered PR</span><OpenPR :client="client" /><slot name="runtime-trigger" />
@@ -308,7 +312,7 @@ onUnmounted(reset)
         <a class="github-link" :href="pr.url" target="_blank" rel="noreferrer">View on GitHub ↗</a>
       </template>
       <template #tabs>
-        <nav class="real-tabs" aria-label="PR views"><UiButton variant="quiet" :aria-current="view === 'files' ? 'page' : undefined" @click="changeView('files')">Files changed<span v-if="diff"> ({{ files.length }})</span></UiButton><UiButton variant="quiet" :aria-current="view === 'questions' ? 'page' : undefined" @click="changeView('questions')">Questions</UiButton><UiButton variant="quiet" :aria-current="view === 'quiz' ? 'page' : undefined" @click="changeView('quiz')">Quiz</UiButton><UiButton variant="quiet" disabled title="Not implemented for real PRs">Semantic review — unavailable</UiButton><UiButton v-if="threads.length && !conversationOpen" variant="quiet" @click="workspace?.openConversation($event)">Open conversation</UiButton></nav>
+        <nav class="real-tabs" aria-label="PR views"><UiButton variant="quiet" :aria-current="view === 'files' ? 'page' : undefined" @click="changeView('files')">Files changed<span v-if="diff"> ({{ files.length }})</span></UiButton><UiButton variant="quiet" :aria-current="view === 'questions' ? 'page' : undefined" @click="changeView('questions')">Questions</UiButton><UiButton variant="quiet" :aria-current="view === 'quiz' ? 'page' : undefined" @click="changeView('quiz')">Quiz</UiButton><UiButton variant="quiet" :aria-current="view === 'semantic' ? 'page' : undefined" @click="changeView('semantic')">Semantic review</UiButton><UiButton v-if="threads.length && !conversationOpen" variant="quiet" @click="workspace?.openConversation($event)">Open conversation</UiButton></nav>
       </template>
       <template #files><ChangedFileTree v-model="search" :files="treeFiles" :current="selected" :counts="questionCounts" :viewed="{}" real @select="selectFile" /></template>
       <template #conversation>
@@ -316,6 +320,7 @@ onUnmounted(reset)
       </template>
       <template #default>
         <QuizView v-if="quizOpened" v-show="view === 'quiz'" :pr-i-d="reviewId" :client="client" :active="view === 'quiz'" :diff="diff" :drafting="drafting" @source="quizSource" />
+        <SemanticView v-if="semanticOpened" v-show="view === 'semantic'" :pr-i-d="reviewId" :client="client" :active="view === 'semantic'" :diff="diff" :drafting="drafting" />
         <SavedQuestions v-show="view === 'questions'" :list="savedList" :threads="threads" :pending="historyPending" :error="historyError" :opening="opening" :selected="selectedID" :drafting="drafting" @refresh="conversations.history.refreshList(reviewId)" @open="openThread" />
         <section v-show="view === 'files'" id="review-content" ref="sourcePane" class="source-pane" tabindex="-1" :aria-busy="pending && !diff" aria-label="Pinned PR source">
           <div v-if="diff" class="refresh-controls">

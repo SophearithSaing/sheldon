@@ -3,10 +3,11 @@ import { parseQuestionAnswer, parseObservedAnswer, readAnswerEvents, readBounded
 import { historyID, parseThreadList, parseThreadDetail, type ThreadList, type ThreadDetail } from './history'
 import { parseQuizRead, parseQuizChecked, parseQuizStatus, quizVersion, type QuizClient, type QuizRead, type QuizStatus, type QuizChecked } from './quiz'
 import type { PinnedRevision } from './source'
+import { parseSemanticRead, parseSemanticStatus, semanticVersion, type SemanticClient, type SemanticRead, type SemanticStatus } from './semantic'
 
 let launchToken = ''
 
-export interface RuntimeClient extends QuizClient {
+export interface RuntimeClient extends QuizClient, SemanticClient {
   /**
    * Reads saved navigation without source loading or inference.
    * @param id Routed PR identity.
@@ -490,5 +491,63 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
     if (!read.quiz || !historyID(read.quiz.quizID) || !/^q[1-5]$/.test(questionID) || !/^[a-d]$/.test(choiceID)) throw new Error('Invalid quiz check context.')
     return parseQuizChecked(await quizRequest(read.prID, `/${read.quiz.quizID}/questions/${questionID}/check`, { revisionID: read.quiz.revisionID, choiceID }, 512 << 10, signal), read, questionID, choiceID)
   }
-  return { openPR, source, askQuestion, askFollowup, observeAnswer, stopAnswer, saveAnswer, listThreads, readThread, readQuiz, generateQuiz, readQuizGeneration, cancelQuizGeneration, checkQuiz }
+  /** Performs one bounded semantic operation, without retrying uncertain mutations.
+   * @param id Registered PR.
+   * @param suffix Validated operation path.
+   * @param body Explicit mutation or undefined for reads.
+   * @param signal Request lifetime.
+   * @param expected Required HTTP acknowledgement.
+   * @returns Bounded decoded public response.
+   */
+  async function semanticRequest(id: string, suffix: string, body: unknown, signal: AbortSignal, expected = 200): Promise<unknown> {
+    if (!historyID(id) || lifetime.aborted || !credential) throw new Error('Semantic review unavailable. Reconnect explicitly.')
+    const bounded = AbortSignal.any([lifetime, signal, AbortSignal.timeout(10000)])
+    const path = `/api/reviews/${id}/semantic-review${suffix}`
+    const response = body === undefined ? await fetch(path, authenticatedRequest(credential, bounded)) : await post(path, body, bounded)
+    if (response.status !== expected || !response.headers.get('Content-Type')?.startsWith('application/json')) { await response.body?.cancel().catch((): void => {}); throw new Error('Semantic request could not be confirmed. Refresh saved state before another action; no automatic retry was made.') }
+    return readBoundedJSON(response, suffix === '' ? 4 << 20 : 4 << 10)
+  }
+  /** Reads saved grouping without source loading or inference.
+   * @param id Registered PR.
+   * @param signal Read lifetime.
+   * @returns Validated saved result.
+   */
+  async function readSemantic(id: string, signal: AbortSignal): Promise<SemanticRead> { return parseSemanticRead(await semanticRequest(id, '', undefined, signal), id) }
+  /** Admits one explicit pinned semantic generation.
+   * @param id Registered PR.
+   * @param revision Displayed original comparison.
+   * @param version Expected saved predecessor.
+   * @param signal Admission observation lifetime.
+   * @returns Pending admission, not completion.
+   */
+  async function generateSemantic(id: string, revision: PinnedRevision, version: string, signal: AbortSignal): Promise<SemanticStatus> {
+    if (revision.prID !== id || !semanticVersion(version)) throw new Error('Invalid semantic generation context.')
+    const revisionID = await pinnedID(revision)
+    const status = parseSemanticStatus(await semanticRequest(id, '/generations', { revision, expectedVersion: version }, signal, 202), id)
+    if (status.revisionID !== revisionID || status.state !== 'pending' || status.sequence !== '1' || status.cancelRequested) throw new Error('Semantic admission is uncertain. Read saved state; do not resend automatically.')
+    return status
+  }
+  /** Observes or cancels one exact semantic attempt.
+   * @param status Retained generation identity.
+   * @param signal Request lifetime.
+   * @param cancel Whether interruption is explicitly requested.
+   * @returns Scoped actual feedback.
+   */
+  async function semanticGeneration(status: SemanticStatus, signal: AbortSignal, cancel: boolean): Promise<SemanticStatus> {
+    if (!historyID(status.generationID) || !historyID(status.revisionID)) throw new Error('Invalid semantic generation scope.')
+    return parseSemanticStatus(await semanticRequest(status.prID, `/generations/${status.generationID}${cancel ? '/cancel' : ''}`, cancel ? { revisionID: status.revisionID } : undefined, signal, cancel ? 202 : 200), status.prID, status)
+  }
+  /** Reads exact-attempt status without dispatch.
+   * @param status Retained generation identity.
+   * @param signal Read lifetime.
+   * @returns Current feedback.
+   */
+  function readSemanticGeneration(status: SemanticStatus, signal: AbortSignal): Promise<SemanticStatus> { return semanticGeneration(status, signal, false) }
+  /** Signals exact-attempt cancellation without rollback promises.
+   * @param status Retained generation identity.
+   * @param signal Request lifetime.
+   * @returns Cancellation feedback.
+   */
+  function cancelSemanticGeneration(status: SemanticStatus, signal: AbortSignal): Promise<SemanticStatus> { return semanticGeneration(status, signal, true) }
+  return { openPR, source, askQuestion, askFollowup, observeAnswer, stopAnswer, saveAnswer, listThreads, readThread, readQuiz, generateQuiz, readQuizGeneration, cancelQuizGeneration, checkQuiz, readSemantic, generateSemantic, readSemanticGeneration, cancelSemanticGeneration }
 }

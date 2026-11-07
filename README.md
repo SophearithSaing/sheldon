@@ -23,7 +23,7 @@ SHELDON_DEV_ORIGIN=http://127.0.0.1:5173 go run ./cmd/sheldon # terminal 2: Go
 
 UI: <http://127.0.0.1:5173> · backend: `127.0.0.1:7331`. Stop any existing standalone instance first. The CLI opens the authenticated UI; after reloading, rerun the CLI in another terminal to reconnect.
 
-Connect the runtime, choose **Open a PR**, then **Register and open PR**. Opening from an existing PR uses a separate browser tab; allow that tab to preserve the current pinned view. On the registered page choose **Load pinned source**. If GitHub metadata is unavailable, explicitly choose **Use Git-only fallback**, select a fetched upstream branch, then **Load selected base**. No default target is assumed. Registration and source errors are separate; retry is explicit. Real PR pages offer file filtering, a pinned unified diff, saved Questions and Quiz. Split and Semantic review remain unavailable.
+Connect the runtime, choose **Open a PR**, then **Register and open PR**. Opening from an existing PR uses a separate browser tab; allow that tab to preserve the current pinned view. On the registered page choose **Load pinned source**. If GitHub metadata is unavailable, explicitly choose **Use Git-only fallback**, select a fetched upstream branch, then **Load selected base**. No default target is assumed. Registration and source errors are separate; retry is explicit. Real PR pages offer file filtering, a pinned unified diff, saved Questions, Quiz and Semantic review. Split remains unavailable.
 
 For a text diff, choose gutter line numbers (Shift extends on one side within one hunk) or **Select hunk**, then **Ask about selection**. The inline composer is pinned to that file/side/range/revision. **Send question** or Ctrl/Cmd+Enter explicitly starts backend work; Enter inserts a newline. Cancel retains the draft; resume or explicitly discard it before changing files/selection or refreshing. Native text selection/copy never submits. Non-text changes have no line questions.
 
@@ -46,6 +46,8 @@ Open **Quiz** to read the saved set without source loading or inference. With pi
 After reload/reconnect/restart, open **Quiz** again: the saved set reopens unchecked, even when its original cache or harness is unavailable. Generation/status are memory-only and are not resumed after restart. Failed generation/cancellation preserves the previous complete set; an uncertain save requires an explicit saved read before another mutation. Source refresh never retargets an older quiz or its checks. The UI labels older revisions and enables **View in original diff** only for matching loaded source. Checking/reopening writes no attempts and does not modify saved conversations. Keep `quiz.json` private: it contains answer keys, explanations and source quotes.
 
 **Sample UI previews** opens the separate `/?preview=library` entry. Its Files changed, Questions, Quiz, Semantic review, All PRs and Configuration use fictional data and page-memory simulations, never real PR source or inference.
+
+Open **Semantic review** to read saved groups without source loading or inference. With pinned source loaded, **Generate semantic review** explicitly organizes changed ranges across files in separate restricted native context. Regeneration requires confirmation and retains the previous complete result on failure/cancellation. Groups reference verified original code; ungrouped changed lines and non-text changes remain visible, not hidden by a touched-file/hunk count. This is an agent-generated organizing hypothesis, never approval or proof of understanding. Complete results save privately in `reviews/<id>/semantic-review.json`; generation status and reading position are memory-only. Leaving stops observation, not accepted work. After uncertain delivery/saving, explicitly refresh saved state; no automatic resend or shutdown save/retry occurs. Source refresh labels older groups without retargeting them.
 
 ## Release
 
@@ -120,6 +122,7 @@ internal/github/     Optional gh target-branch resolution
 internal/git/        Managed fetch, pinned worktrees and unified diffs
 internal/question/   Durable admission contracts, pinned context and runtime answer execution
 internal/quiz/       Pinned structured generation, private sets and public grading projections
+internal/semantic/   Validated cross-file grouping, separate generation and saved source inventory
 internal/opencode/   Restricted native service/session, execution and history adapter
 internal/ui/         Embedded release shell / asset-free development fallback
 scripts/build.js     Frontend → embed copy → Go build
