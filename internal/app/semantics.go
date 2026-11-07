@@ -65,3 +65,22 @@ func (s *sourceRegistry) CancelSemanticGeneration(prID, generationID, revisionID
 	}
 	return r.Cancel(prID, generationID, revisionID)
 }
+
+// ReadSemanticView projects saved data without source/native startup and adds detached current feedback.
+func (s *sourceRegistry) ReadSemanticView(prID string) (semantic.ReadResult, error) {
+	saved, err := s.ReadSemantic(prID)
+	if err != nil {
+		return semantic.ReadResult{}, err
+	}
+	result, err := saved.Public()
+	if err != nil {
+		return semantic.ReadResult{}, err
+	}
+	s.mu.Lock()
+	r := s.semantics
+	s.mu.Unlock()
+	if r != nil {
+		result.Generation = r.Latest(prID)
+	}
+	return result, nil
+}
