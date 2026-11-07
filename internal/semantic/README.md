@@ -12,7 +12,8 @@ Verify the original existing worktree and complete merge-base → head diff thro
 complete manifest, including unsupported files, within a 512 KiB prompt. Refuse
 text-empty/oversized comparisons. Native JSON is limited to 128 KiB, 32 groups,
 128 references total, 200 lines per reference, 160-byte titles and 4096-byte
-explanations. References identify an exact file/hunk, old/new side and inclusive
+explanations. Retained text hunks must fit the existing saved-context verifier's
+1000-line/64-KiB quote budget; larger comparisons fail explicitly. References identify an exact file/hunk, old/new side and inclusive
 range. Each includes a changed line, stays within one hunk and resolves to literal
 source. A file/hunk can contribute distinct ranges to multiple groups.
 
