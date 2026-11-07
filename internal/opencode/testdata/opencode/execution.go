@@ -220,12 +220,14 @@ func (f *executionFixture) answer(session, user, assistant, prompt string, stop 
 	text := "Synthetic fixture answer <script>literal</script>."
 	chunks := []string{"Synthetic fixture ", "answer <script>literal</script>."}
 	quizText, isQuiz := quizFixtureAnswer(prompt)
-	if isQuiz && strings.HasPrefix(f.mode, "quiz-") {
+	if isQuiz && (strings.HasPrefix(f.mode, "quiz-") || strings.HasPrefix(f.mode, "semantic-")) {
 		text = quizText
 		switch f.mode {
+		case "semantic-invalid":
+			text = `{"groups":[]}`
 		case "quiz-invalid":
 			text = `{"questions":[]}`
-		case "quiz-overflow":
+		case "quiz-overflow", "semantic-overflow":
 			text = strings.Repeat("x", 140<<10)
 		}
 		chunks = nil
@@ -241,7 +243,7 @@ func (f *executionFixture) answer(session, user, assistant, prompt string, stop 
 	for i, chunk := range chunks {
 		partial += chunk
 		f.event(fmt.Sprintf("evt_text_%d_%d", n, i), "session.text.delta", session, assistant, chunk)
-		if i == 0 && isQuiz && (f.mode == "quiz-wait" || f.mode == "quiz-gated") {
+		if i == 0 && isQuiz && (f.mode == "quiz-wait" || f.mode == "quiz-gated" || f.mode == "semantic-gated") {
 			outcome := f.browserOutcome(stop, n)
 			if outcome == "" {
 				return
@@ -270,7 +272,7 @@ func (f *executionFixture) answer(session, user, assistant, prompt string, stop 
 			case <-f.done:
 			}
 		}
-		if i == 0 && isQuiz && f.mode == "quiz-feed-loss" {
+		if i == 0 && isQuiz && (f.mode == "quiz-feed-loss" || f.mode == "semantic-feed-loss") {
 			select {
 			case f.events <- "close-feed":
 			case <-f.done:
@@ -294,7 +296,7 @@ func (f *executionFixture) answer(session, user, assistant, prompt string, stop 
 			}
 		}
 	}
-	if isQuiz && f.mode == "quiz-overflow" {
+	if isQuiz && (f.mode == "quiz-overflow" || f.mode == "semantic-overflow") {
 		outcome := f.browserOutcome(stop, n)
 		if outcome != "" {
 			f.terminal(session, user, assistant, partial, outcome, n)
@@ -305,7 +307,7 @@ func (f *executionFixture) answer(session, user, assistant, prompt string, stop 
 	if f.mode == "answer-failed" {
 		outcome = "failed"
 	}
-	if isQuiz && f.mode == "quiz-failed" {
+	if isQuiz && (f.mode == "quiz-failed" || f.mode == "semantic-failed") {
 		outcome = "failed"
 	}
 	f.terminal(session, user, assistant, text, outcome, n)
@@ -343,6 +345,10 @@ func quizFixtureAnswer(prompt string) (string, bool) {
 					side, coordinate = "old", line.OldLine
 				} else if line.Sign != "+" {
 					continue
+				}
+				if strings.Contains(input.Instructions, "purpose-based groups") {
+					data, _ := json.Marshal(map[string]any{"groups": []map[string]any{{"title": "Synthetic related change", "explanation": "Synthetic organizing hypothesis, not live inference.", "ranges": []map[string]any{{"fileID": file.ID, "hunkID": hunk.ID, "side": side, "start": coordinate, "end": coordinate}}}}})
+					return string(data), true
 				}
 				questions := []map[string]any{}
 				for i := range 5 {
