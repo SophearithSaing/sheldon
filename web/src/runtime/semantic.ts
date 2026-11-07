@@ -117,7 +117,7 @@ export async function parseSemanticRead(value: unknown, prID: string): Promise<S
     ids.add(file.id)
     for (const field of ['oldPath', 'newPath', 'oldMode', 'newMode', 'oldObject', 'newObject', 'reason']) if (file[field] !== undefined && (typeof file[field] !== 'string' || String(file[field]).includes('\0'))) throw new Error('Unexpected semantic file label.')
     for (const h of file.hunks) {
-      if (!fields(h, ['id', 'old', 'new', 'section', 'lines']) || !validSourceHunk(h) || ids.has(h.id) || h.lines.length > 1000 || !fields(h.old, ['id', 'start', 'count']) || !fields(h.new, ['id', 'start', 'count'])) throw new Error('Unexpected semantic hunk.')
+      if (!fields(h, ['id', 'old', 'new', 'section', 'lines']) || !validSourceHunk(h) || ids.has(h.id) || h.lines.length > 100000 || !fields(h.old, ['id', 'start', 'count']) || !fields(h.new, ['id', 'start', 'count'])) throw new Error('Unexpected semantic hunk.')
       ids.add(h.id)
       let old = h.old.start; let next = h.new.start
       for (const line of h.lines) {

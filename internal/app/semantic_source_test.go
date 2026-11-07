@@ -18,7 +18,7 @@ func TestSemanticSourceUsesPinnedGitAndRefusesRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := semantic.Anchor{FileID: f.input.Anchor.FileID, HunkID: f.input.Anchor.HunkID, Side: "old", Start: 1, End: 1}
-	data, _ := json.Marshal(map[string]any{"groups": []map[string]any{{"title": "Removed behavior", "explanation": "Synthetic grouping, not inference.", "ranges": []semantic.Anchor{a}}}})
+	data, _ := json.Marshal(map[string]any{"groups": []map[string]any{{"title": "Removed behavior", "explanation": "Synthetic grouping, not inference.", "ranges": []map[string]any{{"path": "source.txt", "side": "old", "start": 1, "end": 1}}}}})
 	c, err := source.Parse(data)
 	if err != nil {
 		t.Fatal(err)

@@ -34,9 +34,16 @@ type Content struct {
 }
 
 type nativeGroup struct {
-	Title       string   `json:"title"`
-	Explanation string   `json:"explanation"`
-	Ranges      []Anchor `json:"ranges"`
+	Title       string        `json:"title"`
+	Explanation string        `json:"explanation"`
+	Ranges      []nativeRange `json:"ranges"`
+}
+
+type nativeRange struct {
+	Path  string `json:"path"`
+	Side  string `json:"side"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
 }
 
 // Parse validates complete native output and all original references before publication.
@@ -55,7 +62,15 @@ func (s *Source) Parse(data []byte) (Content, error) {
 	}
 	result := Content{Diff: s.diff, Groups: []Group{}}
 	for i, g := range output.Groups {
-		result.Groups = append(result.Groups, Group{ID: "g" + strconv.Itoa(i+1), Title: g.Title, Explanation: g.Explanation, Ranges: g.Ranges})
+		ranges := []Anchor{}
+		for _, reference := range g.Ranges {
+			anchor, err := s.resolveRange(reference)
+			if err != nil {
+				return Content{}, err
+			}
+			ranges = append(ranges, anchor)
+		}
+		result.Groups = append(result.Groups, Group{ID: "g" + strconv.Itoa(i+1), Title: g.Title, Explanation: g.Explanation, Ranges: ranges})
 	}
 	if err := result.Validate(); err != nil {
 		return Content{}, err
@@ -69,6 +84,44 @@ func (s *Source) Parse(data []byte) (Content, error) {
 		return Content{}, ErrOutput
 	}
 	return detached, nil
+}
+
+// resolveRange maps exact side-specific paths and coordinates to one authoritative original hunk.
+func (s *Source) resolveRange(reference nativeRange) (Anchor, error) {
+	if reference.Path == "" {
+		return Anchor{}, ErrOutput
+	}
+	var resolved Anchor
+	found := false
+	for _, file := range s.diff.Files {
+		path := file.NewPath
+		if reference.Side == "old" {
+			path = file.OldPath
+		}
+		if path != reference.Path || file.Kind != "text" {
+			continue
+		}
+		for _, hunk := range file.Hunks {
+			bounds := hunk.New
+			if reference.Side == "old" {
+				bounds = hunk.Old
+			}
+			if reference.Start < bounds.Start || reference.End >= bounds.Start+bounds.Count {
+				continue
+			}
+			a := Anchor{FileID: file.ID, HunkID: hunk.ID, Side: reference.Side, Start: reference.Start, End: reference.End}
+			if _, err := (Content{Diff: s.diff}).Lines(a); err == nil {
+				if found {
+					return Anchor{}, ErrOutput
+				}
+				resolved, found = a, true
+			}
+		}
+	}
+	if !found {
+		return Anchor{}, ErrOutput
+	}
+	return resolved, nil
 }
 
 // Lines resolves a supported range to literal original lines without host-file access.

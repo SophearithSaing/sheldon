@@ -219,6 +219,10 @@ func main() {
 				session["id"] = "../foreign"
 			}
 			writeFixtureState("sessions", sessions)
+			execution.mu.Lock()
+			location, _ := input["location"].(map[string]any)
+			execution.directories[id], _ = location["directory"].(string)
+			execution.mu.Unlock()
 			json.NewEncoder(w).Encode(map[string]any{"data": session})
 			mu.Unlock()
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/session/"):
@@ -250,6 +254,18 @@ func main() {
 			effect := "deny"
 			if input.Action == "glob" || input.Action == "grep" || input.Action == "read" && !strings.Contains(input.Resources[0], ".env") {
 				effect = "allow"
+			}
+			if input.Action == "shell" {
+				mu.Lock()
+				id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/session/"), "/permission")
+				permissions, _ := sessions[id]["permissions"].([]any)
+				for _, raw := range permissions {
+					permission, _ := raw.(map[string]any)
+					if permission["action"] == "shell" && wildcardMatch(permission["resource"].(string), input.Resources[0]) {
+						effect, _ = permission["effect"].(string)
+					}
+				}
+				mu.Unlock()
 			}
 			control, _ := os.ReadFile(os.Getenv("SHELDON_NATIVE_CONTROL"))
 			if (mode == "permission-mismatch" || string(control) == "permission-mismatch") && input.Action == "shell" {

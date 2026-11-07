@@ -13,7 +13,7 @@ const repository = fileURLToPath(new URL('../../../', import.meta.url))
 
 export interface Discovery { url: string; token: string }
 export interface GitAudit { Operation: string; Directory: string; Safe: boolean; PID: number }
-export interface NativeAudit { args?: string[]; directory?: string; pid?: number; restricted?: boolean; method?: string; path?: string; body?: string }
+export interface NativeAudit { args?: string[]; directory?: string; pid?: number; restricted?: boolean; method?: string; path?: string; body?: string; semanticGit?: string[] }
 export interface OfflineCLI {
   directory: string
   cache: string

@@ -14,13 +14,14 @@ import (
 )
 
 type executionFixture struct {
-	mu      sync.Mutex
-	mode    string
-	done    <-chan struct{}
-	events  chan string
-	history map[string][]map[string]any
-	active  map[string]chan struct{}
-	next    int
+	directories map[string]string
+	mu          sync.Mutex
+	mode        string
+	done        <-chan struct{}
+	events      chan string
+	history     map[string][]map[string]any
+	active      map[string]chan struct{}
+	next        int
 }
 
 type savedExecution struct {
@@ -32,7 +33,7 @@ type savedExecution struct {
 func newExecutionFixture(mode string, done <-chan struct{}) *executionFixture {
 	saved := savedExecution{History: make(map[string][]map[string]any)}
 	readFixtureState("execution", &saved)
-	return &executionFixture{mode: mode, done: done, events: make(chan string, 256), history: saved.History, next: saved.Next, active: make(map[string]chan struct{})}
+	return &executionFixture{directories: make(map[string]string), mode: mode, done: done, events: make(chan string, 256), history: saved.History, next: saved.Next, active: make(map[string]chan struct{})}
 }
 
 // persistLocked retains native input/history boundaries across test-owned service restarts.
@@ -135,13 +136,14 @@ func (f *executionFixture) handle(w http.ResponseWriter, r *http.Request, body [
 			f.history[session] = append(f.history[session], map[string]any{"id": user, "type": "user", "text": input.Text})
 		}
 		f.persistLocked()
+		directory := f.directories[session]
 		f.mu.Unlock()
 		if f.mode == "answer-ambiguous-empty" {
 			conn, _, _ := w.(http.Hijacker).Hijack()
 			conn.Close()
 			return true
 		}
-		go f.answer(session, user, assistant, input.Text, stop, n)
+		go f.answer(session, user, assistant, input.Text, directory, stop, n)
 		if f.mode == "answer-ambiguous" {
 			conn, _, _ := w.(http.Hijacker).Hijack()
 			conn.Close()
@@ -213,14 +215,14 @@ func savedAdmissionMatches(prompt, session string) bool {
 }
 
 // answer produces labeled fixture text, hidden canaries, duplicate events and known terminal history.
-func (f *executionFixture) answer(session, user, assistant, prompt string, stop <-chan struct{}, n int) {
+func (f *executionFixture) answer(session, user, assistant, prompt, directory string, stop <-chan struct{}, n int) {
 	f.event("evt_start_"+strconv.Itoa(n), "session.execution.started", session, assistant, "")
 	f.event("evt_foreign_"+strconv.Itoa(n), "session.text.delta", "ses_unrelated", "msg_foreign", "DO NOT DISPLAY FOREIGN TEXT")
 	f.event("evt_reasoning_"+strconv.Itoa(n), "session.reasoning.delta", session, assistant, "DO NOT DISPLAY HIDDEN REASONING")
 	text := "Synthetic fixture answer <script>literal</script>."
 	chunks := []string{"Synthetic fixture ", "answer <script>literal</script>."}
 	quizText, isQuiz := quizFixtureAnswer(prompt)
-	semanticText, isSemantic := semanticFixtureAnswer(prompt)
+	semanticText, isSemantic := semanticFixtureAnswer(prompt, directory)
 	if isSemantic {
 		quizText, isQuiz = semanticText, true
 	}

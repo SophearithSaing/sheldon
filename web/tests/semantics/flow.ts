@@ -63,6 +63,21 @@ export async function semanticFlow(page: Page, context: BrowserContext, info: Te
     let threadBytes = await readFile(threadsPath); const quizBytes = await readFile(quizPath)
     const nativeBefore = (await fixture.nativeAudit()).length; const gitBefore = (await fixture.audit()).length; await enter(page); expect((await fixture.nativeAudit()).length).toBe(nativeBefore); expect((await fixture.audit()).length).toBe(gitBefore)
     const first = await generate(page, false); await expect.poll(async (): Promise<number> => (await prompts(fixture)).length).toBe(1)
+    const dispatched = (await prompts(fixture))[0]!
+    const prompt = JSON.parse(dispatched.body!).text as string
+    const instructions = JSON.parse(prompt) as Record<string, unknown>
+    expect(Object.keys(instructions).sort()).toEqual(['instructions', 'prURL', 'revision'])
+    expect(instructions.revision).toEqual(diff.revision)
+    expect(instructions.prURL).toBe('https://github.com/fixture/repo/pull/31')
+    expect(prompt.length).toBeLessThan(16384)
+    const investigation = (await fixture.nativeAudit()).filter((entry): boolean => !!entry.semanticGit)
+    expect(investigation.length).toBeGreaterThanOrEqual(3)
+    for (const entry of investigation) { expect(entry.pid).toBe(dispatched.pid); expect(entry.semanticGit).toContain(diff.revision.mergeBaseSHA); expect(entry.semanticGit).toContain(diff.revision.headSHA) }
+    const sessionCreates = (await fixture.nativeAudit()).filter((entry): boolean => entry.method === 'POST' && entry.path === '/api/session')
+    for (const entry of sessionCreates) {
+      const permissions = JSON.parse(entry.body!).permissions as { action: string; effect: string }[]
+      expect(permissions.some((rule): boolean => rule.action === 'shell' && rule.effect === 'allow')).toBe(entry.pid === dispatched.pid)
+    }
     const tab = await context.newPage(); await preserveResponseBodies(tab); await tab.goto(await fixture.open('https://github.com/fixture/repo/pull/31')); expect((await enter(tab)).generation?.generationID).toBe(first.generationID)
     const busy = await tab.request.post(base + '/semantic-review/generations', { headers, data: { revision: diff.revision, expectedVersion: '0' } }); expect(busy.status()).toBe(409); expect(await prompts(fixture)).toHaveLength(1)
     const otherURL = await fixture.open('https://github.com/fixture/repo/pull/32'); const otherID = new URL(otherURL).pathname.split('/').at(-1)!; const other = await tab.request.get(`${new URL(launch).origin}/api/reviews/${otherID}/semantic-review`, { headers }); expect(await other.json()).toMatchObject({ version: '0', review: null })

@@ -8,7 +8,7 @@ import (
 
 func TestSavedStrictRoundTrip(t *testing.T) {
 	s, a := fixture(t)
-	c, err := s.Parse(native(t, nativeGroup{"Purpose", "Why", []Anchor{a}}))
+	c, err := s.Parse(native(t, nativeGroup{"Purpose", "Why", []nativeRange{{"new.txt", a.Side, a.Start, a.End}}}))
 	if err != nil {
 		t.Fatal(err)
 	}

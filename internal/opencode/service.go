@@ -34,6 +34,7 @@ var (
 
 // Service owns only its private child, local transport and temporary startup directory.
 type Service struct {
+	semantic   bool
 	ctx        context.Context
 	cancel     context.CancelCauseFunc
 	child      *process.Process
@@ -57,6 +58,16 @@ type Service struct {
 // Start verifies and starts the installed native executable without contacting a shared service.
 // Its context owns the returned service lifetime; no model inference is performed here.
 func Start(ctx context.Context) (*Service, error) {
+	return start(ctx, false)
+}
+
+// StartSemantic starts a separately owned service with read-only Git/GitHub investigation permissions.
+func StartSemantic(ctx context.Context) (*Service, error) {
+	return start(ctx, true)
+}
+
+// start verifies the pinned installation and applies only this child's investigation profile.
+func start(ctx context.Context, semantic bool) (*Service, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -75,7 +86,7 @@ func Start(ctx context.Context) (*Service, error) {
 		return nil, ErrUnavailable
 	}
 	lifetime, cancel := context.WithCancelCause(ctx)
-	s := &Service{ctx: lifetime, cancel: cancel, directory: directory, feedDone: make(chan struct{}), listeners: make(map[string]*subscription)}
+	s := &Service{semantic: semantic, ctx: lifetime, cancel: cancel, directory: directory, feedDone: make(chan struct{}), listeners: make(map[string]*subscription)}
 	success := false
 	defer func() {
 		if !success {
@@ -89,13 +100,20 @@ func Start(ctx context.Context) (*Service, error) {
 		return nil, ErrUnavailable
 	}
 	s.password = hex.EncodeToString(secret)
-	config, _ := json.Marshal(investigationConfig())
+	config, _ := json.Marshal(serviceConfig(semantic))
 	env := []string{"OPENCODE_PASSWORD=" + s.password, "OPENCODE_DISABLE_AUTOUPDATE=1", "OPENCODE_CONFIG_PROJECT_DISABLE=1", "OPENCODE_DISABLE_CLAUDE_CODE=1", "OPENCODE_CONFIG_CONTENT=" + string(config)}
-	version, err := process.Run(startup, process.Command{Name: executable, Args: []string{"--version"}, Dir: directory, Env: env, OutputLimit: 64 << 10, GracePeriod: 100 * time.Millisecond})
+	var unset []string
+	if semantic {
+		unset = []string{"GIT_CONFIG_PARAMETERS"}
+		env = append(env, "GIT_NO_REPLACE_OBJECTS=1", "GIT_TERMINAL_PROMPT=0", "GH_PROMPT_DISABLED=1", "GIT_EXTERNAL_DIFF=", "GIT_PAGER=", "GH_PAGER=", "PAGER=", "GIT_CONFIG_COUNT=4",
+			"GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false", "GIT_CONFIG_KEY_1=core.hooksPath", "GIT_CONFIG_VALUE_1="+directory,
+			"GIT_CONFIG_KEY_2=diff.external", "GIT_CONFIG_VALUE_2=", "GIT_CONFIG_KEY_3=core.alternateRefsCommand", "GIT_CONFIG_VALUE_3=")
+	}
+	version, err := process.Run(startup, process.Command{Name: executable, Args: []string{"--version"}, Dir: directory, Env: env, UnsetEnv: unset, OutputLimit: 64 << 10, GracePeriod: 100 * time.Millisecond})
 	if err != nil || strings.TrimSpace(string(version.Stdout)) != "opencode v"+SupportedVersion {
 		return nil, safeError(startup, ErrUnavailable)
 	}
-	s.child, err = process.Start(lifetime, process.Command{Name: executable, Args: []string{"serve", "--stdio", "--hostname", "127.0.0.1", "--port", "0"}, Dir: directory, Env: env, OutputLimit: 1 << 20, GracePeriod: 100 * time.Millisecond})
+	s.child, err = process.Start(lifetime, process.Command{Name: executable, Args: []string{"serve", "--stdio", "--hostname", "127.0.0.1", "--port", "0"}, Dir: directory, Env: env, UnsetEnv: unset, OutputLimit: 1 << 20, GracePeriod: 100 * time.Millisecond})
 	if err != nil {
 		return nil, ErrUnavailable
 	}

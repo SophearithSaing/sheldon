@@ -211,7 +211,7 @@ func (r *Runtime) nativeService(ctx context.Context) (*opencode.Service, error) 
 		r.work.Add(1)
 		go func() {
 			defer r.work.Done()
-			service, err := opencode.Start(r.ctx)
+			service, err := opencode.StartSemantic(r.ctx)
 			r.mu.Lock()
 			r.service, r.serviceErr = service, err
 			r.mu.Unlock()

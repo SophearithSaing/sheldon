@@ -8,14 +8,26 @@ state. No question/quiz records or native sessions are borrowed.
 ## Source and grouping
 
 Verify the original existing worktree and complete merge-base → head diff through
-`git.Cache.QuestionSource`; never fetch/repair source while generating. Supply the
-complete manifest, including unsupported files, within a 512 KiB prompt. Refuse
-text-empty/oversized comparisons. Native JSON is limited to 128 KiB, 32 groups,
+`git.Cache.QuestionSource`; never fetch/repair source while generating. Keep the
+complete diff, including unsupported files, backend-side. Send only instructions,
+the canonical PR URL and exact revision (at most 16 KiB), never the diff inventory.
+The agent inventories and investigates the local merge-base → head comparison
+using Git and repository read/search. Optional `gh` context never authorizes a
+newer comparison. Refuse text-empty/oversized comparisons rather than truncate.
+Native JSON is limited to 128 KiB, 32 groups,
 128 references total, 200 lines per reference, 160-byte titles and 4096-byte
-explanations. Retained text hunks must fit the existing saved-context verifier's
-1000-line/64-KiB quote budget; larger comparisons fail explicitly. References identify an exact file/hunk, old/new side and inclusive
-range. Each includes a changed line, stays within one hunk and resolves to literal
-source. A file/hunk can contribute distinct ranges to multiple groups.
+explanations. Native references use exact side-specific repository paths and
+inclusive line ranges; Sheldon resolves each to its own stable file/hunk IDs.
+Wrong rename sides, foreign paths, ambiguous ranges and extra fields fail.
+Each includes a changed line, stays within one hunk and resolves to literal source.
+A file/hunk can contribute distinct ranges to multiple groups. Complete retained
+hunks have their own coordinate validator, not a question selection's 1000-line /
+64-KiB quote budget; up to 100,000 lines per hunk are supported. Saved/public
+content is bounded at 32 MiB, with result headroom checked before dispatch.
+The existing Git loader still bounds native command output at 4 MiB, comparisons
+at 1000 files and patch lines per file at 100,000. Model context and investigation
+time remain finite; there is no batching or guarantee of exhaustive investigation.
+Selected-code questions retain their independent existing quote/context limits.
 
 Coverage counts unique changed **line IDs**, not touched files/hunks or surrounding
 context. Reject overlapping changed-line assignments rather than implying shared
@@ -36,9 +48,23 @@ Cancellation before commit entry prevents replacement once idle is proven;
 after commit entry it cannot promise rollback. Disconnect/view departure ends
 observation, not accepted work. Shutdown drains without new saves/retries.
 
+Only semantic generation enables shell inspection: fixed command prefixes for
+`git --no-pager diff/show/log --no-ext-diff --no-textconv`, `git ls-tree`,
+`git grep --no-ext-grep` and `gh pr view/diff`. Other commands/actions remain denied,
+including mutation, arbitrary shell, `gh api`, edits, skills, MCP and subagents.
+Dangerous output/external-program/browser options (including abbreviated Git
+options) are denied. Session permissions and startup hard policies both enforce
+the profile; effective allow/deny probes fail closed on mismatch. The child
+disables Git replacement objects, fsmonitor, hooks, external diff, interactive
+prompts and pagers without modifying user/global configuration or credentials.
+This is a best-effort native command allowlist, not an argv sandbox or a guarantee
+against every Git/GitHub configuration/command escape. Question/quiz services keep
+their original read/search-only policy; semantic bindings cannot resume as question
+bindings. No blanket `git *` / `gh *` grants.
+
 `<data>/reviews/<prID>/semantic-review.json` holds the current complete result:
 schema version, PR, monotonic uint64 file version, random review ID, complete
-verified diff and validated groups. Limit private file/public read to 4 MiB.
+verified diff and validated groups. Limit private file/public read to 32 MiB.
 Use checked private paths and synced temporary replacement, predecessor-version
 checks and explicit checked reads after uncertain replacement. No journal,
 durable generation status, reading position, drafts or power-loss certification.

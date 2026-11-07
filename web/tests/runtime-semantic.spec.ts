@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { registered } from './runtime-fixture'
+import { digest, registered } from './runtime-fixture'
 import { semanticFixture } from './semantic-fixture'
 
 test.use({ baseURL: 'http://127.0.0.1:5175' })
@@ -96,4 +96,17 @@ test('semantic gutter selection opens the existing original-source composer and 
   await page.getByRole('button', { name: 'Semantic review', exact: true }).click()
   await expect(first.getByRole('button', { name: 'Ask about selected range', exact: true })).toHaveAttribute('aria-disabled', 'true')
   await page.getByRole('button', { name: 'Files changed', exact: false }).click(); await expect(input).toHaveValue('Explain this selected boundary')
+})
+
+test('large saved semantic inventory exceeds the former byte and hunk limits without embedding it in generation', async ({ page }): Promise<void> => {
+  const pr = await registered(page, 706); const f = semanticFixture(pr)
+  const hunk = f.read.review!.diff.files[0]!.hunks[0]!
+  hunk.old.start = 0; hunk.old.count = 0; hunk.new.start = 1; hunk.new.count = 20000
+  hunk.lines = Array.from({ length: 20000 }, (_, i): typeof hunk.lines[number] => ({ id: digest(`large-semantic-${i}`), sign: '+', text: 'large saved source '.repeat(9), newLine: i+1 }))
+  expect(JSON.stringify(f.read).length).toBeGreaterThan(4 << 20)
+  await page.route('**/semantic-review', async (route): Promise<void> => { await route.fulfill({ json: f.read }) })
+  await page.getByRole('button', { name: 'Semantic review', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Guard and caller', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Ungrouped changes · 20000 changed lines', exact: true })).toBeVisible()
+  await page.screenshot({ path: test.info().outputPath('semantic-large-inventory.png') })
 })

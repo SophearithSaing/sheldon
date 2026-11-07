@@ -192,6 +192,7 @@ onUnmounted(reset)
       <p v-if="reading" role="status">Reading saved semantic review…</p>
       <p v-if="sending" role="status">Requesting generation… Admission is not completion.</p>
       <p v-if="status" role="status">Generation: {{ status.state }}<span v-if="status.failureCode"> · {{ status.failureCode }}</span><span v-if="status.cancelRequested"> · cancellation requested, not idle or rollback proof</span><span v-if="status.savedVersion"> · saved version {{ status.savedVersion }}</span></p>
+      <p v-if="status?.failureCode === 'source-too-large'">The complete source inventory exceeds supported limits. Nothing was truncated or sent for inference. Files changed remains available.</p>
       <p v-if="error" role="alert">{{ error }}</p>
       <p v-if="saved && !review">No saved semantic review. Opening this view never starts generation.</p>
       <p v-if="review">Original revision {{ review.diff.revisionID.slice(0, 8) }} · saved version {{ saved?.version }} · {{ !diff ? 'Currentness unverified; source is not loaded.' : diff.revisionID !== review.diff.revisionID ? 'Older revision; source was not retargeted.' : 'Matches displayed source.' }}</p>

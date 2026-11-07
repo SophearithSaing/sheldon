@@ -505,7 +505,7 @@ export function runtimeClient(token: string, lifetime: AbortSignal): RuntimeClie
     const path = `/api/reviews/${id}/semantic-review${suffix}`
     const response = body === undefined ? await fetch(path, authenticatedRequest(credential, bounded)) : await post(path, body, bounded)
     if (response.status !== expected || !response.headers.get('Content-Type')?.startsWith('application/json')) { await response.body?.cancel().catch((): void => {}); throw new Error('Semantic request could not be confirmed. Refresh saved state before another action; no automatic retry was made.') }
-    return readBoundedJSON(response, suffix === '' ? 4 << 20 : 4 << 10)
+    return readBoundedJSON(response, suffix === '' ? 32 << 20 : 4 << 10)
   }
   /** Reads saved grouping without source loading or inference.
    * @param id Registered PR.

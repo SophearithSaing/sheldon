@@ -61,7 +61,7 @@ func jsonValue(d *json.Decoder, depth int) bool {
 // canonicalKey refuses encoding/json's case-insensitive aliases in native, saved and request records.
 func canonicalKey(k string) bool {
 	switch k {
-	case "groups", "title", "explanation", "ranges", "groupID", "fileID", "hunkID", "side", "start", "end", "diff", "revision", "revisionID", "complete", "files", "id", "status", "oldPath", "newPath", "oldMode", "newMode", "oldObject", "newObject", "similarity", "kind", "reason", "hunks", "old", "new", "count", "section", "lines", "sign", "text", "oldLine", "newLine", "noNewline", "prID", "baseBranch", "baseSource", "baseSHA", "headSHA", "mergeBaseSHA", "schemaVersion", "version", "reviewID", "expectedVersion":
+	case "path", "groups", "title", "explanation", "ranges", "groupID", "fileID", "hunkID", "side", "start", "end", "diff", "revision", "revisionID", "complete", "files", "id", "status", "oldPath", "newPath", "oldMode", "newMode", "oldObject", "newObject", "similarity", "kind", "reason", "hunks", "old", "new", "count", "section", "lines", "sign", "text", "oldLine", "newLine", "noNewline", "prID", "baseBranch", "baseSource", "baseSHA", "headSHA", "mergeBaseSHA", "schemaVersion", "version", "reviewID", "expectedVersion":
 		return true
 	}
 	return false
