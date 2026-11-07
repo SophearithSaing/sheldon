@@ -4,6 +4,7 @@ import type { SourceResponse } from '../src/runtime/source'
 import { digest, registered, sourceFixture, token } from './runtime-fixture'
 import { historyFixture, installHistoryHarness, type HistoryHarness } from './history-fixture'
 import { quizFixture } from './quiz-fixture'
+import { semanticFixture } from './semantic-fixture'
 
 test.use({ baseURL: 'http://127.0.0.1:5175' })
 
@@ -556,10 +557,12 @@ test('two tabs share backend busy feedback but never share drafts', async ({ pag
 test('quiz failure and replacement preserve live question streams, both drafts, source selection and saved history', async ({ page }): Promise<void> => {
   const f = await fixture(page, 974)
   const q = quizFixture(f.source.pr)
+  const semantic = semanticFixture(f.source.pr)
   const history = historyFixture(f.source.pr)
   let current = q.read
   let quizMutations = 0
   await page.route(`**/api/reviews/${q.read.prID}/quiz`, async (route): Promise<void> => { await route.fulfill({ json: current }) })
+  await page.route(`**/api/reviews/${q.read.prID}/semantic-review`, async (route): Promise<void> => { await route.fulfill({ json: semantic.read }) })
   await page.route(`**/api/reviews/${q.read.prID}/quiz/generations`, async (route): Promise<void> => { quizMutations++; await route.fulfill({ status: 500, json: { error: 'PRIVATE QUIZ FAILURE' } }) })
   await page.route(`**/api/reviews/${q.read.prID}/threads`, async (route): Promise<void> => { await route.fulfill({ json: history.list }) })
   await ask(page, 2, 'Independent active question')
@@ -576,6 +579,13 @@ test('quiz failure and replacement preserve live question streams, both drafts, 
   await expect(page.getByText('Synthetic saved question.', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Quiz', exact: true }).click()
   await page.getByRole('radio').first().check()
+  await page.getByRole('button', { name: 'Semantic review', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Guard and caller', exact: true })).toBeVisible()
+  await snapshot(page, answer, { state: 'streaming', text: 'Question still streaming during semantic reading.' })
+  await expect(page.locator('.answer-text')).toHaveText('Question still streaming during semantic reading.')
+  await expect(followup).toHaveValue('Retain follow-up draft during Quiz')
+  await page.getByRole('button', { name: 'Quiz', exact: true }).click()
+  await expect(page.getByRole('radio').first()).toBeChecked()
   await page.getByRole('button', { name: 'Regenerate quiz', exact: true }).click()
   await page.getByRole('button', { name: 'Generate replacement', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Generation admission could not be confirmed')
