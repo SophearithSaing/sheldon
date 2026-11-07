@@ -11,6 +11,7 @@ import (
 	"github.com/SophearithSaing/sheldon/internal/git"
 	"github.com/SophearithSaing/sheldon/internal/question"
 	"github.com/SophearithSaing/sheldon/internal/quiz"
+	"github.com/SophearithSaing/sheldon/internal/semantic"
 )
 
 // instance holds one stable OS-locked discovery file per data root.
@@ -24,6 +25,9 @@ type instance struct {
 	quizzes                *quiz.Runtime
 	quizStoreMu            sync.Mutex
 	quizStoreUncertain     map[string]bool
+	semantics              *semantic.Runtime
+	semanticStoreMu        sync.Mutex
+	semanticStoreUncertain map[string]bool
 	questionStoreMu        sync.Mutex
 	questionStoreUncertain map[string]bool
 	questionsLoaded        map[string]bool
@@ -107,13 +111,19 @@ func (i *instance) close() error {
 		i.closing = true
 		questions := i.questions
 		quizzes := i.quizzes
+		semantics := i.semantics
 		i.mu.Unlock()
+		if semantics != nil {
+			i.closeErr = semantics.Close()
+		}
 		if quizzes != nil {
-			i.closeErr = quizzes.Close()
+			i.closeErr = errors.Join(i.closeErr, quizzes.Close())
 		}
 		if questions != nil {
 			i.closeErr = errors.Join(i.closeErr, questions.Close())
 		}
+		i.semanticStoreMu.Lock()
+		defer i.semanticStoreMu.Unlock()
 		i.quizStoreMu.Lock()
 		defer i.quizStoreMu.Unlock()
 		i.questionStoreMu.Lock()

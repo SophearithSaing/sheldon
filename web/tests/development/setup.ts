@@ -108,6 +108,8 @@ export default async function setup(): Promise<() => Promise<void>> {
     await writeFile(join(webRoot, 'threads.json'), 'private fixture value', { mode: 0o600 })
     await writeFile(join(webRoot, '.threads-fixture.tmp'), 'private fixture value', { mode: 0o600 })
     await writeFile(join(webRoot, 'quiz.json'), 'private quiz answer key', { mode: 0o600 })
+    await writeFile(join(webRoot, 'semantic-review.json'), 'private semantic source', { mode: 0o600 })
+    await writeFile(join(webRoot, '.semantic-review-fixture.tmp'), 'private semantic source', { mode: 0o600 })
     await writeFile(join(webRoot, '.quiz-fixture.tmp'), 'private quiz answer key', { mode: 0o600 })
     const binary = join(directory, process.platform === 'win32' ? 'backend.exe' : 'backend')
     await promisify(execFile)(

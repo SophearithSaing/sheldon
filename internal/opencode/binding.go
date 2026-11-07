@@ -20,7 +20,11 @@ type BindingRecord struct {
 
 // Binding returns the private immutable identity of this already-validated native session.
 func (s *Session) Binding() BindingRecord {
-	return BindingRecord{SessionID: s.info.ID, Directory: s.info.Location.Directory, Model: s.info.Model, Version: SupportedVersion, Protocol: "sheldon-opencode-http-v1", Policy: 1}
+	policy := 1
+	if s.service.semantic {
+		policy = 2
+	}
+	return BindingRecord{SessionID: s.info.ID, Directory: s.info.Location.Directory, Model: s.info.Model, Version: SupportedVersion, Protocol: "sheldon-opencode-http-v1", Policy: policy}
 }
 
 // Validate checks current adapter compatibility without contacting a native service.

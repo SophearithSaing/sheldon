@@ -155,6 +155,66 @@ func TestOwnedServiceAndRestrictedSession(t *testing.T) {
 	}
 }
 
+func TestSemanticServiceOwnsSeparateVerifiedPermissions(t *testing.T) {
+	path := fixture(t, "")
+	s, err := StartSemantic(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	session, err := s.CreateSession(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ValidateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	if session.Binding().Policy != 2 || session.Binding().Validate() == nil {
+		t.Fatal("semantic permissions can masquerade as a question binding")
+	}
+	config, _ := json.Marshal(serviceConfig(true))
+	var expected map[string]any
+	json.Unmarshal(config, &expected)
+	allowed, denied := 0, 0
+	for _, entry := range readAudit(t, path) {
+		if len(entry.Args) > 0 && !reflect.DeepEqual(entry.Config, expected) {
+			t.Fatal("semantic startup hard policies missing")
+		}
+		if strings.HasSuffix(entry.Path, "/permission") {
+			var input struct {
+				Action    string   `json:"action"`
+				Resources []string `json:"resources"`
+			}
+			json.Unmarshal([]byte(entry.Body), &input)
+			if input.Action == "shell" && len(input.Resources) == 1 {
+				if strings.HasSuffix(input.Resources[0], "HEAD") && !strings.Contains(input.Resources[0], "--output") && !strings.Contains(input.Resources[0], "--ext-diff HEAD") {
+					allowed++
+				} else {
+					denied++
+				}
+			}
+		}
+	}
+	if allowed < 7 || denied < 10 {
+		t.Fatal("semantic allow/deny probes were not executed")
+	}
+	if len(serviceRules(false)) != len(investigationRules()) || len(serviceConfig(false)["policies"].([]rule)) != len(investigationConfig()["policies"].([]rule)) {
+		t.Fatal("question/quiz permissions changed")
+	}
+}
+
+func TestSemanticPermissionMismatchFailsClosed(t *testing.T) {
+	fixture(t, "permission-mismatch")
+	s, err := StartSemantic(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if session, err := s.CreateSession(context.Background(), t.TempDir()); err == nil || session != nil {
+		t.Fatal("unverified semantic shell permissions accepted")
+	}
+}
+
 func TestStartupFailuresAreBoundedAndSanitized(t *testing.T) {
 	for _, mode := range []string{"version-wrong", "version-fail", "version-overflow", "version-hang", "early-exit", "bad-announcement", "oversize-announcement", "foreign-endpoint", "announcement-hang", "info-wrong", "http-redirect", "bad-auth", "event-content-type"} {
 		t.Run(mode, func(t *testing.T) {
