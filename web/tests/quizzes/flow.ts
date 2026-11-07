@@ -184,6 +184,7 @@ export async function quizFlow(page: Page, context: BrowserContext, info: TestIn
     const saved = JSON.parse(bytes.toString()) as PrivateQuiz
     expect(saved).toMatchObject({ schemaVersion: 1, version: 1, quizID: first.quizID, revisionID: diff.revisionID })
     expect(saved.questions).toHaveLength(5)
+    for (const question of saved.questions) for (const quote of question.evidence) { expect(quote.surrounding).toBeUndefined(); expect(quote.selected).toHaveLength(1) }
     expect(await readFile(threadPath)).toEqual(threads)
     const stableNative = (await fixture.nativeAudit()).length
     const stableGit = (await fixture.audit()).length

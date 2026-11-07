@@ -30,7 +30,7 @@ func quizStoreFixture(t *testing.T, i *instance, url string) quiz.Saved {
 	id, _ := r.ID()
 	a := quiz.Anchor{FileID: strings.Repeat("c", 64), HunkID: strings.Repeat("d", 64), Side: "new", Start: 1, End: 1}
 	line := git.DiffLine{ID: strings.Repeat("e", 64), Sign: "+", NewLine: 1, Text: "<literal source>界\r", NoNewline: true}
-	e := quiz.Evidence{Anchor: a, NewPath: "file.go", Selected: []git.DiffLine{line}, Surrounding: git.DiffHunk{ID: a.HunkID, Old: git.DiffRange{ID: strings.Repeat("f", 64)}, New: git.DiffRange{ID: strings.Repeat("1", 64), Start: 1, Count: 1}, Lines: []git.DiffLine{line}}}
+	e := quiz.Evidence{Anchor: a, NewPath: "file.go", Selected: []git.DiffLine{line}, Surrounding: &git.DiffHunk{ID: a.HunkID, Old: git.DiffRange{ID: strings.Repeat("f", 64)}, New: git.DiffRange{ID: strings.Repeat("1", 64), Start: 1, Count: 1}, Lines: []git.DiffLine{line}}}
 	s := quiz.Saved{SchemaVersion: 1, PRID: pr.ID, Version: 1, QuizID: strings.Repeat("2", 64), Content: quiz.Content{Revision: r, RevisionID: id, Questions: []quiz.Question{}}}
 	for n := range 5 {
 		s.Questions = append(s.Questions, quiz.Question{ID: fmt.Sprintf("q%d", n+1), Prompt: fmt.Sprintf("Boundary %d?", n+1), Choices: []quiz.Choice{{ID: "a", Text: "First"}, {ID: "b", Text: "Second"}, {ID: "c", Text: "Third"}, {ID: "d", Text: "Fourth"}}, CorrectChoiceID: "b", Explanation: "Concise explanation.", Evidence: []quiz.Evidence{e}})

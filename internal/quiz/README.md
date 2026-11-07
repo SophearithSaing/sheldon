@@ -23,24 +23,36 @@ to its own revision-scoped file/hunk IDs and derives literal evidence; generated
 IDs/code, foreign paths, wrong rename sides, ambiguous ranges, context-only and
 cross-hunk selections fail validation. Native output is capped at 128 KiB.
 
-Saved/public contracts, answer-key withholding, checking without inference,
-predecessor-version guards, cancellation, uncertainty, restart and private
-`reviews/<id>/quiz.json` storage are unchanged. Existing saved quizzes require no
-migration. Saved content is bounded at 2 MiB; only the validated questions and
-evidence are retained, not the entire PR diff.
+Answer-key withholding, checking without inference, predecessor-version guards,
+cancellation, uncertainty, restart and private `reviews/<id>/quiz.json` storage
+are unchanged. Newly generated evidence stores only the selected supporting
+lines, exact original anchor and path labels; it omits `surrounding`. Schema-1
+quizzes with legacy surrounding hunks still read, validate and grade without
+migration or automatic rewriting. Checked responses accept either evidence shape;
+the UI renders the selected lines and keeps original-diff navigation. Saved content
+is bounded at 2 MiB, without retaining the entire PR diff or unselected context.
+
+Before saving, references are resolved against the complete original diff, not a
+cropped reconstruction. Saved compact evidence checks contiguous side-specific
+coordinates, changed-line eligibility, unique line IDs and literal text. Repeated
+or overlapping retained lines must agree across questions, including mixed legacy
+and compact evidence. Saved quotes alone do not grant access to newer/missing source
+or certify factual correctness. Reading/checking needs no Git or inference.
 
 ## Remaining bounds
 
 - Source loader: 4-MiB native Git command output, 1000 changed files and 100,000
   patch lines per file, inherited from the existing Git layer.
-- Evidence: 200 selected lines, 8 KiB per excerpt including its **complete original
-  surrounding hunk**, paths and section; 64 KiB total, counting repeated quotes.
-  A huge single hunk can still be ineligible as evidence. It is never clipped.
+- Evidence: 200 selected lines, 8 KiB per excerpt counting only selected source
+  and path labels; 64 KiB total, counting repeated selections. A huge surrounding
+  hunk no longer blocks a small supporting selection. The requested selection is
+  never clipped or expanded with arbitrary nearby lines. Legacy surrounding-hunk
+  records retain their original validation and byte accounting.
 - Generation: 4m50s plus bounded native reconciliation; one replacement per PR,
   with no automatic prompt replay, batching or exhaustive-investigation guarantee.
 
 Offline tests use actual pinned Git plus synthetic native inference. They verify
-compact prompts, a native PR exceeding the former JSON cap, validated path-to-anchor
-mapping, independent conversation permissions and unchanged save/check/restart
+compact prompts, small evidence inside a large native hunk, validated path-to-anchor
+mapping, independent conversation permissions and compatible save/check/restart
 behavior. They do not certify factual question quality, live-provider compatibility,
 native non-Linux platforms or complete native command confinement.

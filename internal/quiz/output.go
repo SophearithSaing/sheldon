@@ -29,13 +29,13 @@ type Anchor struct {
 	End    int    `json:"end"`
 }
 
-// Evidence retains backend-derived literal quotes, not model-written source.
+// Evidence retains original supporting lines; Surrounding is present only in legacy saved quizzes.
 type Evidence struct {
 	Anchor      Anchor         `json:"anchor"`
 	OldPath     string         `json:"oldPath,omitempty"`
 	NewPath     string         `json:"newPath,omitempty"`
 	Selected    []git.DiffLine `json:"selected"`
-	Surrounding git.DiffHunk   `json:"surrounding"`
+	Surrounding *git.DiffHunk  `json:"surrounding,omitempty"`
 }
 
 // Choice identifies an ordered answer option within one question.
@@ -178,7 +178,7 @@ func (s *Source) resolveEvidence(reference nativeEvidence) (Evidence, int, error
 	return resolved, size, nil
 }
 
-// evidence copies an eligible literal range and its complete surrounding hunk.
+// evidence copies only the eligible original range, without retaining unrelated hunk context.
 func (s *Source) evidence(anchor Anchor) (Evidence, int, error) {
 	if !githubpr.ValidID(anchor.FileID) || !githubpr.ValidID(anchor.HunkID) || anchor.Side != "old" && anchor.Side != "new" || anchor.Start <= 0 || anchor.End < anchor.Start || anchor.End > 1_000_100_000 {
 		return Evidence{}, 0, ErrOutput
@@ -209,17 +209,12 @@ func (s *Source) evidence(anchor Anchor) (Evidence, int, error) {
 			if !changed || len(selected) != anchor.End-anchor.Start+1 {
 				return Evidence{}, 0, ErrOutput
 			}
-			size := len(file.OldPath) + len(file.NewPath) + len(hunk.Section)
-			for _, lines := range [][]git.DiffLine{selected, hunk.Lines} {
-				for _, line := range lines {
-					size += len(line.Text) + 1
-				}
-			}
+			evidence := Evidence{Anchor: anchor, OldPath: file.OldPath, NewPath: file.NewPath, Selected: selected}
+			size := evidenceBytes(evidence)
 			if size > maxEvidenceBytes {
 				return Evidence{}, 0, ErrLimit
 			}
-			hunk.Lines = append([]git.DiffLine(nil), hunk.Lines...)
-			return Evidence{Anchor: anchor, OldPath: file.OldPath, NewPath: file.NewPath, Selected: selected, Surrounding: hunk}, size, nil
+			return evidence, size, nil
 		}
 	}
 	return Evidence{}, 0, ErrOutput

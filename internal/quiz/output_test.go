@@ -63,7 +63,7 @@ func TestParseDerivesLiteralEvidenceAndScopedIDsWithoutAliasing(t *testing.T) {
 		if i == 1 {
 			want = source.diff.Files[0].Hunks[0].Lines[1]
 		}
-		if len(evidence.Selected) != 1 || evidence.Selected[0] != want || evidence.OldPath != "old name.txt" || evidence.NewPath != "new 界.txt" || !reflect.DeepEqual(evidence.Surrounding, source.diff.Files[0].Hunks[0]) {
+		if len(evidence.Selected) != 1 || evidence.Selected[0] != want || evidence.OldPath != "old name.txt" || evidence.NewPath != "new 界.txt" || evidence.Surrounding != nil {
 			t.Fatal("evidence not derived from exact original source")
 		}
 	}
@@ -72,9 +72,8 @@ func TestParseDerivesLiteralEvidenceAndScopedIDsWithoutAliasing(t *testing.T) {
 		t.Fatal("private location or diagnostic content exposed")
 	}
 	content.Questions[0].Evidence[0].Selected[0].Text = "edited"
-	content.Questions[0].Evidence[0].Surrounding.Lines[0].Text = "edited"
 	again, err := source.Parse(nativeJSON(t, questions))
-	if err != nil || again.Questions[0].Evidence[0].Selected[0].Text == "edited" || again.Questions[0].Evidence[0].Surrounding.Lines[0].Text == "edited" || content.Questions[2].Evidence[0].Surrounding.Lines[0].Text == "edited" {
+	if err != nil || again.Questions[0].Evidence[0].Selected[0].Text == "edited" || content.Questions[2].Evidence[0].Selected[0].Text == "edited" {
 		t.Fatal("returned evidence aliases source or sibling questions")
 	}
 }
@@ -242,7 +241,7 @@ func evidenceBudgetSource(t *testing.T) (*Source, Anchor, Anchor) {
 	hunk.Section = ""
 	hunk.Old.Start, hunk.Old.Count = 0, 0
 	hunk.New.Start, hunk.New.Count = 1, 1
-	hunk.Lines = []git.DiffLine{{ID: strings.Repeat("a", 64), Sign: "+", Text: strings.Repeat("x", (maxEvidenceBytes-4)/2), NewLine: 1}}
+	hunk.Lines = []git.DiffLine{{ID: strings.Repeat("a", 64), Sign: "+", Text: strings.Repeat("x", maxEvidenceBytes-3), NewLine: 1}}
 	anchor.Start, anchor.End = 1, 1
 	second := *file
 	second.OldPath, second.NewPath = "b", "b"
@@ -280,12 +279,12 @@ func TestEvidenceExactAndOverflowByteAndAggregateLimits(t *testing.T) {
 	}
 	source.diff.Files[0].Hunks[0].Lines[0].Text += "x"
 	if _, _, err := source.evidence(anchor); !errors.Is(err, ErrLimit) {
-		t.Fatal("selected/surrounding evidence overflow accepted")
+		t.Fatal("selected evidence overflow accepted")
 	}
 	source, anchor, _ = evidenceBudgetSource(t)
 	source.diff.Files[0].Hunks[0].Lines = append(source.diff.Files[0].Hunks[0].Lines, git.DiffLine{Sign: " ", Text: strings.Repeat("界", maxEvidenceBytes), NewLine: 2, OldLine: 1})
-	if _, _, err := source.evidence(anchor); !errors.Is(err, ErrLimit) {
-		t.Fatal("oversized surrounding hunk silently clipped")
+	if evidence, size, err := source.evidence(anchor); err != nil || size != maxEvidenceBytes || evidence.Surrounding != nil || len(evidence.Selected) != 1 {
+		t.Fatal("unselected hunk context inflated or entered evidence")
 	}
 }
 
@@ -330,7 +329,7 @@ func TestEvidenceRejectsCrossHunkAndEveryNonTextKind(t *testing.T) {
 	}
 }
 
-func TestParseBoundsEncodedEvidenceMetadataAsWellAsRawQuotes(t *testing.T) {
+func TestParseRetainsDistinctSelectionsFromLargeHunkWithoutContextMetadata(t *testing.T) {
 	prepared, diff, anchor := sourceFixture(t)
 	hunk := &diff.Files[0].Hunks[0]
 	hunk.Section = ""
@@ -354,8 +353,27 @@ func TestParseBoundsEncodedEvidenceMetadataAsWellAsRawQuotes(t *testing.T) {
 	if _, size, err := source.evidence(anchor); err != nil || size*10 > maxEvidenceTotal {
 		t.Fatalf("raw evidence should fit: %d %v", size, err)
 	}
-	if content, err := source.Parse(nativeJSON(t, questions)); !errors.Is(err, ErrLimit) || len(content.Questions) != 0 {
-		t.Fatal("encoded private-content metadata overflow accepted")
+	content, err := source.Parse(nativeJSON(t, questions))
+	if err != nil || len(content.Questions) != 5 {
+		t.Fatalf("large hunk prevented small selected evidence: %v", err)
+	}
+	for _, question := range content.Questions {
+		if len(question.Evidence) != 2 {
+			t.Fatal("lost independent evidence ranges")
+		}
+		for _, evidence := range question.Evidence {
+			if len(evidence.Selected) != 1 || evidence.Surrounding != nil {
+				t.Fatal("unselected hunk lines were retained")
+			}
+		}
+	}
+	saved := Saved{SchemaVersion: 1, PRID: diff.Revision.PRID, Version: 1, QuizID: strings.Repeat("e", 64), Content: content}
+	data, err := saved.Encode()
+	if err != nil || len(data) > 32<<10 || bytes.Contains(data, []byte(`"surrounding"`)) {
+		t.Fatalf("compact result: %v", err)
+	}
+	if _, err := DecodeSaved(data, saved.PRID); err != nil {
+		t.Fatal(err)
 	}
 }
 

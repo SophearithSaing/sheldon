@@ -233,8 +233,7 @@ func TestQuizGeneratesFromLargePinnedPRWithoutEmbeddingDiff(t *testing.T) {
 	f := newQuestionFixture(t, "quiz-valid")
 	largeText := strings.Repeat("private large source line for repository investigation\n", 12000)
 	largeBlob := sourceGit(t, f.realGit, f.upstream, largeText, "hash-object", "-w", "--stdin")
-	smallBlob := sourceGit(t, f.realGit, f.upstream, "new literal\n", "hash-object", "-w", "--stdin")
-	tree := sourceGit(t, f.realGit, f.upstream, "100644 blob "+smallBlob+"\tsource.txt\n100644 blob "+largeBlob+"\tz-large.txt\n", "mktree")
+	tree := sourceGit(t, f.realGit, f.upstream, "100644 blob "+largeBlob+"\tsource.txt\n", "mktree")
 	head := sourceGit(t, f.realGit, f.upstream, "large quiz PR\n", "commit-tree", tree, "-p", f.head)
 	sourceGit(t, f.realGit, f.upstream, "", "update-ref", "refs/pull/31/head", head)
 	resolution := github.Resolution{PR: f.pr, State: github.Resolved, Base: &github.Base{Branch: "feat/go-rewrite", SHA: f.input.Revision.BaseSHA, Source: githubpr.GitHubBase}, HeadSHA: head}
@@ -264,6 +263,11 @@ func TestQuizGeneratesFromLargePinnedPRWithoutEmbeddingDiff(t *testing.T) {
 	saved, err := f.owner.ReadQuiz(f.pr.ID)
 	if err != nil || saved.Version != 1 || saved.Revision != prepared.Revision || saved.Questions[0].Evidence[0].Selected[0].Text != "old literal" {
 		t.Fatalf("large pinned result: %v", err)
+	}
+	for _, question := range saved.Questions {
+		if question.Evidence[0].Surrounding != nil {
+			t.Fatal("large hunk was retained alongside selected evidence")
+		}
 	}
 	for _, entry := range nativeQuestionAudit(t, f.audit) {
 		if !strings.HasSuffix(entry.Path, "/prompt") {

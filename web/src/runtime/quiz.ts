@@ -11,7 +11,7 @@ export interface QuizStatus {
 export interface QuizRead { prID: string; version: string; quiz: PublicQuiz | null; generation: QuizStatus | null }
 export interface QuizEvidence {
   anchor: { fileID: string; hunkID: string; side: 'old' | 'new'; start: number; end: number }
-  oldPath?: string; newPath?: string; selected: SourceLine[]; surrounding: SourceHunk
+  oldPath?: string; newPath?: string; selected: SourceLine[]; surrounding?: SourceHunk
 }
 export interface QuizChecked {
   prID: string; version: string; quizID: string; revisionID: string; questionID: string; choiceID: string
@@ -151,17 +151,36 @@ export async function parseQuizRead(value: unknown, prID: string): Promise<QuizR
 function copyLine(line: SourceLine): SourceLine { return { id: line.id, sign: line.sign, text: line.text, oldLine: line.oldLine, newLine: line.newLine, noNewline: line.noNewline } }
 
 /**
- * Validates complete retained evidence without Git or inferred source availability.
+ * Validates compact selected evidence or legacy retained hunks without granting source access.
  * @param value Decoded evidence.
  * @returns Detached bounded original quote.
  */
 function evidence(value: unknown): QuizEvidence {
-  if (!fields(value, ['anchor', 'oldPath', 'newPath', 'selected', 'surrounding']) || !fields(value.anchor, ['fileID', 'hunkID', 'side', 'start', 'end']) || !validSourceHunk(value.surrounding) || !Array.isArray(value.selected)) throw new Error('Unexpected quiz evidence.')
+  if (!fields(value, ['anchor', 'oldPath', 'newPath', 'selected', 'surrounding']) || !fields(value.anchor, ['fileID', 'hunkID', 'side', 'start', 'end']) || !Array.isArray(value.selected)) throw new Error('Unexpected quiz evidence.')
   const a = value.anchor
-  const h = value.surrounding
-  if (!historyID(a.fileID) || !historyID(a.hunkID) || !['old', 'new'].includes(String(a.side)) || !Number.isSafeInteger(a.start) || !Number.isSafeInteger(a.end) || Number(a.start) < 1 || Number(a.end) < Number(a.start) || Number(a.end) > 1000100000 || Number(a.end)-Number(a.start) >= 200 || h.id !== a.hunkID || !historyID(h.old.id) || !historyID(h.new.id) || h.old.count > 100000 || h.new.count > 100000) throw new Error('Unexpected quiz evidence range.')
+  if (!historyID(a.fileID) || !historyID(a.hunkID) || !['old', 'new'].includes(String(a.side)) || !Number.isSafeInteger(a.start) || !Number.isSafeInteger(a.end) || Number(a.start) < 1 || Number(a.end) < Number(a.start) || Number(a.end) > 1000100000 || Number(a.end)-Number(a.start) >= 200) throw new Error('Unexpected quiz evidence range.')
   for (const path of [value.oldPath, value.newPath]) if (path !== undefined && (typeof path !== 'string' || path.includes('\0'))) throw new Error('Unexpected quiz evidence path.')
-  if (!(value.oldPath || value.newPath) || h.section.includes('\0')) throw new Error('Unexpected quiz evidence labels.')
+  if (!(value.oldPath || value.newPath)) throw new Error('Unexpected quiz evidence labels.')
+  if (value.surrounding === undefined) {
+    if (value.selected.length !== Number(a.end)-Number(a.start)+1) throw new Error('Unexpected quiz evidence selection.')
+    const selected: SourceLine[] = []; const ids = new Set<string>(); let previous = 0; let changed = false
+    for (const [index, raw] of value.selected.entries()) {
+      if (!fields(raw, ['id', 'sign', 'text', 'oldLine', 'newLine', 'noNewline']) || !historyID(raw.id) || ids.has(raw.id) || typeof raw.text !== 'string' || /[\0\n]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(raw.text) || raw.noNewline !== undefined && typeof raw.noNewline !== 'boolean' || [raw.oldLine, raw.newLine].some((number: unknown): boolean => number !== undefined && (!Number.isSafeInteger(number) || Number(number) < 0 || Number(number) > 1000100000))) throw new Error('Unexpected quiz evidence line.')
+      ids.add(raw.id)
+      const number = a.side === 'old' ? raw.oldLine : raw.newLine
+      const other = a.side === 'old' ? raw.newLine ?? 0 : raw.oldLine ?? 0
+      if (number !== Number(a.start)+index) throw new Error('Unexpected quiz evidence coordinate.')
+      if (raw.sign === (a.side === 'old' ? '-' : '+')) { if (other !== 0) throw new Error('Unexpected opposite-side coordinate.'); changed = true }
+      else if (raw.sign === ' ') { if (!Number.isSafeInteger(other) || Number(other) <= previous || Number(other) > 1000100000) throw new Error('Unexpected context coordinate.'); previous = Number(other) }
+      else throw new Error('Unexpected quiz evidence side.')
+      selected.push(copyLine(raw as unknown as SourceLine))
+    }
+    const bytes = new TextEncoder().encode([value.oldPath ?? '', value.newPath ?? '', ...selected.map((line: SourceLine): string => `${line.text}\n`)].join('')).length
+    if (!changed || bytes > 8192) throw new Error('Unexpected or oversized quiz evidence.')
+    return { anchor: { fileID: a.fileID, hunkID: a.hunkID, side: a.side as 'old' | 'new', start: Number(a.start), end: Number(a.end) }, oldPath: value.oldPath as string | undefined, newPath: value.newPath as string | undefined, selected }
+  }
+  const h = value.surrounding
+  if (!validSourceHunk(h) || h.id !== a.hunkID || !historyID(h.old.id) || !historyID(h.new.id) || h.old.count > 100000 || h.new.count > 100000 || h.section.includes('\0')) throw new Error('Unexpected quiz evidence hunk.')
   let old = h.old.start
   let next = h.new.start
   const ids = new Set<string>()

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -68,6 +69,8 @@ func (c Content) validate() error {
 	prompts := []string{}
 	paths := make(map[string][2]string)
 	hunks := make(map[string]git.DiffHunk)
+	lines := make(map[string]git.DiffLine)
+	coordinates := make(map[string]git.DiffLine)
 	total := 0
 	for i, item := range c.Questions {
 		if item.ID != "q"+string(rune('1'+i)) || !validText(item.Prompt, maxPromptText) || duplicateText(prompts, item.Prompt) || !validText(item.Explanation, maxExplanation) || len(item.Choices) != 4 || len(item.CorrectChoiceID) != 1 || item.CorrectChoiceID[0] < 'a' || item.CorrectChoiceID[0] > 'd' || len(item.Evidence) < 1 || len(item.Evidence) > 2 {
@@ -100,10 +103,31 @@ func (c Content) validate() error {
 			}
 			paths[a.FileID] = labels
 			key := a.FileID + a.HunkID
-			if previous, ok := hunks[key]; ok && !reflect.DeepEqual(previous, evidence.Surrounding) {
-				return ErrStore
+			quoted := evidence.Selected
+			if evidence.Surrounding != nil {
+				if previous, ok := hunks[key]; ok && !reflect.DeepEqual(previous, *evidence.Surrounding) {
+					return ErrStore
+				}
+				hunks[key] = *evidence.Surrounding
+				quoted = evidence.Surrounding.Lines
 			}
-			hunks[key] = evidence.Surrounding
+			for _, line := range quoted {
+				lineKey := key + line.ID
+				if previous, ok := lines[lineKey]; ok && previous != line {
+					return ErrStore
+				}
+				lines[lineKey] = line
+				for side, number := range map[string]int{"old": line.OldLine, "new": line.NewLine} {
+					if number == 0 {
+						continue
+					}
+					coordinate := key + side + strconv.Itoa(number)
+					if previous, ok := coordinates[coordinate]; ok && previous != line {
+						return ErrStore
+					}
+					coordinates[coordinate] = line
+				}
+			}
 		}
 	}
 	return nil
@@ -111,6 +135,12 @@ func (c Content) validate() error {
 
 // validateEvidence checks literal retained ranges without source access or revision substitution.
 func validateEvidence(e Evidence) error {
+	if err := validateSelected(e); err != nil {
+		return err
+	}
+	if e.Surrounding == nil {
+		return nil
+	}
 	a, h := e.Anchor, e.Surrounding
 	if !githubpr.ValidID(a.FileID) || !githubpr.ValidID(a.HunkID) || a.Side != "old" && a.Side != "new" || a.Start <= 0 || a.End < a.Start || a.End > 1_000_100_000 || a.End-a.Start >= maxEvidenceLines || h.ID != a.HunkID || !githubpr.ValidID(h.Old.ID) || !githubpr.ValidID(h.New.ID) || h.Old.Start < 0 || h.New.Start < 0 || h.Old.Start > 1_000_100_000 || h.New.Start > 1_000_100_000 || h.Old.Count < 0 || h.New.Count < 0 || h.Old.Count > 100_000 || h.New.Count > 100_000 || len(h.Lines) > 100_000 || len(e.Selected) == 0 || len(e.Selected) > maxEvidenceLines || e.OldPath == "" && e.NewPath == "" || evidenceBytes(e) > maxEvidenceBytes {
 		return ErrStore
@@ -169,11 +199,61 @@ func validateEvidence(e Evidence) error {
 	return nil
 }
 
-// evidenceBytes counts literal source/path bytes, including repeated selected/surrounding quotes.
+// validateSelected checks an exact one-sided retained quote without requiring the complete original hunk.
+func validateSelected(e Evidence) error {
+	a := e.Anchor
+	if !githubpr.ValidID(a.FileID) || !githubpr.ValidID(a.HunkID) || a.Side != "old" && a.Side != "new" || a.Start <= 0 || a.End < a.Start || a.End > 1_000_100_000 || a.End-a.Start >= maxEvidenceLines || len(e.Selected) != a.End-a.Start+1 || e.OldPath == "" && e.NewPath == "" || evidenceBytes(e) > maxEvidenceBytes {
+		return ErrStore
+	}
+	for _, path := range []string{e.OldPath, e.NewPath} {
+		if !utf8.ValidString(path) || strings.ContainsRune(path, 0) {
+			return ErrStore
+		}
+	}
+	ids := map[string]bool{}
+	changed, previous := false, 0
+	for i, line := range e.Selected {
+		if !githubpr.ValidID(line.ID) || ids[line.ID] || !utf8.ValidString(line.Text) || strings.ContainsAny(line.Text, "\x00\n") {
+			return ErrStore
+		}
+		ids[line.ID] = true
+		number, other, sign := line.NewLine, line.OldLine, "+"
+		if a.Side == "old" {
+			number, other, sign = line.OldLine, line.NewLine, "-"
+		}
+		if number != a.Start+i {
+			return ErrStore
+		}
+		switch line.Sign {
+		case sign:
+			if other != 0 {
+				return ErrStore
+			}
+			changed = true
+		case " ":
+			if other <= previous || other > 1_000_100_000 {
+				return ErrStore
+			}
+			previous = other
+		default:
+			return ErrStore
+		}
+	}
+	if !changed {
+		return ErrStore
+	}
+	return nil
+}
+
+// evidenceBytes counts selected/path bytes, plus surrounding context only for legacy retained evidence.
 func evidenceBytes(e Evidence) int {
-	size := len(e.OldPath) + len(e.NewPath) + len(e.Surrounding.Section)
-	for _, lines := range [][]git.DiffLine{e.Selected, e.Surrounding.Lines} {
-		for _, line := range lines {
+	size := len(e.OldPath) + len(e.NewPath)
+	for _, line := range e.Selected {
+		size += len(line.Text) + 1
+	}
+	if e.Surrounding != nil {
+		size += len(e.Surrounding.Section)
+		for _, line := range e.Surrounding.Lines {
 			size += len(line.Text) + 1
 		}
 	}

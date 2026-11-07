@@ -20,6 +20,11 @@ func savedFixture(t *testing.T) Saved {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for i := range content.Questions {
+		hunk := source.diff.Files[0].Hunks[0]
+		hunk.Lines = append([]git.DiffLine(nil), hunk.Lines...)
+		content.Questions[i].Evidence[0].Surrounding = &hunk
+	}
 	return Saved{SchemaVersion: 1, PRID: content.Revision.PRID, Version: 1, QuizID: strings.Repeat("a", 64), Content: content}
 }
 
@@ -43,6 +48,94 @@ func TestSavedStrictRoundTripAndPrivateFormatting(t *testing.T) {
 	}
 	if _, err := DecodeSaved(data, strings.Repeat("b", 64)); !errors.Is(err, ErrStore) {
 		t.Fatal("cross-PR saved data accepted")
+	}
+}
+
+func TestCompactAndLegacyEvidenceReopenAndGradeWithoutSource(t *testing.T) {
+	t.Setenv("PATH", "")
+	for _, compact := range []bool{false, true} {
+		s := savedFixture(t)
+		if compact {
+			for i := range s.Questions {
+				s.Questions[i].Evidence[0].Surrounding = nil
+			}
+		}
+		data, err := s.Encode()
+		if err != nil || bytes.Contains(data, []byte(`"surrounding"`)) == compact {
+			t.Fatalf("evidence encoding: %v", err)
+		}
+		reopened, err := DecodeSaved(data, s.PRID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		view, err := reopened.Public()
+		if err != nil {
+			t.Fatal(err)
+		}
+		public, _ := json.Marshal(view)
+		for _, private := range []string{"correctChoiceID", "explanation", "evidence", "surrounding", "selected"} {
+			if bytes.Contains(public, []byte(private)) {
+				t.Fatalf("unchecked view exposed %s", private)
+			}
+		}
+		for _, choice := range []string{"a", "b"} {
+			checked, err := reopened.Check(s.QuizID, "q1", s.RevisionID, choice)
+			if err != nil || checked.Validate(s.PRID) != nil || checked.Correct != (choice == s.Questions[0].CorrectChoiceID) || !reflect.DeepEqual(checked.Evidence[0].Selected, s.Questions[0].Evidence[0].Selected) {
+				t.Fatalf("grading changed: %v", err)
+			}
+			checked.Evidence[0].Selected[0].Text = "caller edit"
+			if checked.Evidence[0].Surrounding != nil {
+				checked.Evidence[0].Surrounding.Section = "caller edit"
+			}
+			if s.Questions[0].Evidence[0].Selected[0].Text == "caller edit" || reopened.Questions[0].Evidence[0].Surrounding != nil && reopened.Questions[0].Evidence[0].Surrounding.Section == "caller edit" {
+				t.Fatal("checked evidence aliases saved state")
+			}
+		}
+	}
+}
+
+func TestCompactEvidenceRejectsInvalidCoordinatesAndConflictingQuotes(t *testing.T) {
+	for _, name := range []string{"missing", "duplicate ID", "gap", "wrong sign", "opposite coordinate", "nonmonotonic context", "text", "ID conflict", "coordinate conflict", "legacy conflict", "oversized"} {
+		t.Run(name, func(t *testing.T) {
+			s := savedFixture(t)
+			for i := range s.Questions {
+				s.Questions[i].Evidence[0].Surrounding = nil
+			}
+			e := &s.Questions[0].Evidence[0]
+			switch name {
+			case "missing":
+				e.Selected = nil
+			case "duplicate ID":
+				e.Anchor.End++
+				e.Selected = append(e.Selected, e.Selected[0])
+				e.Selected[1].NewLine++
+			case "gap":
+				e.Selected[0].NewLine++
+			case "wrong sign":
+				e.Selected[0].Sign = "-"
+			case "opposite coordinate":
+				e.Selected[0].OldLine = 5
+			case "nonmonotonic context":
+				e.Anchor.Start = 1
+				e.Anchor.End = 3
+				e.Selected = []git.DiffLine{{ID: strings.Repeat("b", 64), Sign: " ", NewLine: 1, OldLine: 3, Text: "context"}, e.Selected[0], {ID: strings.Repeat("c", 64), Sign: " ", NewLine: 3, OldLine: 1, Text: "context"}}
+			case "text":
+				e.Selected[0].Text = "bad\x00"
+			case "ID conflict":
+				e.Selected[0].Text += "contradiction"
+			case "coordinate conflict":
+				e.Selected[0].ID = strings.Repeat("f", 64)
+			case "legacy conflict":
+				legacy := savedFixture(t)
+				s.Questions[1].Evidence[0] = legacy.Questions[1].Evidence[0]
+				e.Selected[0].Text += "contradiction"
+			case "oversized":
+				e.Selected[0].Text = strings.Repeat("x", maxEvidenceBytes)
+			}
+			if _, err := s.Encode(); !errors.Is(err, ErrStore) {
+				t.Fatal("invalid compact evidence accepted")
+			}
+		})
 	}
 }
 

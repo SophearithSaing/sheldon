@@ -81,7 +81,7 @@ func quizRegistry(t *testing.T) *quizRegistryFixture {
 	h := historyRegistry(t)
 	c := h.detail.Context
 	a := quiz.Anchor{FileID: c.Anchor.FileID, HunkID: c.Anchor.HunkID, Side: "new", Start: 1, End: 1}
-	e := quiz.Evidence{Anchor: a, OldPath: c.OldPath, NewPath: c.NewPath, Selected: c.Selected, Surrounding: c.Surrounding}
+	e := quiz.Evidence{Anchor: a, OldPath: c.OldPath, NewPath: c.NewPath, Selected: c.Selected, Surrounding: &c.Surrounding}
 	s := quiz.Saved{SchemaVersion: 1, PRID: h.list.PRID, Version: ^uint64(0), QuizID: strings.Repeat("4", 64), Content: quiz.Content{Revision: c.Revision, RevisionID: c.RevisionID, Questions: []quiz.Question{}}}
 	for i := range 5 {
 		s.Questions = append(s.Questions, quiz.Question{ID: "q" + string(rune('1'+i)), Prompt: "Fixture question " + string(rune('1'+i)), Choices: []quiz.Choice{{ID: "a", Text: "First"}, {ID: "b", Text: "Second"}, {ID: "c", Text: "Third"}, {ID: "d", Text: "Fourth"}}, CorrectChoiceID: "b", Explanation: "PRIVATE_EXPLANATION_" + string(rune('1'+i)), Evidence: []quiz.Evidence{e}})
