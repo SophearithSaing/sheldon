@@ -48,7 +48,7 @@ Cancellation before commit entry prevents replacement once idle is proven;
 after commit entry it cannot promise rollback. Disconnect/view departure ends
 observation, not accepted work. Shutdown drains without new saves/retries.
 
-Only semantic generation enables shell inspection: fixed command prefixes for
+Quiz and semantic generation enable shell inspection in separately owned services: fixed command prefixes for
 `git --no-pager diff/show/log --no-ext-diff --no-textconv`, `git ls-tree`,
 `git grep --no-ext-grep` and `gh pr view/diff`. Other commands/actions remain denied,
 including mutation, arbitrary shell, `gh api`, edits, skills, MCP and subagents.
@@ -58,8 +58,8 @@ the profile; effective allow/deny probes fail closed on mismatch. The child
 disables Git replacement objects, fsmonitor, hooks, external diff, interactive
 prompts and pagers without modifying user/global configuration or credentials.
 This is a best-effort native command allowlist, not an argv sandbox or a guarantee
-against every Git/GitHub configuration/command escape. Question/quiz services keep
-their original read/search-only policy; semantic bindings cannot resume as question
+against every Git/GitHub configuration/command escape. Question conversations keep
+their original read/search-only policy; generation bindings cannot resume as question
 bindings. No blanket `git *` / `gh *` grants.
 
 `<data>/reviews/<prID>/semantic-review.json` holds the current complete result:

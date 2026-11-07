@@ -115,7 +115,11 @@ func (s Saved) Check(quizID, questionID, revisionID, choiceID string) (Checked, 
 	checked := Checked{PRID: s.PRID, Version: strconv.FormatUint(s.Version, 10), QuizID: s.QuizID, RevisionID: s.RevisionID, QuestionID: item.ID, ChoiceID: choiceID, Correct: choiceID == item.CorrectChoiceID, CorrectChoiceID: item.CorrectChoiceID, Explanation: item.Explanation, Evidence: make([]Evidence, 0, len(item.Evidence))}
 	for _, e := range item.Evidence {
 		e.Selected = append([]git.DiffLine(nil), e.Selected...)
-		e.Surrounding.Lines = append([]git.DiffLine(nil), e.Surrounding.Lines...)
+		if e.Surrounding != nil {
+			hunk := *e.Surrounding
+			hunk.Lines = append([]git.DiffLine(nil), hunk.Lines...)
+			e.Surrounding = &hunk
+		}
 		checked.Evidence = append(checked.Evidence, e)
 	}
 	return checked, nil

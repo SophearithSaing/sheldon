@@ -59,7 +59,7 @@ func outputValue(d *json.Decoder, depth int) bool {
 // outputKey permits canonical native/saved spellings, not case-insensitive field aliases.
 func outputKey(name string) bool {
 	switch name {
-	case "questions", "prompt", "choices", "correctChoiceID", "explanation", "evidence", "fileID", "hunkID", "side", "start", "end":
+	case "path", "questions", "prompt", "choices", "correctChoiceID", "explanation", "evidence", "fileID", "hunkID", "side", "start", "end":
 		return true
 	case "schemaVersion", "prID", "version", "quizID", "revision", "revisionID", "baseBranch", "baseSource", "baseSHA", "headSHA", "mergeBaseSHA", "questionID", "choiceID", "text", "anchor", "oldPath", "newPath", "selected", "surrounding", "id", "old", "new", "count", "section", "lines", "sign", "oldLine", "newLine", "noNewline":
 		return true

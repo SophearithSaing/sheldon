@@ -12,6 +12,8 @@ import (
 	"github.com/SophearithSaing/sheldon/internal/githubpr"
 )
 
+const fixturePRURL = "https://github.com/owner/repo/pull/1"
+
 // sourceFixture models an already-verified changed hunk and a non-text inventory entry.
 func sourceFixture(t *testing.T) (git.Prepared, git.Diff, Anchor) {
 	t.Helper()
@@ -39,25 +41,27 @@ func sourceFixture(t *testing.T) (git.Prepared, git.Diff, Anchor) {
 func preparedSource(t *testing.T) (*Source, Anchor) {
 	t.Helper()
 	prepared, diff, anchor := sourceFixture(t)
-	source, err := sourceContext(prepared, diff)
+	source, err := sourceContext(prepared, diff, fixturePRURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return source, anchor
 }
 
-func TestSourcePromptRetainsCompleteManifestAndWithholdsDirectory(t *testing.T) {
+func TestSourcePromptKeepsCompleteManifestPrivateAndPinsInvestigation(t *testing.T) {
 	prepared, diff, _ := sourceFixture(t)
-	source, err := sourceContext(prepared, diff)
+	source, err := sourceContext(prepared, diff, fixturePRURL)
 	if err != nil || source.Directory() != prepared.Directory {
 		t.Fatalf("source: %v", err)
 	}
 	var prompt struct {
-		Instructions string   `json:"instructions"`
-		Source       git.Diff `json:"source"`
+		Instructions string            `json:"instructions"`
+		PRURL        string            `json:"prURL"`
+		Revision     githubpr.Revision `json:"revision"`
+		Source       *git.Diff         `json:"source"`
 	}
-	if json.Unmarshal([]byte(source.Prompt()), &prompt) != nil || len(prompt.Source.Files) != 2 || prompt.Source.Revision != diff.Revision || prompt.Source.Files[1].Kind != "binary" || prompt.Source.Files[0].Hunks[0].Lines[2].Text != diff.Files[0].Hunks[0].Lines[2].Text {
-		t.Fatal("prompt omitted or changed source inventory")
+	if json.Unmarshal([]byte(source.Prompt()), &prompt) != nil || prompt.Source != nil || prompt.Revision != diff.Revision || prompt.PRURL != fixturePRURL || len(source.diff.Files) != 2 || source.diff.Files[1].Kind != "binary" {
+		t.Fatal("prompt included inventory, lost exact comparison or omitted private inventory")
 	}
 	for _, instruction := range []string{"five", "a,b,c,d", "merge base", "untrusted data", "131072", "8192", "200 lines", "source-grounded"} {
 		if !strings.Contains(prompt.Instructions, instruction) {
@@ -65,7 +69,7 @@ func TestSourcePromptRetainsCompleteManifestAndWithholdsDirectory(t *testing.T) 
 		}
 	}
 	encoded, _ := json.Marshal(source)
-	if string(encoded) != "{}" || strings.Contains(source.Prompt(), prepared.Directory) || strings.Contains(fmt.Sprintf("%v %#v", source, source), prepared.Directory) || strings.Contains(fmt.Sprintf("%v", source), "<code>") {
+	if string(encoded) != "{}" || strings.Contains(source.Prompt(), prepared.Directory) || strings.Contains(source.Prompt(), "<code>") || strings.Contains(source.Prompt(), diff.Files[0].ID) || strings.Contains(fmt.Sprintf("%v %#v", source, source), prepared.Directory) || strings.Contains(fmt.Sprintf("%v", source), "<code>") {
 		t.Fatal("private source exposed by serialization/formatting")
 	}
 }
@@ -90,7 +94,7 @@ func TestSourceRejectsIncompleteMismatchedAndTextEmptyDiffs(t *testing.T) {
 			case "unchanged":
 				diff.Files[0].Hunks[0].Lines = nil
 			}
-			if source, err := sourceContext(prepared, diff); !errors.Is(err, ErrSource) || source != nil {
+			if source, err := sourceContext(prepared, diff, fixturePRURL); !errors.Is(err, ErrSource) || source != nil {
 				t.Fatalf("invalid context accepted: %v", err)
 			}
 		})
@@ -99,22 +103,55 @@ func TestSourceRejectsIncompleteMismatchedAndTextEmptyDiffs(t *testing.T) {
 
 func TestSourcePromptExactEncodedBudgetAndOverflow(t *testing.T) {
 	prepared, diff, _ := sourceFixture(t)
-	source, err := sourceContext(prepared, diff)
+	url := fixturePRURL
+	source, err := sourceContext(prepared, diff, url)
 	if err != nil {
 		t.Fatal(err)
 	}
-	line := &diff.Files[0].Hunks[0].Lines[0]
-	line.Text += strings.Repeat("x", MaxPromptBytes-len(source.Prompt()))
-	if source, err = sourceContext(prepared, diff); err != nil || len(source.Prompt()) != MaxPromptBytes {
+	url += strings.Repeat("x", MaxPromptBytes-len(source.Prompt()))
+	if source, err = sourceContext(prepared, diff, url); err != nil || len(source.Prompt()) != MaxPromptBytes {
 		t.Fatalf("exact serialized prompt budget refused: %v", err)
 	}
-	line.Text += "x"
-	if source, err = sourceContext(prepared, diff); !errors.Is(err, ErrLimit) || source != nil {
+	url += "x"
+	if source, err = sourceContext(prepared, diff, url); !errors.Is(err, ErrLimit) || source != nil {
 		t.Fatalf("oversized prompt sampled/truncated: %v", err)
 	}
-	line.Text = strings.Repeat("<", MaxPromptBytes/6)
-	if source, err = sourceContext(prepared, diff); !errors.Is(err, ErrLimit) || source != nil {
+	url = strings.Repeat("<", MaxPromptBytes/6)
+	if source, err = sourceContext(prepared, diff, url); !errors.Is(err, ErrLimit) || source != nil {
 		t.Fatal("JSON escaping not included in prompt budget")
+	}
+}
+
+func TestLargeDiffDoesNotIncreasePromptOrSavedQuiz(t *testing.T) {
+	prepared, diff, anchor := sourceFixture(t)
+	before, err := sourceContext(prepared, diff, fixturePRURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	large := git.DiffFile{ID: strings.Repeat("a", 64), Status: "added", Kind: "text", NewPath: "large.txt", Hunks: []git.DiffHunk{{ID: strings.Repeat("b", 64), Old: git.DiffRange{ID: strings.Repeat("c", 64)}, New: git.DiffRange{ID: strings.Repeat("d", 64), Start: 1, Count: 6000}}}}
+	for i := range 6000 {
+		large.Hunks[0].Lines = append(large.Hunks[0].Lines, git.DiffLine{ID: fmt.Sprintf("%064x", i+100), Sign: "+", NewLine: i + 1, Text: strings.Repeat("private-large-source ", 6)})
+	}
+	diff.Files = append(diff.Files, large)
+	encoded, _ := json.Marshal(diff)
+	if len(encoded) <= 512<<10 {
+		t.Fatal("fixture does not exceed the old prompt cap")
+	}
+	source, err := sourceContext(prepared, diff, fixturePRURL)
+	if err != nil || source.Prompt() != before.Prompt() || strings.Contains(source.Prompt(), "private-large-source") || len(source.diff.Files) != 3 {
+		t.Fatalf("large source was embedded or dropped: %v", err)
+	}
+	content, err := source.Parse(nativeJSON(t, nativeFixture(anchor)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := Saved{SchemaVersion: 1, PRID: diff.Revision.PRID, Version: 1, QuizID: strings.Repeat("e", 64), Content: content}
+	data, err := saved.Encode()
+	if err != nil || strings.Contains(string(data), "private-large-source") {
+		t.Fatalf("quiz storage retained unrelated source: %v", err)
+	}
+	if _, err := DecodeSaved(data, saved.PRID); err != nil {
+		t.Fatal(err)
 	}
 }
 

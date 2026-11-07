@@ -19,13 +19,18 @@ import (
 )
 
 // quizResult encodes synthetic structured output with references, never model-written source quotes.
-func quizResult(t *testing.T, anchors []quiz.Anchor) []byte {
+func quizResult(t *testing.T, anchors []quiz.Anchor, paths ...string) []byte {
 	t.Helper()
 	questions := []map[string]any{}
 	for i := range 5 {
+		anchor := anchors[i%len(anchors)]
+		path := "source.txt"
+		if len(paths) > 0 {
+			path = paths[i%len(paths)]
+		}
 		questions = append(questions, map[string]any{
 			"prompt": fmt.Sprintf("What does changed boundary %d do?", i+1), "choices": []string{"First", "Second", "Third", "Fourth"},
-			"correctChoiceID": "b", "explanation": "A synthetic explanation for structural validation only.", "evidence": []quiz.Anchor{anchors[i%len(anchors)]},
+			"correctChoiceID": "b", "explanation": "A synthetic explanation for structural validation only.", "evidence": []map[string]any{{"path": path, "side": anchor.Side, "start": anchor.Start, "end": anchor.End}},
 		})
 	}
 	data, err := json.Marshal(map[string]any{"questions": questions})
@@ -91,8 +96,13 @@ func TestQuizSourceRetainsOriginalRevisionAcrossRefreshAndRefusesLostSource(t *t
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := newSource.Parse(quizResult(t, []quiz.Anchor{anchor})); !errors.Is(err, quiz.ErrOutput) {
-			t.Fatal("old evidence accepted on refreshed revision")
+		current, err := newSource.Parse(quizResult(t, []quiz.Anchor{anchor}))
+		if err == nil {
+			if current.Revision != input || current.Questions[0].Evidence[0].Anchor == anchor {
+				t.Fatal("path reference retained old revision identity")
+			}
+		} else if !errors.Is(err, quiz.ErrOutput) {
+			t.Fatalf("unexpected reference failure: %v", err)
 		}
 	}
 	audit, _ = os.ReadFile(os.Getenv("SHELDON_GIT_AUDIT"))
@@ -171,6 +181,7 @@ func TestQuizEvidenceUsesNativeAddedDeletedRenamedAndNonTextInventory(t *testing
 	}
 	statuses := map[string]bool{}
 	anchors := []quiz.Anchor{}
+	paths := []string{}
 	wanted := []git.DiffLine{}
 	var binary quiz.Anchor
 	for _, file := range diff.Files {
@@ -188,6 +199,11 @@ func TestQuizEvidenceUsesNativeAddedDeletedRenamedAndNonTextInventory(t *testing
 					continue
 				}
 				anchors = append(anchors, anchor)
+				path := file.NewPath
+				if anchor.Side == "old" {
+					path = file.OldPath
+				}
+				paths = append(paths, path)
 				wanted = append(wanted, line)
 			}
 		}
@@ -195,7 +211,7 @@ func TestQuizEvidenceUsesNativeAddedDeletedRenamedAndNonTextInventory(t *testing
 	if !statuses["renamed"] || !statuses["deleted"] || !statuses["added"] || len(anchors) != 4 {
 		t.Fatal("fixture lacks expected native change kinds")
 	}
-	content, err := source.Parse(quizResult(t, anchors))
+	content, err := source.Parse(quizResult(t, anchors, paths...))
 	if err != nil || content.Revision.MergeBaseSHA != base || content.Revision.BaseSHA != baseTip {
 		t.Fatalf("native quiz content: %v", err)
 	}
@@ -204,11 +220,68 @@ func TestQuizEvidenceUsesNativeAddedDeletedRenamedAndNonTextInventory(t *testing
 			t.Fatal("literal native source/coordinates/final-LF changed")
 		}
 	}
-	if !strings.Contains(source.Prompt(), `"kind":"binary"`) {
-		t.Fatal("prompt dropped non-text source inventory")
+	if strings.Contains(source.Prompt(), `"files"`) || strings.Contains(source.Prompt(), `"kind":"binary"`) || !strings.Contains(source.Prompt(), prepared.Revision.MergeBaseSHA) {
+		t.Fatal("prompt embedded source inventory or lost original comparison")
 	}
-	if _, err := source.Parse(quizResult(t, []quiz.Anchor{binary})); !errors.Is(err, quiz.ErrOutput) {
+	if _, err := source.Parse(quizResult(t, []quiz.Anchor{binary}, "image.bin")); !errors.Is(err, quiz.ErrOutput) {
 		t.Fatal("binary file accepted as line evidence")
 	}
 	assertQuizSourceReadOnly(t, f, len(audit))
+}
+
+func TestQuizGeneratesFromLargePinnedPRWithoutEmbeddingDiff(t *testing.T) {
+	f := newQuestionFixture(t, "quiz-valid")
+	largeText := strings.Repeat("private large source line for repository investigation\n", 12000)
+	largeBlob := sourceGit(t, f.realGit, f.upstream, largeText, "hash-object", "-w", "--stdin")
+	tree := sourceGit(t, f.realGit, f.upstream, "100644 blob "+largeBlob+"\tsource.txt\n", "mktree")
+	head := sourceGit(t, f.realGit, f.upstream, "large quiz PR\n", "commit-tree", tree, "-p", f.head)
+	sourceGit(t, f.realGit, f.upstream, "", "update-ref", "refs/pull/31/head", head)
+	resolution := github.Resolution{PR: f.pr, State: github.Resolved, Base: &github.Base{Branch: "feat/go-rewrite", SHA: f.input.Revision.BaseSHA, Source: githubpr.GitHubBase}, HeadSHA: head}
+	snapshot, err := f.owner.cache.Fetch(context.Background(), resolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := f.owner.cache.Prepare(context.Background(), f.pr, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff, err := f.owner.cache.Diff(context.Background(), f.pr, prepared.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, _ := json.Marshal(diff)
+	if len(manifest) <= 512<<10 {
+		t.Fatal("native fixture is smaller than the old prompt cap")
+	}
+	admitted, err := f.service.GenerateQuiz(context.Background(), f.pr.ID, prepared.Revision, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if end := waitQuiz(t, f.owner.quizzes, admitted); end.State != quiz.Completed {
+		t.Fatalf("large quiz generation: %+v", end)
+	}
+	saved, err := f.owner.ReadQuiz(f.pr.ID)
+	if err != nil || saved.Version != 1 || saved.Revision != prepared.Revision || saved.Questions[0].Evidence[0].Selected[0].Text != "old literal" {
+		t.Fatalf("large pinned result: %v", err)
+	}
+	for _, question := range saved.Questions {
+		if question.Evidence[0].Surrounding != nil {
+			t.Fatal("large hunk was retained alongside selected evidence")
+		}
+	}
+	for _, entry := range nativeQuestionAudit(t, f.audit) {
+		if !strings.HasSuffix(entry.Path, "/prompt") {
+			continue
+		}
+		var input struct {
+			Text string `json:"text"`
+		}
+		var prompt map[string]json.RawMessage
+		if json.Unmarshal([]byte(entry.Body), &input) != nil || json.Unmarshal([]byte(input.Text), &prompt) != nil || len(prompt) != 3 || prompt["source"] != nil || prompt["revision"] == nil || prompt["prURL"] == nil || len(input.Text) >= quiz.MaxPromptBytes || strings.Contains(input.Text, "private large source") {
+			t.Fatal("large source leaked into prompt")
+		}
+	}
+	if quizPromptCount(t, f) != 1 || f.owner.questions != nil || f.owner.semantics != nil {
+		t.Fatal("quiz reused another runtime or replayed inference")
+	}
 }

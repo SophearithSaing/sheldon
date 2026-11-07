@@ -38,22 +38,22 @@ func semanticGit(directory string, args ...string) ([]byte, error) {
 	return result.Stdout, err
 }
 
-// semanticFixtureAnswer derives synthetic groups by inspecting real pinned Git, not an embedded diff manifest.
-func semanticFixtureAnswer(prompt, directory string) (string, bool) {
+// fixtureRanges inspects real pinned Git for explicit synthetic generation prompts, not embedded source.
+func fixtureRanges(prompt, directory, marker string) ([]map[string]any, bool) {
 	var input struct {
 		Instructions string            `json:"instructions"`
 		Revision     githubpr.Revision `json:"revision"`
 	}
-	if json.Unmarshal([]byte(prompt), &input) != nil || !strings.Contains(input.Instructions, "purpose-based groups") {
-		return "", false
+	if json.Unmarshal([]byte(prompt), &input) != nil || !strings.Contains(input.Instructions, marker) {
+		return nil, false
 	}
 	if input.Revision.Validate(input.Revision.PRID) != nil {
-		return `{"groups":[]}`, true
+		return nil, true
 	}
 	base, head := input.Revision.MergeBaseSHA, input.Revision.HeadSHA
 	manifest, err := semanticGit(directory, "--no-pager", "diff", "--no-ext-diff", "--no-textconv", "--name-status", "-z", "--find-renames=50%", base, head, "--", ".")
 	if err != nil {
-		return `{"groups":[]}`, true
+		return nil, true
 	}
 	paths := strings.Split(strings.TrimSuffix(string(manifest), "\x00"), "\x00")
 	ranges := []map[string]any{}
@@ -69,7 +69,7 @@ func semanticFixtureAnswer(prompt, directory string) (string, bool) {
 		}
 		patch, err := semanticGit(directory, "--no-pager", "diff", "--no-ext-diff", "--no-textconv", "--unified=3", "--find-renames=50%", base, head, "--", oldPath, newPath)
 		if err != nil {
-			return `{"groups":[]}`, true
+			return nil, true
 		}
 		old, next := 0, 0
 		for _, line := range strings.Split(string(patch), "\n") {
@@ -98,6 +98,15 @@ func semanticFixtureAnswer(prompt, directory string) (string, bool) {
 		if len(ranges) == 2 {
 			break
 		}
+	}
+	return ranges, true
+}
+
+// semanticFixtureAnswer derives synthetic groups by inspecting real pinned Git, not an embedded manifest.
+func semanticFixtureAnswer(prompt, directory string) (string, bool) {
+	ranges, matched := fixtureRanges(prompt, directory, "purpose-based groups")
+	if !matched {
+		return "", false
 	}
 	groups := []map[string]any{}
 	if len(ranges) > 0 {

@@ -155,7 +155,21 @@ export async function quizFlow(page: Page, context: BrowserContext, info: TestIn
     const dispatches = await prompts(fixture)
     expect(dispatches[0]!.pid).not.toBe(dispatches[1]!.pid)
     const nativeQuiz = JSON.parse(dispatches[1]!.body!) as { text: string }
-    for (const literal of [fixture.firstHead, fixture.mergeBase, 'before', 'after PR31', 'shared.txt']) expect(nativeQuiz.text).toContain(literal)
+    for (const literal of [fixture.firstHead, fixture.mergeBase]) expect(nativeQuiz.text).toContain(literal)
+    const compact = JSON.parse(nativeQuiz.text) as Record<string, unknown>
+    expect(Object.keys(compact).sort()).toEqual(['instructions', 'prURL', 'revision'])
+    expect(compact.revision).toEqual(diff.revision)
+    expect(compact.prURL).toBe('https://github.com/fixture/repo/pull/31')
+    expect(nativeQuiz.text.length).toBeLessThan(16384)
+    expect(nativeQuiz.text).not.toContain('after PR31')
+    const investigation = (await fixture.nativeAudit()).filter((entry): boolean => !!entry.semanticGit && entry.pid === dispatches[1]!.pid)
+    expect(investigation.length).toBeGreaterThanOrEqual(3)
+    for (const entry of investigation) { expect(entry.semanticGit).toContain(fixture.mergeBase); expect(entry.semanticGit).toContain(fixture.firstHead) }
+    const sessions = (await fixture.nativeAudit()).filter((entry): boolean => entry.method === 'POST' && entry.path === '/api/session')
+    for (const entry of sessions) {
+      const permissions = JSON.parse(entry.body!).permissions as { action: string; effect: string }[]
+      expect(permissions.some((rule): boolean => rule.action === 'shell' && rule.effect === 'allow')).toBe(entry.pid === dispatches[1]!.pid)
+    }
     expect(nativeQuiz.text).not.toContain(question.threadID)
     const tab = await context.newPage()
     await preserveResponseBodies(tab)
@@ -170,6 +184,7 @@ export async function quizFlow(page: Page, context: BrowserContext, info: TestIn
     const saved = JSON.parse(bytes.toString()) as PrivateQuiz
     expect(saved).toMatchObject({ schemaVersion: 1, version: 1, quizID: first.quizID, revisionID: diff.revisionID })
     expect(saved.questions).toHaveLength(5)
+    for (const question of saved.questions) for (const quote of question.evidence) { expect(quote.surrounding).toBeUndefined(); expect(quote.selected).toHaveLength(1) }
     expect(await readFile(threadPath)).toEqual(threads)
     const stableNative = (await fixture.nativeAudit()).length
     const stableGit = (await fixture.audit()).length

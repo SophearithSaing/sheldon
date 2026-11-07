@@ -34,7 +34,7 @@ var (
 
 // Service owns only its private child, local transport and temporary startup directory.
 type Service struct {
-	semantic   bool
+	repository bool
 	ctx        context.Context
 	cancel     context.CancelCauseFunc
 	child      *process.Process
@@ -61,13 +61,13 @@ func Start(ctx context.Context) (*Service, error) {
 	return start(ctx, false)
 }
 
-// StartSemantic starts a separately owned service with read-only Git/GitHub investigation permissions.
-func StartSemantic(ctx context.Context) (*Service, error) {
+// StartInvestigation starts a separately owned generation service with Git/GitHub read permissions.
+func StartInvestigation(ctx context.Context) (*Service, error) {
 	return start(ctx, true)
 }
 
 // start verifies the pinned installation and applies only this child's investigation profile.
-func start(ctx context.Context, semantic bool) (*Service, error) {
+func start(ctx context.Context, repository bool) (*Service, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func start(ctx context.Context, semantic bool) (*Service, error) {
 		return nil, ErrUnavailable
 	}
 	lifetime, cancel := context.WithCancelCause(ctx)
-	s := &Service{semantic: semantic, ctx: lifetime, cancel: cancel, directory: directory, feedDone: make(chan struct{}), listeners: make(map[string]*subscription)}
+	s := &Service{repository: repository, ctx: lifetime, cancel: cancel, directory: directory, feedDone: make(chan struct{}), listeners: make(map[string]*subscription)}
 	success := false
 	defer func() {
 		if !success {
@@ -100,10 +100,10 @@ func start(ctx context.Context, semantic bool) (*Service, error) {
 		return nil, ErrUnavailable
 	}
 	s.password = hex.EncodeToString(secret)
-	config, _ := json.Marshal(serviceConfig(semantic))
+	config, _ := json.Marshal(serviceConfig(repository))
 	env := []string{"OPENCODE_PASSWORD=" + s.password, "OPENCODE_DISABLE_AUTOUPDATE=1", "OPENCODE_CONFIG_PROJECT_DISABLE=1", "OPENCODE_DISABLE_CLAUDE_CODE=1", "OPENCODE_CONFIG_CONTENT=" + string(config)}
 	var unset []string
-	if semantic {
+	if repository {
 		unset = []string{"GIT_CONFIG_PARAMETERS"}
 		env = append(env, "GIT_NO_REPLACE_OBJECTS=1", "GIT_TERMINAL_PROMPT=0", "GH_PROMPT_DISABLED=1", "GIT_EXTERNAL_DIFF=", "GIT_PAGER=", "GH_PAGER=", "PAGER=", "GIT_CONFIG_COUNT=4",
 			"GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false", "GIT_CONFIG_KEY_1=core.hooksPath", "GIT_CONFIG_VALUE_1="+directory,

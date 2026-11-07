@@ -233,6 +233,60 @@ test('checked parser rejects foreign identities, inconsistent keys and invented 
   expect(result.every((valid: boolean): boolean => valid)).toBe(true)
 })
 
+test('compact evidence shows only supporting lines from a huge hunk and navigates to the original diff', async ({ page }, info): Promise<void> => {
+  const pr = await registered(page, 950)
+  const f = fixture(pr)
+  const file = f.source.diff!.files[0]!
+  const hunk = file.hunks[0]!
+  hunk.old.start = 0; hunk.old.count = 0; hunk.new.start = 1; hunk.new.count = 2000
+  hunk.lines = Array.from({ length: 2000 }, (_, i): typeof hunk.lines[number] => ({ id: digest(`quiz-support-${i}`), sign: '+', newLine: i+1, text: `Original supporting line ${i+1}` }))
+  f.checked.evidence = [{ anchor: { fileID: file.id, hunkID: hunk.id, side: 'new', start: 1001, end: 1003 }, oldPath: file.oldPath, newPath: file.newPath, selected: hunk.lines.slice(1000, 1003) }]
+  await page.route('**/source', async (route): Promise<void> => { await route.fulfill({ json: f.source }) })
+  await page.route(`**/api/reviews/${pr.id}/quiz`, async (route): Promise<void> => { await route.fulfill({ json: f.read }) })
+  await page.route(`**/api/reviews/${pr.id}/quiz/*/questions/q1/check`, async (route): Promise<void> => { await route.fulfill({ json: f.checked }) })
+  await page.getByRole('button', { name: 'Load pinned source', exact: true }).click()
+  await enter(page)
+  await page.getByRole('radio').first().check()
+  await page.getByRole('button', { name: 'Check answer', exact: true }).click()
+  await expect(page.locator('.quiz-evidence')).toContainText('new 1001–1003')
+  await expect(page.locator('.quiz-evidence')).toContainText('Original supporting line 1001')
+  await expect(page.locator('.quiz-evidence')).toContainText('Original supporting line 1003')
+  await expect(page.locator('.quiz-evidence')).not.toContainText('Original supporting line 1000')
+  await expect(page.locator('.quiz-evidence')).not.toContainText('Original supporting line 1004')
+  await page.screenshot({ path: info.outputPath('quiz-compact-evidence.png') })
+  await page.getByRole('button', { name: 'View in original diff', exact: true }).click()
+  await expect(page.getByRole('heading', { name: file.newPath!, exact: true })).toBeVisible()
+  await expect(page.getByText('Quiz evidence: original new lines 1001–1003.', { exact: false })).toBeVisible()
+})
+
+test('compact evidence parsing rejects malformed or oversized supporting ranges', async ({ page }): Promise<void> => {
+  const pr = await registered(page, 951)
+  const f = fixture(pr)
+  const rejected = await page.evaluate(async (f): Promise<boolean[]> => {
+    const modulePath = '/src/runtime/quiz.ts'
+    const { parseQuizRead, parseQuizChecked } = await import(modulePath)
+    const read = await parseQuizRead(f.read, f.read.prID)
+    const original = f.checked.evidence[0]!
+    const compact = { anchor: original.anchor, oldPath: original.oldPath, newPath: original.newPath, selected: original.selected }
+    const parsed = parseQuizChecked({ ...f.checked, evidence: [compact] }, read, 'q1', 'a')
+    if (parsed.evidence[0].surrounding !== undefined) throw new Error('Compact evidence invented context.')
+    const invalid = [
+      { ...compact, selected: [] },
+      { ...compact, selected: [{ ...compact.selected[0], newLine: 2 }] },
+      { ...compact, selected: [{ ...compact.selected[0], sign: '-' }] },
+      { ...compact, selected: [{ ...compact.selected[0], oldLine: 1 }] },
+      { ...compact, selected: [{ ...compact.selected[0], oldLine: null }] },
+      { ...compact, selected: [{ ...compact.selected[0], text: 'x'.repeat(8192) }] },
+      { ...compact, selected: [{ ...compact.selected[0], text: '\ud800' }] },
+      { ...compact, selected: [{ ...compact.selected[0], id: 'foreign' }] },
+      { ...compact, selected: [{ ...compact.selected[0], noNewline: 'true' }] },
+      { ...compact, surrounding: {} },
+    ]
+    return invalid.map((quote): boolean => { try { parseQuizChecked({ ...f.checked, evidence: [quote] }, read, 'q1', 'a'); return false } catch { return true } })
+  }, f)
+  expect(rejected.every((value: boolean): boolean => value)).toBe(true)
+})
+
 test('a failed check retains selection and a successful replacement resets only quiz page-memory answers', async ({ page }): Promise<void> => {
   const pr = await registered(page, 948)
   const f = fixture(pr)

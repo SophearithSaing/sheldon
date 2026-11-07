@@ -155,9 +155,9 @@ func TestOwnedServiceAndRestrictedSession(t *testing.T) {
 	}
 }
 
-func TestSemanticServiceOwnsSeparateVerifiedPermissions(t *testing.T) {
+func TestInvestigationServiceOwnsSeparateVerifiedPermissions(t *testing.T) {
 	path := fixture(t, "")
-	s, err := StartSemantic(context.Background())
+	s, err := StartInvestigation(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,13 +199,13 @@ func TestSemanticServiceOwnsSeparateVerifiedPermissions(t *testing.T) {
 		t.Fatal("semantic allow/deny probes were not executed")
 	}
 	if len(serviceRules(false)) != len(investigationRules()) || len(serviceConfig(false)["policies"].([]rule)) != len(investigationConfig()["policies"].([]rule)) {
-		t.Fatal("question/quiz permissions changed")
+		t.Fatal("conversation permissions changed")
 	}
 }
 
-func TestSemanticPermissionMismatchFailsClosed(t *testing.T) {
+func TestInvestigationPermissionMismatchFailsClosed(t *testing.T) {
 	fixture(t, "permission-mismatch")
-	s, err := StartSemantic(context.Background())
+	s, err := StartInvestigation(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
