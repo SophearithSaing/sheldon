@@ -7,6 +7,7 @@ import QuestionConversation from './QuestionConversation.vue'
 import SavedQuestions from './SavedQuestions.vue'
 import QuizView from './QuizView.vue'
 import SemanticView from './SemanticView.vue'
+import { semanticLines, type SemanticAnchor } from './semantic'
 import type { QuizEvidence } from './quiz'
 import { useConversations } from './conversations'
 import UiButton from '../components/ui/UiButton.vue'
@@ -29,6 +30,7 @@ const search = ref('')
 const branch = ref('')
 const sourceHeading = ref<HTMLElement>()
 const sourcePane = ref<HTMLElement>()
+const sourceQuestions = ref<InstanceType<typeof SourceQuestions>>()
 const workspace = ref<InstanceType<typeof WorkspaceShell>>()
 const drafting = ref(false)
 const conversationOpen = ref(false)
@@ -255,6 +257,25 @@ async function quizSource(evidence: QuizEvidence, revisionID: string): Promise<v
   if (diff.value?.revisionID === revisionID && view.value === 'files') sourceHeading.value?.focus()
 }
 
+/** Navigates only matching original semantic source, optionally opening an explicit question draft.
+ * @param anchor Selected original side/range.
+ * @param revisionID Grouping's original comparison.
+ * @param compose Whether the reader explicitly requested a question.
+ */
+async function semanticSource(anchor: SemanticAnchor, revisionID: string, compose: boolean): Promise<void> {
+  if (drafting.value || pending.value || diff.value?.revisionID !== revisionID) return
+  try { semanticLines(diff.value, anchor) } catch { return }
+  const client = props.client
+  selected.value = anchor.fileID
+  changeView('files')
+  const currentIntent = openEpoch
+  notice.value = `Semantic source: original ${anchor.side} lines ${anchor.start}–${anchor.end}. ${compose ? 'Draft only; Send question is still explicit.' : 'No draft or thread was created.'}`
+  await nextTick()
+  if (client !== props.client || diff.value?.revisionID !== revisionID || view.value !== 'files' || currentIntent !== openEpoch) return
+  await sourceQuestions.value?.selectRange({ kind: 'lines', ...anchor }, compose)
+  if (!compose && currentIntent === openEpoch) sourceHeading.value?.focus()
+}
+
 /**
  * Opens an exact saved thread only if its initiating selection and connection are still current.
  * @param threadID Requested saved or local thread.
@@ -320,7 +341,7 @@ onUnmounted(reset)
       </template>
       <template #default>
         <QuizView v-if="quizOpened" v-show="view === 'quiz'" :pr-i-d="reviewId" :client="client" :active="view === 'quiz'" :diff="diff" :drafting="drafting" @source="quizSource" />
-        <SemanticView v-if="semanticOpened" v-show="view === 'semantic'" :pr-i-d="reviewId" :client="client" :active="view === 'semantic'" :diff="diff" :drafting="drafting" />
+        <SemanticView v-if="semanticOpened" v-show="view === 'semantic'" :pr-i-d="reviewId" :client="client" :active="view === 'semantic'" :diff="diff" :drafting="drafting || pending" @source="semanticSource" />
         <SavedQuestions v-show="view === 'questions'" :list="savedList" :threads="threads" :pending="historyPending" :error="historyError" :opening="opening" :selected="selectedID" :drafting="drafting" @refresh="conversations.history.refreshList(reviewId)" @open="openThread" />
         <section v-show="view === 'files'" id="review-content" ref="sourcePane" class="source-pane" tabindex="-1" :aria-busy="pending && !diff" aria-label="Pinned PR source">
           <div v-if="diff" class="refresh-controls">
@@ -348,7 +369,7 @@ onUnmounted(reset)
             <div class="revision-bar"><p>{{ files.length }} changed files · +{{ counts.added }} / −{{ counts.removed }} text lines</p><details><summary>Pinned revision {{ diff.revisionID.slice(0, 8) }}</summary><dl><dt>Base branch / tip</dt><dd>{{ diff.revision.baseBranch }} / {{ diff.revision.baseSHA }}</dd><dt>Merge base</dt><dd>{{ diff.revision.mergeBaseSHA }}</dd><dt>Head</dt><dd>{{ diff.revision.headSHA }}</dd><dt>Base selection</dt><dd>{{ diff.revision.baseSource === 'github' ? 'GitHub metadata' : 'Explicit Git-only selection; target unverified by GitHub' }}</dd><dt>Revision</dt><dd>{{ diff.revisionID }}</dd></dl></details></div>
             <template v-if="active">
               <header class="file-header"><h2 ref="sourceHeading" tabindex="-1">{{ active.newPath ?? active.oldPath }}</h2><div class="file-tools"><span>{{ active.status }} · {{ active.kind }} · +{{ currentCounts.added }} / −{{ currentCounts.removed }}</span><span>Unified</span><UiButton variant="quiet" disabled title="Split diff is not implemented">Split — unavailable</UiButton></div><p v-if="active.oldPath && active.newPath && active.oldPath !== active.newPath">Renamed from {{ active.oldPath }}</p><p v-if="active.oldMode !== active.newMode">Mode {{ active.oldMode }} → {{ active.newMode }}</p></header>
-              <SourceQuestions v-if="active.kind === 'text' && client" :key="diff.revisionID" :diff="diff" :file="active" :lines="lines" :client="client" :source-pending="pending" :markers="activeMarkers" :busy-reason="revisionBusy" @guard="guardDraft" @sending="initialSending = $event" @admitted="admitted" @open="openAnswer" />
+              <SourceQuestions v-if="active.kind === 'text' && client" ref="sourceQuestions" :key="diff.revisionID" :diff="diff" :file="active" :lines="lines" :client="client" :source-pending="pending" :markers="activeMarkers" :busy-reason="revisionBusy" @guard="guardDraft" @sending="initialSending = $event" @admitted="admitted" @open="openAnswer" />
               <div v-else class="source-notice" role="status"><h3>{{ active.kind }} change</h3><p>{{ active.reason ?? 'This change has no unified text lines. No source lines are invented.' }}</p><p>Line questions are unavailable for non-text changes.</p><p v-if="active.kind === 'submodule'">Submodules are not initialized.</p><p>Old object: {{ active.oldObject }}</p><p>New object: {{ active.newObject }}</p></div>
             </template>
             <div v-else class="source-notice" role="status"><h2>No changes in this comparison</h2><p>The pinned merge base and head have an empty diff.</p></div>

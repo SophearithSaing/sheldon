@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/SophearithSaing/sheldon/internal/githubpr"
+	"github.com/SophearithSaing/sheldon/internal/question"
 	"github.com/SophearithSaing/sheldon/internal/semantic"
 )
 
@@ -135,5 +136,56 @@ func TestSemanticBusyAndTargetedCancellation(t *testing.T) {
 	}
 	if quizPromptCount(t, f) != 1 || store.version != 0 {
 		t.Fatal("cancel replayed or saved")
+	}
+}
+
+func TestSemanticSelectedQuestionReusesOriginalSharedSession(t *testing.T) {
+	f := newQuestionFixture(t, "semantic-valid")
+	first, err := f.service.BeginQuestion(context.Background(), f.pr.ID, f.input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishNativeTurn(t, f, first)
+	before, err := f.owner.ReadQuestions(f.pr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := f.service.GenerateSemantic(context.Background(), f.pr.ID, f.input.Revision, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if end := waitSemantic(t, f.owner.semantics, a); end.State != "completed" {
+		t.Fatalf("generation: %+v", end)
+	}
+	saved, err := f.owner.ReadSemantic(f.pr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := saved.Groups[0].Ranges[0]
+	after, err := f.owner.ReadQuestions(f.pr.ID)
+	if err != nil || after.Version != before.Version {
+		t.Fatal("group generation mutated question history")
+	}
+	input := question.InitialRequest{Revision: saved.Diff.Revision, Anchor: question.Anchor{Kind: "lines", FileID: anchor.FileID, HunkID: anchor.HunkID, Side: anchor.Side, Start: anchor.Start, End: anchor.End}, Question: "Explain the grouped selection"}
+	turn, err := f.service.BeginQuestion(context.Background(), f.pr.ID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishNativeTurn(t, f, turn)
+	history, err := f.owner.ReadQuestions(f.pr.ID)
+	if err != nil || len(history.Bindings) != 1 || len(history.Threads) != 2 {
+		t.Fatalf("question session/threads: %v", err)
+	}
+	if history.Threads[1].Context.Anchor != input.Anchor || history.Threads[1].Context.Selected[0].Text != "old literal" {
+		t.Fatal("semantic question lost original old-side context")
+	}
+	creates := 0
+	for _, entry := range nativeQuestionAudit(t, f.audit) {
+		if entry.Method == "POST" && entry.Path == "/api/session" {
+			creates++
+		}
+	}
+	if creates != 2 || quizPromptCount(t, f) != 3 {
+		t.Fatalf("expected separate generation and one shared question session, creates=%d", creates)
 	}
 }

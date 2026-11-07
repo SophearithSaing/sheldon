@@ -49,6 +49,8 @@ After reload/reconnect/restart, open **Quiz** again: the saved set reopens unche
 
 Open **Semantic review** to read saved groups without source loading or inference. With pinned source loaded, **Generate semantic review** explicitly organizes changed ranges across files in separate restricted native context. Regeneration requires confirmation and retains the previous complete result on failure/cancellation. Groups reference verified original code; ungrouped changed lines and non-text changes remain visible, not hidden by a touched-file/hunk count. This is an agent-generated organizing hypothesis, never approval or proof of understanding. Complete results save privately in `reviews/<id>/semantic-review.json`; generation status and reading position are memory-only. Leaving stops observation, not accepted work. After uncertain delivery/saving, explicitly refresh saved state; no automatic resend or shutdown save/retry occurs. Source refresh labels older groups without retargeting them.
 
+With the matching original source loaded, **View in original diff** selects that excerpt's exact file/range. Select gutter lines in an excerpt, then **Ask about selected range** to open the existing inline composer in Files changed; only **Send question** dispatches. The question retains its original single-range anchor and uses the shared question session for that PR revision, not the generation session. A pinned draft/source request blocks this navigation rather than discarding or retargeting it. Old/missing source disables navigation/asking but never erases saved quotes. Whole-group multi-range questions are not implemented.
+
 ## Release
 
 Build once, then run one binary (no Node needed at runtime; Ctrl+C stops it):

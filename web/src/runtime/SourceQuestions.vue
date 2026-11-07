@@ -69,8 +69,15 @@ function selectLine(side: 'base' | 'head', line: number, extend: boolean): void 
  * @param event Ask activation used for focus recovery.
  */
 async function ask(event: MouseEvent): Promise<void> {
+  await openDraft(event.currentTarget as HTMLElement)
+}
+
+/** Opens an explicit draft through either source or semantic selection, never submitting it.
+ * @param origin Surviving control used for focus restoration.
+ */
+async function openDraft(origin: HTMLElement | null): Promise<void> {
   if (props.sourcePending || pending.value) return
-  trigger = event.currentTarget as HTMLElement
+  trigger = origin
   if (!draft.value && anchor.value) draft.value = { revision: { ...props.diff.revision }, anchor: { ...anchor.value }, question: '' }
   if (!draft.value) return
   opened.value = true
@@ -78,6 +85,22 @@ async function ask(event: MouseEvent): Promise<void> {
   await nextTick()
   root.value?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
 }
+
+/** Selects a validated original range requested from the semantic view.
+ * @param target Exact original single-range anchor.
+ * @param compose Whether explicit Ask should open the existing inline composer.
+ */
+async function selectRange(target: QuestionAnchor, compose: boolean): Promise<void> {
+  if (draft.value || props.sourcePending || pending.value || target.fileID !== props.file.id || target.kind !== 'lines') return
+  const hunk = props.file.hunks.find((item): boolean => item.id === target.hunkID)
+  const selected = hunk?.lines.filter((line): boolean => { const n = target.side === 'old' ? line.oldLine ?? 0 : line.newLine ?? 0; return n >= target.start && n <= target.end })
+  if (!selected || selected.length !== target.end-target.start+1 || !selected.some((line): boolean => line.sign === (target.side === 'old' ? '-' : '+'))) return
+  anchor.value = { ...target }; pivot = target.start; message.value = ''
+  await nextTick()
+  root.value?.querySelector<HTMLElement>(`[data-line="${target.start}"][data-side="${target.side === 'old' ? 'base' : 'head'}"]`)?.scrollIntoView({ block: 'center' })
+  if (compose) await openDraft(root.value?.querySelector<HTMLElement>('[data-ask]') ?? null)
+}
+defineExpose({ selectRange })
 
 /**
  * Selects a whole counted unified hunk without guessing a file-wide anchor.

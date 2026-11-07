@@ -2,12 +2,14 @@
 import { computed, onUnmounted, ref, shallowRef, watch } from 'vue'
 import UiButton from '../components/ui/UiButton.vue'
 import SourceDiff from '../components/SourceDiff.vue'
-import type { DiffLine } from '../components/diff'
+import type { DiffLine, LineRange } from '../components/diff'
 import type { RuntimeClient } from './client'
 import type { PinnedDiff, SourceFile } from './source'
 import { semanticActive, semanticLines, semanticUngrouped, type SemanticRead, type SemanticStatus, type SemanticAnchor, type SemanticGroup } from './semantic'
 
 const props = defineProps<{ prID: string; client: RuntimeClient | null; active: boolean; diff?: PinnedDiff; drafting: boolean }>()
+const emit = defineEmits<{ source: [anchor: SemanticAnchor, revisionID: string, compose: boolean] }>()
+const selection = shallowRef<SemanticAnchor | null>(null)
 const saved = shallowRef<SemanticRead>()
 const status = shallowRef<SemanticStatus | null>(null)
 const selected = ref('g1')
@@ -37,7 +39,7 @@ function stopPolling(): void { clearTimeout(timer); timer = undefined; pollReque
 function reset(): void {
   epoch++; stopPolling(); readRequest?.abort(); readRequest = undefined
   for (const request of mutations) request.abort()
-  mutations.clear(); saved.value = undefined; status.value = null; selected.value = 'g1'
+  mutations.clear(); saved.value = undefined; status.value = null; selected.value = 'g1'; selection.value = null
   reading.value = false; sending.value = false; cancelling.value = false; confirming.value = false; needsRead.value = false; error.value = ''
 }
 
@@ -131,6 +133,48 @@ function lines(anchor: SemanticAnchor): DiffLine[] { return review.value ? seman
  */
 function path(anchor: SemanticAnchor): string { const f = review.value?.diff.files.find((file): boolean => file.id === anchor.fileID); return (anchor.side === 'old' ? f?.oldPath : f?.newPath) ?? f?.oldPath ?? 'Original source' }
 
+/** Checks original displayed source identity and quote equality before navigation/asking.
+ * @param anchor Original selected range.
+ * @returns Whether navigation can safely use already-loaded source.
+ */
+function canNavigate(anchor: SemanticAnchor): boolean {
+  if (props.drafting || !review.value || !props.diff || props.diff.revisionID !== review.value.diff.revisionID) return false
+  try { return JSON.stringify(semanticLines(props.diff, anchor)) === JSON.stringify(semanticLines(review.value.diff, anchor)) } catch { return false }
+}
+
+/** Selects only coordinates inside one visible excerpt without submitting or opening a draft.
+ * @param excerpt Original excerpt boundaries.
+ * @param side Display side.
+ * @param line Explicitly selected coordinate.
+ * @param extend Whether to extend the current selection.
+ */
+function selectLine(excerpt: SemanticAnchor, side: 'base' | 'head', line: number, extend: boolean): void {
+  if (side !== (excerpt.side === 'old' ? 'base' : 'head') || line < excerpt.start || line > excerpt.end) return
+  const previous = selection.value
+  const start = extend && previous?.fileID === excerpt.fileID && previous.hunkID === excerpt.hunkID && previous.side === excerpt.side ? Math.min(previous.start, line) : line
+  const end = extend && previous?.fileID === excerpt.fileID && previous.hunkID === excerpt.hunkID && previous.side === excerpt.side ? Math.max(previous.end, line) : line
+  if (start < excerpt.start || end > excerpt.end) return
+  selection.value = { ...excerpt, start, end }
+}
+
+/** Resolves the current selection only when it remains inside this original excerpt.
+ * @param excerpt Original excerpt.
+ * @returns Explicit selection or the full original range.
+ */
+function target(excerpt: SemanticAnchor): SemanticAnchor { const s = selection.value; return s?.fileID === excerpt.fileID && s.hunkID === excerpt.hunkID && s.side === excerpt.side && s.start >= excerpt.start && s.end <= excerpt.end ? s : excerpt }
+
+/** Adapts an excerpt's optional selection to the shared gutter renderer.
+ * @param excerpt Original excerpt.
+ * @returns Selected visual range, or null.
+ */
+function selectedRange(excerpt: SemanticAnchor): LineRange | null { const s = selection.value; return s && target(excerpt) === s ? { side: s.side === 'old' ? 'base' : 'head', start: s.start, end: s.end } : null }
+
+/** Opens original source or an explicit existing-flow draft, never dispatching a question.
+ * @param excerpt Original excerpt.
+ * @param compose Whether the reader explicitly requested a question.
+ */
+function navigate(excerpt: SemanticAnchor, compose: boolean): void { const a = target(excerpt); if (review.value && canNavigate(a)) emit('source', { ...a }, review.value.diff.revisionID, compose) }
+
 watch((): RuntimeClient | null => props.client, reset, { flush: 'sync' })
 watch((): string => props.prID, reset, { flush: 'sync' })
 watch((): boolean => props.active, (active: boolean): void => { if (active) void refresh(); else { stopPolling(); readRequest?.abort(); readRequest = undefined; reading.value = false } }, { immediate: true })
@@ -156,7 +200,13 @@ onUnmounted(reset)
       <nav class="semantic-groups" aria-label="Semantic groups"><UiButton v-for="item in review.groups" :key="item.groupID" variant="quiet" :aria-current="selected === item.groupID ? 'page' : undefined" @click="selected = item.groupID">{{ item.title }} · {{ item.ranges.length }} ranges</UiButton><UiButton variant="quiet" :aria-current="selected === 'ungrouped' ? 'page' : undefined" @click="selected = 'ungrouped'">Ungrouped changes · {{ ungrouped.length }} changed lines</UiButton><p>{{ unsupported.length }} unsupported/non-text changes remain in Files changed. Counts describe source inventory, not semantic certainty.</p></nav>
       <section class="semantic-excerpts" tabindex="0" aria-label="Grouped source excerpts">
         <h3>{{ group?.title ?? 'Ungrouped changes' }}</h3><p v-if="group">{{ group.explanation }}</p><p v-if="!current.length">No ungrouped text changes.</p>
-        <article v-for="(anchor, index) in current" :key="`${anchor.fileID}-${anchor.hunkID}-${anchor.side}-${anchor.start}`" class="semantic-excerpt" :aria-label="`${path(anchor)} ${anchor.side} lines ${anchor.start}–${anchor.end}`"><h4>{{ path(anchor) }} · {{ anchor.side === 'old' ? 'merge base' : 'head' }} L{{ anchor.start }}–{{ anchor.end }}</h4><p>Excerpt {{ index + 1 }} · original revision {{ review.diff.revisionID.slice(0, 8) }}. Separate ranges are not contiguous code.</p><SourceDiff :lines="lines(anchor)" :label="path(anchor)" :selection="null" :highlight="false" :selectable="false" real /></article>
+        <article v-for="(anchor, index) in current" :key="`${anchor.fileID}-${anchor.hunkID}-${anchor.side}-${anchor.start}`" class="semantic-excerpt" :aria-label="`${path(anchor)} ${anchor.side} lines ${anchor.start}–${anchor.end}`">
+          <h4>{{ path(anchor) }} · {{ anchor.side === 'old' ? 'merge base' : 'head' }} L{{ anchor.start }}–{{ anchor.end }}</h4>
+          <p>Excerpt {{ index + 1 }} · original revision {{ review.diff.revisionID.slice(0, 8) }}. Separate ranges are not contiguous code.</p>
+          <SourceDiff :lines="lines(anchor)" :label="path(anchor)" :selection="selectedRange(anchor)" :highlight="false" :selectable="canNavigate(anchor)" real @select="(side, line, extend): void => selectLine(anchor, side, line, extend)" />
+          <div class="semantic-actions"><UiButton variant="quiet" :disabled="!canNavigate(target(anchor))" @click="navigate(anchor, false)">View in original diff</UiButton><UiButton variant="quiet" :disabled="!canNavigate(target(anchor))" @click="navigate(anchor, true)">Ask about selected range</UiButton></div>
+          <p v-if="!canNavigate(anchor)">Original matching source is unavailable, or a pinned draft/source request needs attention. Saved quotes do not authorize newer source.</p>
+        </article>
         <p v-for="file in unsupported" :key="file.id">{{ file.newPath ?? file.oldPath }} · {{ file.kind }} — available in the ordinary file view; no invented line ranges.</p>
       </section>
     </div>
