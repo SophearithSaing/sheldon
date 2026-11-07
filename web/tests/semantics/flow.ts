@@ -70,13 +70,14 @@ export async function semanticFlow(page: Page, context: BrowserContext, info: Te
     expect(instructions.revision).toEqual(diff.revision)
     expect(instructions.prURL).toBe('https://github.com/fixture/repo/pull/31')
     expect(prompt.length).toBeLessThan(16384)
-    const investigation = (await fixture.nativeAudit()).filter((entry): boolean => !!entry.semanticGit)
+    const investigation = (await fixture.nativeAudit()).filter((entry): boolean => !!entry.semanticGit && entry.pid === dispatched.pid)
     expect(investigation.length).toBeGreaterThanOrEqual(3)
     for (const entry of investigation) { expect(entry.pid).toBe(dispatched.pid); expect(entry.semanticGit).toContain(diff.revision.mergeBaseSHA); expect(entry.semanticGit).toContain(diff.revision.headSHA) }
     const sessionCreates = (await fixture.nativeAudit()).filter((entry): boolean => entry.method === 'POST' && entry.path === '/api/session')
+    const initialQuestion = (await fixture.nativeAudit()).find((entry): boolean => entry.method === 'POST' && !!entry.path?.endsWith('/prompt'))!
     for (const entry of sessionCreates) {
       const permissions = JSON.parse(entry.body!).permissions as { action: string; effect: string }[]
-      expect(permissions.some((rule): boolean => rule.action === 'shell' && rule.effect === 'allow')).toBe(entry.pid === dispatched.pid)
+      expect(permissions.some((rule): boolean => rule.action === 'shell' && rule.effect === 'allow')).toBe(entry.pid !== initialQuestion.pid)
     }
     const tab = await context.newPage(); await preserveResponseBodies(tab); await tab.goto(await fixture.open('https://github.com/fixture/repo/pull/31')); expect((await enter(tab)).generation?.generationID).toBe(first.generationID)
     const busy = await tab.request.post(base + '/semantic-review/generations', { headers, data: { revision: diff.revision, expectedVersion: '0' } }); expect(busy.status()).toBe(409); expect(await prompts(fixture)).toHaveLength(1)

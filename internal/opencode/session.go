@@ -32,9 +32,9 @@ func investigationConfig() map[string]any {
 	}
 }
 
-// semanticShellRules allow only investigation command families, excluding executable and write options.
+// repositoryShellRules allow only investigation command families, excluding executable and write options.
 // Native shell scanning is best-effort and does not establish filesystem or process confinement.
-func semanticShellRules() []rule {
+func repositoryShellRules() []rule {
 	rules := []rule{}
 	for _, command := range []string{
 		"git --no-pager diff --no-ext-diff --no-textconv *",
@@ -53,21 +53,21 @@ func semanticShellRules() []rule {
 	return rules
 }
 
-// serviceRules keeps semantic command access out of question and quiz sessions.
-func serviceRules(semantic bool) []rule {
+// serviceRules keeps repository command access out of conversation sessions.
+func serviceRules(repository bool) []rule {
 	rules := investigationRules()
-	if semantic {
-		rules = append(rules, semanticShellRules()...)
+	if repository {
+		rules = append(rules, repositoryShellRules()...)
 	}
 	return rules
 }
 
-// serviceConfig grants semantic commands through both session permissions and startup hard policies.
-func serviceConfig(semantic bool) map[string]any {
+// serviceConfig grants investigation commands through session permissions and startup hard policies.
+func serviceConfig(repository bool) map[string]any {
 	config := investigationConfig()
-	if semantic {
+	if repository {
 		policies := config["policies"].([]rule)
-		for _, permission := range semanticShellRules() {
+		for _, permission := range repositoryShellRules() {
 			policies = append(policies, rule{"tool.use", "shell:" + permission.Resource, permission.Effect})
 		}
 		config["policies"] = policies
@@ -132,14 +132,14 @@ func (s *Service) CreateSession(ctx context.Context, directory string) (*Session
 	var result struct {
 		Data nativeSession `json:"data"`
 	}
-	if err := s.call(ctx, "POST", "/api/session", map[string]any{"title": "Sheldon pinned-source investigation", "agent": "build", "location": map[string]string{"directory": directory}, "permissions": serviceRules(s.semantic), "model": selected.Data}, &result); err != nil {
+	if err := s.call(ctx, "POST", "/api/session", map[string]any{"title": "Sheldon pinned-source investigation", "agent": "build", "location": map[string]string{"directory": directory}, "permissions": serviceRules(s.repository), "model": selected.Data}, &result); err != nil {
 		return nil, err
 	}
 	expectedModel := selected.Data
 	if expectedModel.Variant == "" && result.Data.Model.Variant == "default" {
 		expectedModel.Variant = "default"
 	}
-	if !validNativeID(result.Data.ID) || result.Data.Location.Directory != directory || result.Data.Model != expectedModel || !slices.Equal(result.Data.Permissions, serviceRules(s.semantic)) {
+	if !validNativeID(result.Data.ID) || result.Data.Location.Directory != directory || result.Data.Model != expectedModel || !slices.Equal(result.Data.Permissions, serviceRules(s.repository)) {
 		s.cancel(ErrRestricted)
 		return nil, ErrRestricted
 	}
@@ -172,8 +172,8 @@ func (s *Service) verifyPermissions(ctx context.Context, session *Session) error
 		{"edit", "*", "deny"}, {"shell", "*", "deny"}, {"execute", "*", "deny"}, {"subagent", "*", "deny"}, {"skill", "*", "deny"},
 		{"question", "*", "deny"}, {"webfetch", "*", "deny"}, {"websearch", "*", "deny"}, {"unknown-plugin-action", "*", "deny"},
 	}
-	if s.semantic {
-		for _, permission := range semanticShellRules() {
+	if s.repository {
+		for _, permission := range repositoryShellRules() {
 			if permission.Effect == "allow" {
 				probes = append(probes, rule{"shell", strings.TrimSuffix(permission.Resource, "*") + "HEAD", "allow"})
 			}
@@ -211,7 +211,7 @@ func (s *Service) ValidateSession(ctx context.Context, session *Session) error {
 	if err := s.call(ctx, "GET", "/api/session/"+url.PathEscape(session.info.ID), nil, &result); err != nil {
 		return err
 	}
-	if result.Data.ID != session.info.ID || result.Data.Location != session.info.Location || result.Data.Model != session.info.Model || !slices.Equal(result.Data.Permissions, serviceRules(s.semantic)) {
+	if result.Data.ID != session.info.ID || result.Data.Location != session.info.Location || result.Data.Model != session.info.Model || !slices.Equal(result.Data.Permissions, serviceRules(s.repository)) {
 		s.cancel(ErrRestricted)
 		return ErrRestricted
 	}

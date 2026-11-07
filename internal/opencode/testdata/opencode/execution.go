@@ -221,7 +221,7 @@ func (f *executionFixture) answer(session, user, assistant, prompt, directory st
 	f.event("evt_reasoning_"+strconv.Itoa(n), "session.reasoning.delta", session, assistant, "DO NOT DISPLAY HIDDEN REASONING")
 	text := "Synthetic fixture answer <script>literal</script>."
 	chunks := []string{"Synthetic fixture ", "answer <script>literal</script>."}
-	quizText, isQuiz := quizFixtureAnswer(prompt)
+	quizText, isQuiz := quizFixtureAnswer(prompt, directory)
 	semanticText, isSemantic := semanticFixtureAnswer(prompt, directory)
 	if isSemantic {
 		quizText, isQuiz = semanticText, true
@@ -319,49 +319,20 @@ func (f *executionFixture) answer(session, user, assistant, prompt, directory st
 	f.terminal(session, user, assistant, text, outcome, n)
 }
 
-// quizFixtureAnswer derives synthetic structured references from the supplied test prompt only.
-func quizFixtureAnswer(prompt string) (string, bool) {
-	var input struct {
-		Instructions string `json:"instructions"`
-		Source       struct {
-			Complete bool `json:"complete"`
-			Files    []struct {
-				ID, Kind string
-				Hunks    []struct {
-					ID    string
-					Lines []struct {
-						Sign             string
-						OldLine, NewLine int
-					}
-				}
-			}
-		} `json:"source"`
-	}
-	if json.Unmarshal([]byte(prompt), &input) != nil || input.Instructions == "" || !input.Source.Complete {
+// quizFixtureAnswer derives synthetic evidence from real pinned Git, never live provider inference.
+func quizFixtureAnswer(prompt, directory string) (string, bool) {
+	ranges, matched := fixtureRanges(prompt, directory, "five single-answer")
+	if !matched {
 		return "", false
 	}
-	for _, file := range input.Source.Files {
-		if file.Kind != "text" {
-			continue
-		}
-		for _, hunk := range file.Hunks {
-			for _, line := range hunk.Lines {
-				side, coordinate := "new", line.NewLine
-				if line.Sign == "-" {
-					side, coordinate = "old", line.OldLine
-				} else if line.Sign != "+" {
-					continue
-				}
-				questions := []map[string]any{}
-				for i := range 5 {
-					questions = append(questions, map[string]any{"prompt": fmt.Sprintf("Synthetic quiz boundary %d?", i+1), "choices": []string{"First", "Second", "Third", "Fourth"}, "correctChoiceID": "b", "explanation": "Synthetic explanation, not live inference.", "evidence": []map[string]any{{"fileID": file.ID, "hunkID": hunk.ID, "side": side, "start": coordinate, "end": coordinate}}})
-				}
-				data, _ := json.Marshal(map[string]any{"questions": questions})
-				return string(data), true
-			}
+	questions := []map[string]any{}
+	if len(ranges) > 0 {
+		for i := range 5 {
+			questions = append(questions, map[string]any{"prompt": fmt.Sprintf("Synthetic quiz boundary %d?", i+1), "choices": []string{"First", "Second", "Third", "Fourth"}, "correctChoiceID": "b", "explanation": "Synthetic explanation, not live inference.", "evidence": []map[string]any{ranges[0]}})
 		}
 	}
-	return `{"questions":[]}`, true
+	data, _ := json.Marshal(map[string]any{"questions": questions})
+	return string(data), true
 }
 
 // browserOutcome waits for explicit test-owned release, targeted Stop or owned-service shutdown.

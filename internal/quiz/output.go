@@ -68,11 +68,18 @@ func (c Content) String() string { return "validated quiz content (private detai
 func (c Content) GoString() string { return c.String() }
 
 type nativeQuestion struct {
-	Prompt          string   `json:"prompt"`
-	Choices         []string `json:"choices"`
-	CorrectChoiceID string   `json:"correctChoiceID"`
-	Explanation     string   `json:"explanation"`
-	Evidence        []Anchor `json:"evidence"`
+	Prompt          string           `json:"prompt"`
+	Choices         []string         `json:"choices"`
+	CorrectChoiceID string           `json:"correctChoiceID"`
+	Explanation     string           `json:"explanation"`
+	Evidence        []nativeEvidence `json:"evidence"`
+}
+
+type nativeEvidence struct {
+	Path  string `json:"path"`
+	Side  string `json:"side"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
 }
 
 // Parse validates one complete native result and derives evidence from this exact source.
@@ -105,11 +112,11 @@ func (s *Source) Parse(data []byte) (Content, error) {
 			}
 			question.Choices = append(question.Choices, Choice{ID: string(rune('a' + j)), Text: text})
 		}
-		for j, anchor := range item.Evidence {
-			if j > 0 && anchor == item.Evidence[0] {
+		for j, reference := range item.Evidence {
+			if j > 0 && reference == item.Evidence[0] {
 				return Content{}, ErrOutput
 			}
-			evidence, size, err := s.evidence(anchor)
+			evidence, size, err := s.resolveEvidence(reference)
 			if err != nil {
 				return Content{}, err
 			}
@@ -126,6 +133,49 @@ func (s *Source) Parse(data []byte) (Content, error) {
 		return Content{}, ErrLimit
 	}
 	return result, nil
+}
+
+// resolveEvidence maps one exact side-specific path/range to authoritative original evidence, never host access.
+func (s *Source) resolveEvidence(reference nativeEvidence) (Evidence, int, error) {
+	if reference.Path == "" || reference.Side != "old" && reference.Side != "new" || reference.Start <= 0 || reference.End < reference.Start || reference.End > 1_000_100_000 {
+		return Evidence{}, 0, ErrOutput
+	}
+	if reference.End-reference.Start >= maxEvidenceLines {
+		return Evidence{}, 0, ErrLimit
+	}
+	var resolved Evidence
+	size := 0
+	found := false
+	for _, file := range s.diff.Files {
+		path := file.NewPath
+		if reference.Side == "old" {
+			path = file.OldPath
+		}
+		if path != reference.Path || file.Kind != "text" {
+			continue
+		}
+		for _, hunk := range file.Hunks {
+			bounds := hunk.New
+			if reference.Side == "old" {
+				bounds = hunk.Old
+			}
+			if reference.Start < bounds.Start || reference.End >= bounds.Start+bounds.Count {
+				continue
+			}
+			evidence, bytes, err := s.evidence(Anchor{FileID: file.ID, HunkID: hunk.ID, Side: reference.Side, Start: reference.Start, End: reference.End})
+			if err != nil {
+				return Evidence{}, 0, err
+			}
+			if found {
+				return Evidence{}, 0, ErrOutput
+			}
+			resolved, size, found = evidence, bytes, true
+		}
+	}
+	if !found {
+		return Evidence{}, 0, ErrOutput
+	}
+	return resolved, size, nil
 }
 
 // evidence copies an eligible literal range and its complete surrounding hunk.

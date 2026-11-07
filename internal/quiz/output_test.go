@@ -16,7 +16,11 @@ import (
 func nativeFixture(anchor Anchor) []nativeQuestion {
 	questions := make([]nativeQuestion, 5)
 	for i := range questions {
-		questions[i] = nativeQuestion{Prompt: fmt.Sprintf("Question %d <literal>界?", i+1), Choices: []string{"First", "Second", "Third", "Fourth"}, CorrectChoiceID: string(rune('a' + i%4)), Explanation: "A concise explanation <not markup>.", Evidence: []Anchor{anchor}}
+		path := "new 界.txt"
+		if anchor.Side == "old" {
+			path = "old name.txt"
+		}
+		questions[i] = nativeQuestion{Prompt: fmt.Sprintf("Question %d <literal>界?", i+1), Choices: []string{"First", "Second", "Third", "Fourth"}, CorrectChoiceID: string(rune('a' + i%4)), Explanation: "A concise explanation <not markup>.", Evidence: []nativeEvidence{{path, anchor.Side, anchor.Start, anchor.End}}}
 	}
 	return questions
 }
@@ -40,6 +44,7 @@ func TestParseDerivesLiteralEvidenceAndScopedIDsWithoutAliasing(t *testing.T) {
 	questions[0].Prompt = " \tLiteral <script> 界\r\n"
 	questions[0].Choices[0] = "  Keep whitespace  "
 	questions[1].Evidence[0].Side = "old"
+	questions[1].Evidence[0].Path = "old name.txt"
 	content, err := source.Parse(nativeJSON(t, questions))
 	if err != nil || len(content.Questions) != 5 || content.Revision != source.diff.Revision || content.RevisionID != source.diff.RevisionID {
 		t.Fatalf("content: %v", err)
@@ -78,23 +83,25 @@ func TestParseRejectsMalformedAmbiguousAndUnsupportedJSON(t *testing.T) {
 	source, anchor := preparedSource(t)
 	good := nativeJSON(t, nativeFixture(anchor))
 	for name, data := range map[string][]byte{
-		"empty":          nil,
-		"truncated":      good[:len(good)-1],
-		"trailing":       append(bytes.Clone(good), []byte(` {}`)...),
-		"fenced":         append([]byte("```json\n"), good...),
-		"array":          []byte(`[]`),
-		"null":           []byte(`null`),
-		"extra":          bytes.Replace(good, []byte(`{"questions":`), []byte(`{"sessionID":"secret","questions":`), 1),
-		"duplicate":      bytes.Replace(good, []byte(`{"questions":`), []byte(`{"questions":[],"questions":`), 1),
-		"escaped alias":  bytes.Replace(good, []byte(`{"questions":`), []byte(`{"\u0071uestions":[],"questions":`), 1),
-		"case alias":     bytes.Replace(good, []byte(`"prompt":`), []byte(`"Prompt":`), 1),
-		"key duplicate":  bytes.Replace(good, []byte(`"correctChoiceID":"a"`), []byte(`"correctChoiceID":"a","correctChoiceID":"b"`), 1),
-		"key array":      bytes.Replace(good, []byte(`"correctChoiceID":"a"`), []byte(`"correctChoiceID":["a","b"]`), 1),
-		"fraction":       bytes.Replace(good, []byte(`"start":2`), []byte(`"start":2.0`), 1),
-		"invalid UTF-8":  append(bytes.Clone(good[:len(good)-1]), 0xff, '}'),
-		"high surrogate": bytes.Replace(good, []byte(`"First"`), []byte(`"\ud800"`), 1),
-		"low surrogate":  bytes.Replace(good, []byte(`"First"`), []byte(`"\udc00"`), 1),
-		"deep":           []byte(`{"questions":` + strings.Repeat(`[`, 17) + `0` + strings.Repeat(`]`, 17) + `}`),
+		"empty":             nil,
+		"truncated":         good[:len(good)-1],
+		"trailing":          append(bytes.Clone(good), []byte(` {}`)...),
+		"fenced":            append([]byte("```json\n"), good...),
+		"array":             []byte(`[]`),
+		"null":              []byte(`null`),
+		"extra":             bytes.Replace(good, []byte(`{"questions":`), []byte(`{"sessionID":"secret","questions":`), 1),
+		"duplicate":         bytes.Replace(good, []byte(`{"questions":`), []byte(`{"questions":[],"questions":`), 1),
+		"escaped alias":     bytes.Replace(good, []byte(`{"questions":`), []byte(`{"\u0071uestions":[],"questions":`), 1),
+		"case alias":        bytes.Replace(good, []byte(`"prompt":`), []byte(`"Prompt":`), 1),
+		"key duplicate":     bytes.Replace(good, []byte(`"correctChoiceID":"a"`), []byte(`"correctChoiceID":"a","correctChoiceID":"b"`), 1),
+		"key array":         bytes.Replace(good, []byte(`"correctChoiceID":"a"`), []byte(`"correctChoiceID":["a","b"]`), 1),
+		"fraction":          bytes.Replace(good, []byte(`"start":2`), []byte(`"start":2.0`), 1),
+		"invalid UTF-8":     append(bytes.Clone(good[:len(good)-1]), 0xff, '}'),
+		"high surrogate":    bytes.Replace(good, []byte(`"First"`), []byte(`"\ud800"`), 1),
+		"low surrogate":     bytes.Replace(good, []byte(`"First"`), []byte(`"\udc00"`), 1),
+		"deep":              []byte(`{"questions":` + strings.Repeat(`[`, 17) + `0` + strings.Repeat(`]`, 17) + `}`),
+		"native IDs":        bytes.Replace(good, []byte(`"side":"new"`), []byte(`"fileID":"invented","side":"new"`), 1),
+		"revision override": bytes.Replace(good, []byte(`{"questions":`), []byte(`{"revisionID":"foreign","questions":`), 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := source.Parse(data)
@@ -111,7 +118,7 @@ func TestParseRejectsMalformedAmbiguousAndUnsupportedJSON(t *testing.T) {
 }
 
 func TestParseRejectsInvalidQuestionsAndReferences(t *testing.T) {
-	for _, name := range []string{"four questions", "six questions", "empty prompt", "duplicate prompt", "empty choice", "three choices", "five choices", "duplicate choices", "casefold choices", "no key", "invalid key", "empty explanation", "NUL", "no evidence", "three evidence", "duplicate evidence", "foreign file", "foreign hunk", "foreign revision", "context only", "cross hunk", "absent", "wrong side", "non-text", "zero", "reverse", "coordinate overflow", "line overflow"} {
+	for _, name := range []string{"four questions", "six questions", "empty prompt", "duplicate prompt", "empty choice", "three choices", "five choices", "duplicate choices", "casefold choices", "no key", "invalid key", "empty explanation", "NUL", "no evidence", "three evidence", "duplicate evidence", "foreign file", "wrong rename path", "retargeted path", "absolute path", "path alias", "context only", "cross hunk", "absent", "wrong side", "non-text", "zero", "reverse", "coordinate overflow", "line overflow"} {
 		t.Run(name, func(t *testing.T) {
 			source, anchor := preparedSource(t)
 			questions := nativeFixture(anchor)
@@ -146,17 +153,21 @@ func TestParseRejectsInvalidQuestionsAndReferences(t *testing.T) {
 			case "no evidence":
 				item.Evidence = nil
 			case "three evidence":
-				item.Evidence = []Anchor{anchor, anchor, anchor}
+				item.Evidence = []nativeEvidence{item.Evidence[0], item.Evidence[0], item.Evidence[0]}
 			case "duplicate evidence":
-				item.Evidence = []Anchor{anchor, anchor}
+				item.Evidence = []nativeEvidence{item.Evidence[0], item.Evidence[0]}
 			case "foreign file":
-				item.Evidence[0].FileID = strings.Repeat("e", 64)
-			case "foreign hunk":
-				item.Evidence[0].HunkID = strings.Repeat("e", 64)
-			case "foreign revision":
+				item.Evidence[0].Path = "../foreign.txt"
+			case "wrong rename path":
+				item.Evidence[0].Path = "old name.txt"
+			case "retargeted path":
 				source.diff.Revision.BaseSHA = strings.Repeat("d", 40)
 				source.diff.RevisionID, _ = source.diff.Revision.ID()
-				source.diff.Files[0].ID = strings.Repeat("d", 64)
+				source.diff.Files[0].NewPath = "foreign revision.txt"
+			case "absolute path":
+				item.Evidence[0].Path = "/new 界.txt"
+			case "path alias":
+				item.Evidence[0].Path = "./new 界.txt"
 			case "context only":
 				item.Evidence[0].Start, item.Evidence[0].End = 1, 1
 			case "cross hunk":
@@ -234,11 +245,12 @@ func evidenceBudgetSource(t *testing.T) (*Source, Anchor, Anchor) {
 	hunk.Lines = []git.DiffLine{{ID: strings.Repeat("a", 64), Sign: "+", Text: strings.Repeat("x", (maxEvidenceBytes-4)/2), NewLine: 1}}
 	anchor.Start, anchor.End = 1, 1
 	second := *file
+	second.OldPath, second.NewPath = "b", "b"
 	second.ID = strings.Repeat("b", 64)
 	second.Hunks = []git.DiffHunk{*hunk}
 	second.Hunks[0].ID = strings.Repeat("c", 64)
 	diff.Files = []git.DiffFile{*file, second}
-	source, err := sourceContext(prepared, diff)
+	source, err := sourceContext(prepared, diff, fixturePRURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,13 +265,16 @@ func TestEvidenceExactAndOverflowByteAndAggregateLimits(t *testing.T) {
 		t.Fatalf("exact evidence bytes: %d %v", size, err)
 	}
 	questions := nativeFixture(anchor)
+	for i := range questions {
+		questions[i].Evidence[0].Path = "a"
+	}
 	for i := range 3 {
-		questions[i].Evidence = append(questions[i].Evidence, other)
+		questions[i].Evidence = append(questions[i].Evidence, nativeEvidence{"b", other.Side, other.Start, other.End})
 	}
 	if _, err := source.Parse(nativeJSON(t, questions)); err != nil {
 		t.Fatalf("exact 64 KiB aggregate evidence budget refused: %v", err)
 	}
-	questions[3].Evidence = append(questions[3].Evidence, other)
+	questions[3].Evidence = append(questions[3].Evidence, nativeEvidence{"b", other.Side, other.Start, other.End})
 	if got, err := source.Parse(nativeJSON(t, questions)); !errors.Is(err, ErrLimit) || len(got.Questions) != 0 {
 		t.Fatal("aggregate evidence overflow accepted")
 	}
@@ -325,7 +340,7 @@ func TestParseBoundsEncodedEvidenceMetadataAsWellAsRawQuotes(t *testing.T) {
 	for i := range hunk.Lines {
 		hunk.Lines[i] = git.DiffLine{ID: fmt.Sprintf("%064x", i+1), Sign: "+", NewLine: i + 1}
 	}
-	source, err := sourceContext(prepared, diff)
+	source, err := sourceContext(prepared, diff, fixturePRURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +349,7 @@ func TestParseBoundsEncodedEvidenceMetadataAsWellAsRawQuotes(t *testing.T) {
 	second.Start, second.End = 2, 2
 	questions := nativeFixture(anchor)
 	for i := range questions {
-		questions[i].Evidence = append(questions[i].Evidence, second)
+		questions[i].Evidence = append(questions[i].Evidence, nativeEvidence{"new 界.txt", second.Side, second.Start, second.End})
 	}
 	if _, size, err := source.evidence(anchor); err != nil || size*10 > maxEvidenceTotal {
 		t.Fatalf("raw evidence should fit: %d %v", size, err)
