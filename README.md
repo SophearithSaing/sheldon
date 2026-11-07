@@ -92,6 +92,8 @@ Browser tests:
 npm exec --workspace=@sheldon/web -- playwright install chromium # first run
 npm run test:web
 npm run test:release # clean source build + isolated binary/browser checks (Linux/macOS)
+npm run test --workspace=@sheldon/web -- tests/development-semantic.spec.ts # actual offline semantic development flow
+npm run test --workspace=@sheldon/web -- --config playwright.release.config.ts release-semantic.spec.ts # clean-release semantic flow
 npm run test --workspace=@sheldon/web -- --config playwright.release.config.ts release-source.spec.ts # native offline PR flow only
 npm run test --workspace=@sheldon/web -- development-question.spec.ts # actual Go/Vite/Git + synthetic native answers
 npm run test --workspace=@sheldon/web -- --config playwright.release.config.ts release-question.spec.ts # same flow through clean embedded release
@@ -106,6 +108,8 @@ Run the frontend and release browser suites separately; they share Playwright's 
 Release browser checks build a disposable application-source copy without `refs/` or existing bundles, using installed dependencies. They remove the copy before running only the binary with private temporary storage and no Node on its PATH. This does not regenerate the repository's embedded assets; run `npm run build` before release-tag Go checks.
 
 The native-source release test needs Go and Git to build disposable tools and local PR objects. It exercises two PRs, explicit Git-only base selection, refresh/retry, restart/cache reuse and active-fetch shutdown through the standalone CLI. Test-only `gh`, Git transport and desktop-opener fixtures stay offline; source HTTP responses are not mocked. No GitHub login, provider setup or live requests are needed.
+
+The semantic development/release flows use actual Git, application HTTP and private storage with synthetic native inference, not application HTTP mocks. They verify separate question/quiz/semantic services, cross-file grouping and complete remainder accounting, competing-tab busy rejection, anchored questions, failed/cancelled replacement, active shutdown and source/harness-free reopening. Final offline Linux/Chromium checks passed 175 frontend and 16 release tests, typecheck/build and normal/release Go race/vet; desktop, 700px and 200%-text screenshots were inspected. These checks do not certify factual grouping quality, live providers, native non-Linux behavior, sandboxing, exactly-once dispatch or power-loss durability.
 
 The question integration tests use actual browser actions, managed native Git source and production HTTP/SSE handlers, without browser HTTP mocks. A disposable Go executable simulates only the native OpenCode protocol/inference. Development and clean-source release flows cover shared-session threads/follow-ups, cross-tab observation/busy rejection, separate PRs, targeted Stop, failure/recovery, reload/reconnect and app/service restart. Saved rows reopen through the UI and explicitly continue the exact original session, without session replacement/default lookup/prompt replay. Abrupt-exit cases retain saved partial outcomes, classify unfinished turns honestly and fail closed with missing source/native state or unresolved execution. Release application processes have no Node on PATH. Real-provider restart compatibility remains unverified.
 

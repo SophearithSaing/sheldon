@@ -189,3 +189,58 @@ func TestSemanticSelectedQuestionReusesOriginalSharedSession(t *testing.T) {
 		t.Fatalf("expected separate generation and one shared question session, creates=%d", creates)
 	}
 }
+
+func TestSemanticUnknownNeverRetriesAndOtherPRCancellationIsIsolated(t *testing.T) {
+	t.Run("unknown", func(t *testing.T) {
+		f := newQuestionFixture(t, "answer-ambiguous-empty")
+		s, err := f.service.GenerateSemantic(context.Background(), f.pr.ID, f.input.Revision, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		end := waitSemantic(t, f.owner.semantics, s)
+		if end.State != "unknown" || !end.ExecutionUnknown {
+			t.Fatalf("unknown lost: %+v", end)
+		}
+		if _, err := f.owner.ReadSemantic(f.pr.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.service.GenerateSemantic(context.Background(), f.pr.ID, f.input.Revision, 0); !errors.Is(err, semantic.ErrUnknown) {
+			t.Fatal("saved read cleared native uncertainty")
+		}
+		if quizPromptCount(t, f) != 1 {
+			t.Fatal("unknown prompt replayed")
+		}
+	})
+	t.Run("independent PRs", func(t *testing.T) {
+		f := newQuestionFixture(t, "semantic-gated")
+		other, err := f.owner.RegisterPR("https://github.com/owner/repo/pull/32")
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := prepareQuestionRevision(t, f, other, f.input.Revision.BaseSHA, f.head)
+		first, err := f.service.GenerateSemantic(context.Background(), f.pr.ID, f.input.Revision, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		awaitQuizPrompts(t, f, 1)
+		second, err := f.service.GenerateSemantic(context.Background(), other.ID, input.Revision, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		awaitQuizPrompts(t, f, 2)
+		if _, err := f.service.CancelSemanticGeneration(f.pr.ID, first.GenerationID, first.RevisionID); err != nil {
+			t.Fatal(err)
+		}
+		if end := waitSemantic(t, f.owner.semantics, first); end.State != "cancelled" {
+			t.Fatalf("cancel: %+v", end)
+		}
+		still, err := f.service.ReadSemanticGeneration(other.ID, second.GenerationID)
+		if err != nil || still.State != "generating" || still.CancelRequested {
+			t.Fatalf("other PR affected: %+v %v", still, err)
+		}
+		if _, err := f.service.CancelSemanticGeneration(other.ID, second.GenerationID, second.RevisionID); err != nil {
+			t.Fatal(err)
+		}
+		waitSemantic(t, f.owner.semantics, second)
+	})
+}

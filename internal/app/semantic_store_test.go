@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -106,5 +107,48 @@ func TestSemanticUnsafeLeafAndReplacementUncertainty(t *testing.T) {
 	}
 	if err := f.owner.CheckSemantic(f.pr.ID, 1); err != nil {
 		t.Fatal("explicit read did not resolve storage uncertainty")
+	}
+}
+
+func TestSemanticFailedFinalSavePreservesPreviousCompleteReview(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix private-mode failure fixture")
+	}
+	f := newQuestionFixture(t, "semantic-gated")
+	first, err := f.service.GenerateSemantic(context.Background(), f.pr.ID, f.input.Revision, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitQuizPrompts(t, f, 1)
+	if err := os.WriteFile(f.control, []byte(`{"input":1,"outcome":"succeeded"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if end := waitSemantic(t, f.owner.semantics, first); end.State != "completed" {
+		t.Fatalf("first: %+v", end)
+	}
+	dir := filepath.Join(f.paths.Data, "reviews", f.pr.ID)
+	path := filepath.Join(dir, "semantic-review.json")
+	before, _ := os.ReadFile(path)
+	second, err := f.service.GenerateSemantic(context.Background(), f.pr.ID, f.input.Revision, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitQuizPrompts(t, f, 2)
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0700)
+	if err := os.WriteFile(f.control, []byte(`{"input":2,"outcome":"succeeded"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	end := waitSemantic(t, f.owner.semantics, second)
+	if end.State != "failed" || end.FailureCode != "save-failed" || end.SavedVersion != "" {
+		t.Fatalf("failed save fabricated success: %+v", end)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatal("failed final save lost prior result")
+	}
+	if quizPromptCount(t, f) != 2 {
+		t.Fatal("failed save retried inference")
 	}
 }
